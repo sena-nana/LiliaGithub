@@ -1747,6 +1747,8 @@ pub struct GitHubIssueFilterMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct GitHubDiscussionTimelineItem {
     pub id: String,
+    #[serde(default)]
+    pub database_id: Option<u64>,
     pub kind: String,
     #[serde(default)]
     pub actor: Option<String>,
@@ -2142,6 +2144,27 @@ pub struct GitHubUpdateIssueRequest {
     pub labels: Option<Vec<String>>,
     #[serde(default)]
     pub assignees: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_issue_milestone")]
+    pub milestone: Option<Option<u64>>,
+}
+
+fn deserialize_optional_issue_milestone<'de, D>(deserializer: D) -> Result<Option<Option<u64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<u64>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueCommentRequest {
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueCommentReactionRequest {
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -2167,6 +2190,12 @@ pub struct GitHubUpdatePullRequestRequest {
     pub state: Option<String>,
     #[serde(default)]
     pub base: Option<String>,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub assignees: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_issue_milestone")]
+    pub milestone: Option<Option<u64>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -2180,4 +2209,87 @@ pub struct GitHubMergePullRequestRequest {
     pub commit_message: Option<String>,
     #[serde(default)]
     pub sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodeTaskHandoffRepository {
+    pub full_name: String,
+    pub worktree_path: String,
+    pub branch: String,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodeTaskHandoffSource {
+    pub application: String,
+    pub route: String,
+    #[serde(default)]
+    pub object_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodePullRequestHandoffContext {
+    pub number: u64,
+    pub base_branch: String,
+    pub head_branch: String,
+    #[serde(default)]
+    pub base_sha: Option<String>,
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    #[serde(default)]
+    pub review_requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodeWorkflowHandoffContext {
+    pub run_id: u64,
+    pub run_url: String,
+    pub workflow_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodeTaskHandoff {
+    pub protocol: String,
+    pub version: u32,
+    pub id: String,
+    pub created_at: String,
+    pub title: String,
+    pub kind: String,
+    pub repository: LiliaCodeTaskHandoffRepository,
+    pub source: LiliaCodeTaskHandoffSource,
+    pub problem: String,
+    #[serde(default)]
+    pub related_files: Vec<String>,
+    #[serde(default)]
+    pub log_summary: Option<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub pull_request: Option<LiliaCodePullRequestHandoffContext>,
+    #[serde(default)]
+    pub workflow: Option<LiliaCodeWorkflowHandoffContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiliaCodeTaskHandoffStatus {
+    pub protocol: String,
+    pub version: u32,
+    pub handoff_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub result_route: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub updated_at: String,
 }

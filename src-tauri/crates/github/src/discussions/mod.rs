@@ -9,12 +9,14 @@ mod validation;
 mod wire;
 
 pub use mapping::{
-    parse_comments_response, parse_create_response, parse_detail_response, parse_list_response,
-    parse_metadata_response, parse_replies_response,
+    parse_comment_mutation_response, parse_comments_response, parse_create_response,
+    parse_detail_response, parse_list_response, parse_metadata_response, parse_mutation_response,
+    parse_replies_response,
 };
 pub use queries::{
-    comments_request, create_request, detail_request, list_request, metadata_request,
-    replies_request,
+    add_comment_request, answer_request, comments_request, create_request, delete_comment_request,
+    detail_request, discussion_state_request, list_request, metadata_request, reaction_request,
+    replies_request, update_comment_request,
 };
 
 #[derive(Debug, Clone, PartialEq)]

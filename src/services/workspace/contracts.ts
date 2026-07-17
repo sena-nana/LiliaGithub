@@ -24,6 +24,9 @@ import type {
   GitHubDeviceFlowStart,
   GitHubIssue,
   GitHubIssueDiscussion,
+  GitHubIssueCommentReactionRequest,
+  GitHubIssueCommentRequest,
+  GitHubDiscussionTimelineItem,
   GitHubIssueFilterMetadata,
   GitHubMergePullRequestRequest,
   GitHubOrganizationOverview,
@@ -100,6 +103,18 @@ import type {
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
 import type {
+  CreatePullRequestLineCommentRequest,
+  PullRequestCodeReviewDetail,
+  PullRequestReview,
+  PullRequestReviewComment,
+  ReplyPullRequestReviewThreadRequest,
+  SubmitPullRequestCodeReviewRequest,
+} from "../codeReview/types";
+import type {
+  LiliaCodeTaskHandoff,
+  LiliaCodeTaskHandoffStatus,
+} from "../liliaCodeHandoff/types";
+import type {
   DiscoveryPullRequestReviewRequest,
   DiscoveryRepositoryStatus,
   DiscoveryScanRequest,
@@ -107,11 +122,21 @@ import type {
 } from "../discovery/types";
 import type { PersonalHomeNotification } from "../personalHome/types";
 import type {
+  GitHubNotificationMutationResult,
+  GitHubNotificationPage,
+} from "../notifications/types";
+import type {
   GitHubCreateRepositoryDiscussionRequest,
   GitHubRepositoryDiscussion,
   GitHubRepositoryDiscussionMetadata,
   GitHubRepositoryDiscussionPage,
   GitHubRepositoryDiscussionCommentPage,
+  GitHubRepositoryDiscussionComment,
+  GitHubCreateDiscussionCommentRequest,
+  GitHubUpdateDiscussionCommentRequest,
+  GitHubDiscussionReactionRequest,
+  GitHubDiscussionStateRequest,
+  GitHubDiscussionAnswerRequest,
 } from "./discussions/types";
 
 type NoArgs = undefined;
@@ -223,6 +248,18 @@ export interface WorkspaceCommandContracts {
     perPage: Maybe<number>;
     forceRefresh: Maybe<boolean>;
   }, PersonalHomeNotification[]>;
+  github_list_notifications: CommandContract<{
+    all: boolean;
+    page: number;
+    perPage: number;
+    forceRefresh: Maybe<boolean>;
+  }, GitHubNotificationPage>;
+  github_mark_notifications_read: CommandContract<{
+    notificationIds: string[];
+  }, GitHubNotificationMutationResult>;
+  github_unsubscribe_notification: CommandContract<{
+    notificationId: string;
+  }, void>;
   github_list_action_notifications: CommandContract<{
     perPage: Maybe<number>;
     forceRefresh: Maybe<boolean>;
@@ -312,6 +349,22 @@ export interface WorkspaceCommandContracts {
     RepoFullNameArg & { pullNumber: number; forceRefresh: Maybe<boolean> },
     GitHubPullRequestCheck[]
   >;
+  github_get_pull_request_code_review: CommandContract<
+    RepoFullNameArg & { pullNumber: number },
+    PullRequestCodeReviewDetail
+  >;
+  github_create_pull_request_line_comment: CommandContract<
+    RepoFullNameArg & { pullNumber: number; request: CreatePullRequestLineCommentRequest },
+    PullRequestReviewComment
+  >;
+  github_reply_pull_request_review_thread: CommandContract<
+    RepoFullNameArg & { request: ReplyPullRequestReviewThreadRequest },
+    PullRequestReviewComment
+  >;
+  github_submit_pull_request_code_review: CommandContract<
+    RepoFullNameArg & { pullNumber: number; request: SubmitPullRequestCodeReviewRequest },
+    PullRequestReview
+  >;
   github_list_repo_files: CommandContract<
     RepoFullNameArg & { parentPath: Maybe<string>; refName: Maybe<string>; forceRefresh: Maybe<boolean> },
     RepoFileTreeEntry[]
@@ -349,6 +402,19 @@ export interface WorkspaceCommandContracts {
     RepoFullNameArg & { issueNumber: number; request: GitHubUpdateIssueRequest },
     GitHubIssue
   >;
+  github_create_issue_comment: CommandContract<
+    RepoFullNameArg & { issueNumber: number; request: GitHubIssueCommentRequest },
+    GitHubDiscussionTimelineItem
+  >;
+  github_update_issue_comment: CommandContract<
+    RepoFullNameArg & { commentId: number; request: GitHubIssueCommentRequest },
+    GitHubDiscussionTimelineItem
+  >;
+  github_delete_issue_comment: CommandContract<RepoFullNameArg & { commentId: number }, void>;
+  github_add_issue_comment_reaction: CommandContract<
+    RepoFullNameArg & { commentId: number; request: GitHubIssueCommentReactionRequest },
+    void
+  >;
   github_get_discussion_metadata: CommandContract<RepoFullNameArg, GitHubRepositoryDiscussionMetadata>;
   github_list_discussions: CommandContract<
     RepoFullNameArg & {
@@ -378,6 +444,12 @@ export interface WorkspaceCommandContracts {
     RepoFullNameArg & { request: GitHubCreateRepositoryDiscussionRequest },
     GitHubRepositoryDiscussion
   >;
+  github_create_discussion_comment: CommandContract<{ request: GitHubCreateDiscussionCommentRequest }, GitHubRepositoryDiscussionComment>;
+  github_update_discussion_comment: CommandContract<{ request: GitHubUpdateDiscussionCommentRequest }, GitHubRepositoryDiscussionComment>;
+  github_delete_discussion_comment: CommandContract<{ commentId: string }, void>;
+  github_update_discussion_reaction: CommandContract<{ request: GitHubDiscussionReactionRequest }, void>;
+  github_update_discussion_state: CommandContract<{ request: GitHubDiscussionStateRequest }, void>;
+  github_update_discussion_answer: CommandContract<{ request: GitHubDiscussionAnswerRequest }, void>;
   github_list_workflow_runs: CommandContract<
     RepoFullNameArg & { perPage: Maybe<number>; forceRefresh: Maybe<boolean> },
     GitHubWorkflowRun[]
@@ -509,6 +581,15 @@ export interface WorkspaceCommandContracts {
   system_open_path: CommandContract<{ path: string }, void>;
   system_open_path_target: CommandContract<{ path: string; target: SystemOpenTarget }, void>;
   system_open_url: CommandContract<{ url: string }, void>;
+  lilia_code_create_task_handoff: CommandContract<
+    { handoff: LiliaCodeTaskHandoff },
+    LiliaCodeTaskHandoffStatus
+  >;
+  lilia_code_get_task_handoff_status: CommandContract<
+    { handoffId: string },
+    LiliaCodeTaskHandoffStatus
+  >;
+  lilia_code_open_task_handoff_result: CommandContract<{ handoffId: string }, void>;
 }
 
 export type WorkspaceCommandName = keyof WorkspaceCommandContracts;

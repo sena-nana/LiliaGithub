@@ -21,6 +21,10 @@ const settings = reactive({
   })),
   recentLocalRepos: [],
 });
+const localRepos = reactive<Array<{
+  id: string;
+  githubFullName: string;
+}>>([]);
 
 vi.mock("../src/services/workspace/client", () => ({
   clearGitHubRepoCache: mocks.clear,
@@ -30,7 +34,7 @@ vi.mock("../src/services/workspace/client", () => ({
 }));
 vi.mock("../src/composables/useWorkspace", () => ({
   useWorkspace: () => ({
-    state: reactive({ repos: [], settings }),
+    state: reactive({ repos: localRepos, settings }),
     githubBinding: computed(() => ({ login: "sena", boundAt: 1, scopes: ["repo", "read:org"] })),
     isReady: ref(true),
     updateAccountPreferences: mocks.updatePreferences,
@@ -56,6 +60,11 @@ const Harness = defineComponent({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localRepos.splice(0);
+  settings.remoteRepoShortcuts = Array.from({ length: 14 }, (_, index) => ({
+    fullName: `frequent/repo-${index + 1}`,
+    openedAt: 100 - index,
+  }));
   mocks.listOwners.mockResolvedValue([{ login: "lilia", kind: "organization", avatarUrl: null, membershipVisible: true, membershipComplete: true, repositoryAccessVisible: true, source: "both" }]);
   mocks.preload.mockResolvedValue({ items: repos(1, 20), nextPage: 2 });
   mocks.listRepos.mockResolvedValue({ items: repos(21, 10), nextPage: null });
@@ -63,6 +72,18 @@ beforeEach(() => {
 });
 
 describe("跨仓库范围与批次", () => {
+  it("常用范围会纳入尚未收藏或访问的本地 GitHub 仓库", async () => {
+    settings.remoteRepoShortcuts = [];
+    localRepos.push({ id: "local-repo", githubFullName: "lilia/local-repo" });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/discovery", component: Harness }] });
+    await router.push("/discovery");
+    await router.isReady();
+    render(Harness, { global: { plugins: [router] } });
+
+    await waitFor(() => expect(screen.getByTestId("repo-count")).toHaveTextContent("1"));
+    expect(mocks.preload).not.toHaveBeenCalled();
+  });
+
   it("默认显示 12 个常用仓库，其他范围分批读取并可切换组织", async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/discovery", component: Harness }] });
     await router.push("/discovery");

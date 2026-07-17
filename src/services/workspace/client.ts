@@ -26,6 +26,9 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssueDiscussion,
+  GitHubDiscussionTimelineItem,
+  GitHubIssueCommentReactionRequest,
+  GitHubIssueCommentRequest,
   GitHubIssue,
   GitHubIssueFilterMetadata,
   GitHubIssueListOptions,
@@ -1376,6 +1379,42 @@ export function updateGitHubIssue(
     invalidateGitHubAccountIssueCache();
     return cloneProjectData(issue);
   });
+}
+
+export function createGitHubIssueComment(
+  repoFullName: string,
+  issueNumber: number,
+  request: GitHubIssueCommentRequest,
+): Promise<GitHubDiscussionTimelineItem> {
+  return call("github_create_issue_comment", { repoFullName, issueNumber, request }, () =>
+    workspaceFallback().createGitHubIssueCommentFallback(repoFullName, issueNumber, request),
+  );
+}
+
+export function updateGitHubIssueComment(
+  repoFullName: string,
+  commentId: number,
+  request: GitHubIssueCommentRequest,
+): Promise<GitHubDiscussionTimelineItem> {
+  return call("github_update_issue_comment", { repoFullName, commentId, request }, () =>
+    workspaceFallback().updateGitHubIssueCommentFallback(repoFullName, commentId, request),
+  );
+}
+
+export function deleteGitHubIssueComment(repoFullName: string, commentId: number): Promise<void> {
+  return call("github_delete_issue_comment", { repoFullName, commentId }, () =>
+    workspaceFallback().deleteGitHubIssueCommentFallback(repoFullName, commentId),
+  );
+}
+
+export function addGitHubIssueCommentReaction(
+  repoFullName: string,
+  commentId: number,
+  request: GitHubIssueCommentReactionRequest,
+): Promise<void> {
+  return call("github_add_issue_comment_reaction", { repoFullName, commentId, request }, () =>
+    workspaceFallback().addGitHubIssueCommentReactionFallback(repoFullName, commentId, request),
+  );
 }
 
 export function listGitHubWorkflowRuns(

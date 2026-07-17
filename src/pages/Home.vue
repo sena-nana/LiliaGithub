@@ -5,10 +5,12 @@ import {
   AlertCircle,
   ArrowDownAZ,
   CalendarDays,
+  CheckCircle2,
   Clock,
   FolderOpen,
   FolderGit2,
   GitBranchPlus,
+  GitPullRequestArrow,
   Info,
   Plus,
   CloudDownload,
@@ -19,6 +21,7 @@ import {
   Search,
   ShieldCheck,
   Pin,
+  X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";

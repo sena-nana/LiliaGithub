@@ -638,6 +638,7 @@ export type GitHubDiscussionTimelineItemKind = "body" | "comment" | "event" | "r
 
 export interface GitHubDiscussionTimelineItem {
   id: string;
+  databaseId?: number | null;
   kind: GitHubDiscussionTimelineItemKind;
   actor?: string | null;
   body?: string | null;
@@ -749,6 +750,9 @@ export interface GitHubUpdatePullRequestRequest {
   body?: string | null;
   state?: "open" | "closed" | string | null;
   base?: string | null;
+  labels?: string[];
+  assignees?: string[];
+  milestone?: number | null;
 }
 
 export interface GitHubMergePullRequestRequest {
@@ -943,6 +947,17 @@ export interface GitHubUpdateIssueRequest {
   stateReason?: "completed" | "not_planned" | null;
   labels?: string[];
   assignees?: string[];
+  milestone?: number | null;
+}
+
+export type GitHubReactionContent = "+1" | "-1" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+
+export interface GitHubIssueCommentRequest {
+  body: string;
+}
+
+export interface GitHubIssueCommentReactionRequest {
+  content: GitHubReactionContent;
 }
 
 export interface LanguageStat {

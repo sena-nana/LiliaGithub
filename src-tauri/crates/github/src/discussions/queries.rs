@@ -126,6 +126,30 @@ const CREATE_QUERY: &str = r#"
     }
 "#;
 
+const ADD_COMMENT_MUTATION: &str = r#"
+  mutation AddDiscussionComment($discussionId: ID!, $body: String!, $replyToId: ID) {
+    addDiscussionComment(input: { discussionId: $discussionId, body: $body, replyToId: $replyToId }) {
+      comment { id author { login avatarUrl url } body createdAt updatedAt url isAnswer replyTo { id } replies { totalCount } }
+    }
+  }
+"#;
+const UPDATE_COMMENT_MUTATION: &str = r#"
+  mutation UpdateDiscussionComment($commentId: ID!, $body: String!) {
+    updateDiscussionComment(input: { commentId: $commentId, body: $body }) {
+      comment { id author { login avatarUrl url } body createdAt updatedAt url isAnswer replyTo { id } replies { totalCount } }
+    }
+  }
+"#;
+const DELETE_COMMENT_MUTATION: &str = r#"mutation DeleteDiscussionComment($id: ID!) { deleteDiscussionComment(input: { id: $id }) { clientMutationId } }"#;
+const ADD_REACTION_MUTATION: &str = r#"mutation AddDiscussionReaction($subjectId: ID!, $content: ReactionContent!) { addReaction(input: { subjectId: $subjectId, content: $content }) { reaction { id } } }"#;
+const REMOVE_REACTION_MUTATION: &str = r#"mutation RemoveDiscussionReaction($subjectId: ID!, $content: ReactionContent!) { removeReaction(input: { subjectId: $subjectId, content: $content }) { reaction { id } } }"#;
+const CLOSE_DISCUSSION_MUTATION: &str = r#"mutation CloseDiscussion($id: ID!) { closeDiscussion(input: { discussionId: $id }) { discussion { id } } }"#;
+const REOPEN_DISCUSSION_MUTATION: &str = r#"mutation ReopenDiscussion($id: ID!) { reopenDiscussion(input: { discussionId: $id }) { discussion { id } } }"#;
+const LOCK_DISCUSSION_MUTATION: &str = r#"mutation LockDiscussion($id: ID!) { lockLockable(input: { lockableId: $id }) { lockedRecord { locked } } }"#;
+const UNLOCK_DISCUSSION_MUTATION: &str = r#"mutation UnlockDiscussion($id: ID!) { unlockLockable(input: { lockableId: $id }) { unlockedRecord { locked } } }"#;
+const MARK_ANSWER_MUTATION: &str = r#"mutation MarkDiscussionAnswer($id: ID!) { markDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }"#;
+const UNMARK_ANSWER_MUTATION: &str = r#"mutation UnmarkDiscussionAnswer($id: ID!) { unmarkDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }"#;
+
 pub fn metadata_request(repo_full_name: &str) -> Result<GitHubGraphQlRequest, String> {
     let repo = normalize_github_repo_input(repo_full_name)?;
     Ok(GitHubGraphQlRequest {
@@ -239,5 +263,109 @@ pub fn create_request(
             "title": require_text(request.title, "Discussion 标题不能为空")?,
             "body": require_text(request.body, "Discussion 内容不能为空")?,
         }),
+    })
+}
+
+pub fn add_comment_request(
+    discussion_id: String,
+    body: String,
+    reply_to_id: Option<String>,
+) -> Result<GitHubGraphQlRequest, String> {
+    Ok(GitHubGraphQlRequest {
+        query: ADD_COMMENT_MUTATION,
+        variables: json!({
+            "discussionId": require_text(discussion_id, "Discussion ID 不能为空")?,
+            "body": require_text(body, "评论内容不能为空")?,
+            "replyToId": normalize_optional(reply_to_id),
+        }),
+    })
+}
+
+pub fn update_comment_request(
+    comment_id: String,
+    body: String,
+) -> Result<GitHubGraphQlRequest, String> {
+    Ok(GitHubGraphQlRequest {
+        query: UPDATE_COMMENT_MUTATION,
+        variables: json!({
+            "commentId": require_text(comment_id, "Discussion 评论 ID 不能为空")?,
+            "body": require_text(body, "评论内容不能为空")?,
+        }),
+    })
+}
+
+pub fn delete_comment_request(comment_id: String) -> Result<GitHubGraphQlRequest, String> {
+    id_mutation_request(
+        DELETE_COMMENT_MUTATION,
+        comment_id,
+        "Discussion 评论 ID 不能为空",
+    )
+}
+
+pub fn reaction_request(
+    subject_id: String,
+    content: String,
+    remove: bool,
+) -> Result<GitHubGraphQlRequest, String> {
+    const CONTENTS: [&str; 8] = [
+        "THUMBS_UP",
+        "THUMBS_DOWN",
+        "LAUGH",
+        "HOORAY",
+        "CONFUSED",
+        "HEART",
+        "ROCKET",
+        "EYES",
+    ];
+    let content = require_text(content, "Reaction 类型不能为空")?.to_ascii_uppercase();
+    if !CONTENTS.contains(&content.as_str()) {
+        return Err("Reaction 类型不合法".to_string());
+    }
+    Ok(GitHubGraphQlRequest {
+        query: if remove {
+            REMOVE_REACTION_MUTATION
+        } else {
+            ADD_REACTION_MUTATION
+        },
+        variables: json!({
+            "subjectId": require_text(subject_id, "Reaction 对象 ID 不能为空")?, "content": content,
+        }),
+    })
+}
+
+pub fn discussion_state_request(
+    discussion_id: String,
+    action: &str,
+) -> Result<GitHubGraphQlRequest, String> {
+    let query = match action {
+        "close" => CLOSE_DISCUSSION_MUTATION,
+        "reopen" => REOPEN_DISCUSSION_MUTATION,
+        "lock" => LOCK_DISCUSSION_MUTATION,
+        "unlock" => UNLOCK_DISCUSSION_MUTATION,
+        _ => return Err("Discussion 状态操作不合法".to_string()),
+    };
+    id_mutation_request(query, discussion_id, "Discussion ID 不能为空")
+}
+
+pub fn answer_request(comment_id: String, mark: bool) -> Result<GitHubGraphQlRequest, String> {
+    id_mutation_request(
+        if mark {
+            MARK_ANSWER_MUTATION
+        } else {
+            UNMARK_ANSWER_MUTATION
+        },
+        comment_id,
+        "Discussion 评论 ID 不能为空",
+    )
+}
+
+fn id_mutation_request(
+    query: &'static str,
+    id: String,
+    message: &str,
+) -> Result<GitHubGraphQlRequest, String> {
+    Ok(GitHubGraphQlRequest {
+        query,
+        variables: json!({ "id": require_text(id, message)? }),
     })
 }

@@ -14,6 +14,8 @@
     "version:bump": "lilia-tools version-bump",
     "check:package-manager": "lilia-tools check-package-manager",
     "about:licenses": "node scripts/generate-open-source-license-manifest.mjs",
+    "feature-status:generate": "node scripts/sync-feature-status.mjs",
+    "feature-status:check": "node scripts/sync-feature-status.mjs --check",
     "dev": "lilia-build dev",
     "prebuild": "yarn about:licenses",
     "build": "lilia-build build",
@@ -30,7 +32,7 @@
     "liliaui:local": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs local",
     "liliaui:remote": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs remote",
     "liliaui:status": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs status",
-    "verify": "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
+    "verify": "yarn feature-status:check && yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
   "dependencies": {

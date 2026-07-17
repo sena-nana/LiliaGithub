@@ -35,6 +35,8 @@ import type {
   GitHubDiscussionTimelineItem,
   GitHubIssue,
   GitHubIssueDiscussion,
+  GitHubIssueCommentRequest,
+  GitHubIssueCommentReactionRequest,
   GitHubIssueFilterMetadata,
   GitHubIssueMilestone,
   GitHubIssueListOptions,
@@ -397,9 +399,9 @@ function createDefaultFallbackRepos(): RepoSummary[] {
       remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
       githubFullName: "sena-nana/LiliaGithub",
       ahead: 0,
-      behind: 0,
+      behind: 1,
       stagedCount: 0,
-      unstagedCount: 1,
+      unstagedCount: 0,
       untrackedCount: 0,
       conflictCount: 0,
       lastCommitAt: 1_785_010_000,
@@ -1384,33 +1386,49 @@ function createFallbackGitHubReleases(): Record<string, GitHubRelease[]> {
 
 function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]> {
   if (useDefaultFallback) {
+    const liliaGithubRuns: GitHubWorkflowRun[] = [
+      {
+        id: 1201,
+        name: "CI",
+        displayTitle: "验证仓库详情页",
+        status: "completed",
+        conclusion: "success",
+        branch: "main",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+        createdAt: "2026-06-12T10:00:00Z",
+        updatedAt: "2026-06-12T10:08:00Z",
+      },
+      {
+        id: 1200,
+        name: "Release",
+        displayTitle: "打包桌面应用",
+        status: "in_progress",
+        conclusion: null,
+        branch: "codex/project-view",
+        event: "workflow_dispatch",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
+        createdAt: "2026-06-12T09:00:00Z",
+        updatedAt: "2026-06-12T09:02:00Z",
+      },
+    ];
+    if (useAgentDebugMockWorkspace) {
+      const updatedAt = new Date().toISOString();
+      liliaGithubRuns.unshift({
+        id: 1299,
+        name: "Agent debug control center",
+        displayTitle: "验证控制中心交接入口",
+        status: "completed",
+        conclusion: "failure",
+        branch: "main",
+        event: "workflow_dispatch",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1299",
+        createdAt: updatedAt,
+        updatedAt,
+      });
+    }
     return {
-      "sena-nana/LiliaGithub": [
-        {
-          id: 1201,
-          name: "CI",
-          displayTitle: "验证仓库详情页",
-          status: "completed",
-          conclusion: "success",
-          branch: "main",
-          event: "push",
-          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-          createdAt: "2026-06-12T10:00:00Z",
-          updatedAt: "2026-06-12T10:08:00Z",
-        },
-        {
-          id: 1200,
-          name: "Release",
-          displayTitle: "打包桌面应用",
-          status: "in_progress",
-          conclusion: null,
-          branch: "codex/project-view",
-          event: "workflow_dispatch",
-          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
-          createdAt: "2026-06-12T09:00:00Z",
-          updatedAt: "2026-06-12T09:02:00Z",
-        },
-      ],
+      "sena-nana/LiliaGithub": liliaGithubRuns,
     };
   }
   return {
@@ -2298,6 +2316,7 @@ function fallbackIssueDiscussion(issue: GitHubIssue): GitHubIssueDiscussion {
       ),
       {
         id: `issue-${issue.number}-comment-1`,
+        databaseId: 1,
         kind: "comment",
         actor: "sena-nana",
         body: "已确认，需要展示 **Markdown** 评论和状态事件。",
@@ -6248,7 +6267,9 @@ export function getGitHubPullRequestDiscussion(
     const pullRequest = (fallbackGitHubPullRequests[repoFullName] ?? [])
       .find((item) => item.number === pullNumber);
     if (!pullRequest) throw new Error(`未找到 Pull Request #${pullNumber}`);
-    return fallbackPullRequestDiscussion(pullRequest);
+    const discussion = fallbackPullRequestDiscussion(pullRequest);
+    (fallbackGitHubPullRequestDiscussions[repoFullName] ??= {})[pullNumber] = discussion;
+    return clonePullRequestDiscussion(discussion);
   });
 }
 
@@ -6307,6 +6328,11 @@ export function updateGitHubPullRequest(
       body: request.body ?? current.body,
       state: request.state?.trim() || current.state,
       baseBranch: request.base?.trim() || current.baseBranch,
+      labels: request.labels ? [...request.labels] : [...current.labels],
+      assignees: request.assignees ? [...request.assignees] : [...current.assignees],
+      milestone: request.milestone === undefined ? current.milestone : request.milestone === null
+        ? null
+        : current.milestone?.number === request.milestone ? current.milestone : { number: request.milestone, title: `#${request.milestone}` },
       updatedAt: new Date().toISOString(),
     };
     fallbackGitHubPullRequests[repoFullName] = pullRequests.map((pullRequest) =>
@@ -6421,8 +6447,72 @@ export function getGitHubIssueDiscussion(
     if (current) return cloneIssueDiscussion(current);
     const issue = (fallbackGitHubIssues[repoFullName] ?? []).find((item) => item.number === issueNumber);
     if (!issue) throw new Error(`未找到 Issue #${issueNumber}`);
-    return fallbackIssueDiscussion(issue);
+    const discussion = fallbackIssueDiscussion(issue);
+    (fallbackGitHubIssueDiscussions[repoFullName] ??= {})[issueNumber] = discussion;
+    return cloneIssueDiscussion(discussion);
   });
+}
+
+export async function createGitHubIssueCommentFallback(repoFullName: string, issueNumber: number, request: GitHubIssueCommentRequest) {
+  const discussion = ensureFallbackConversation(repoFullName, issueNumber);
+  const body = request.body.trim();
+  if (!body) throw new Error("评论内容不能为空");
+  const databaseId = Date.now();
+  const now = new Date().toISOString();
+  const item: GitHubDiscussionTimelineItem = {
+    id: `IC_${databaseId}`, databaseId, kind: "comment", actor: fallbackBinding.binding?.login ?? "lilia-user",
+    body, url: `https://github.com/${repoFullName}/issues/${issueNumber}#issuecomment-${databaseId}`,
+    createdAt: now, updatedAt: now,
+  };
+  discussion.timeline = sortDiscussionTimeline([...discussion.timeline, item]);
+  return cloneDiscussionTimelineItem(item);
+}
+
+export async function updateGitHubIssueCommentFallback(repoFullName: string, commentId: number, request: GitHubIssueCommentRequest) {
+  const body = request.body.trim();
+  if (!body) throw new Error("评论内容不能为空");
+  const item = findFallbackIssueComment(repoFullName, commentId);
+  if (!item) throw new Error("评论已失效，请刷新后重试");
+  item.body = body; item.updatedAt = new Date().toISOString();
+  return cloneDiscussionTimelineItem(item);
+}
+
+export async function deleteGitHubIssueCommentFallback(repoFullName: string, commentId: number) {
+  let found = false;
+  const collections: Array<Record<number, { timeline: GitHubDiscussionTimelineItem[] }> | undefined> = [
+    fallbackGitHubIssueDiscussions[repoFullName],
+    fallbackGitHubPullRequestDiscussions[repoFullName],
+  ];
+  for (const collection of collections) {
+    for (const discussion of Object.values(collection ?? {})) {
+      const next = discussion.timeline.filter((item) => item.databaseId !== commentId);
+      found ||= next.length !== discussion.timeline.length;
+      discussion.timeline = next;
+    }
+  }
+  if (!found) throw new Error("评论已失效，请刷新后重试");
+}
+
+export async function addGitHubIssueCommentReactionFallback(repoFullName: string, commentId: number, _request: GitHubIssueCommentReactionRequest) {
+  if (!findFallbackIssueComment(repoFullName, commentId)) throw new Error("评论已失效，请刷新后重试");
+}
+
+function ensureFallbackConversation(repoFullName: string, issueNumber: number): GitHubIssueDiscussion | GitHubPullRequestDiscussion {
+  const issueCurrent = fallbackGitHubIssueDiscussions[repoFullName]?.[issueNumber];
+  if (issueCurrent) return issueCurrent;
+  const pullCurrent = fallbackGitHubPullRequestDiscussions[repoFullName]?.[issueNumber];
+  if (pullCurrent) return pullCurrent;
+  const issue = (fallbackGitHubIssues[repoFullName] ?? []).find((item) => item.number === issueNumber);
+  if (issue) return (fallbackGitHubIssueDiscussions[repoFullName] ??= {})[issueNumber] = fallbackIssueDiscussion(issue);
+  const pull = (fallbackGitHubPullRequests[repoFullName] ?? []).find((item) => item.number === issueNumber);
+  if (pull) return (fallbackGitHubPullRequestDiscussions[repoFullName] ??= {})[issueNumber] = fallbackPullRequestDiscussion(pull);
+  throw new Error(`未找到 Issue 或 Pull Request #${issueNumber}`);
+}
+
+function findFallbackIssueComment(repoFullName: string, commentId: number) {
+  const discussions = [fallbackGitHubIssueDiscussions[repoFullName], fallbackGitHubPullRequestDiscussions[repoFullName]];
+  return discussions.flatMap((items) => Object.values(items ?? {})).flatMap((item) => item.timeline)
+    .find((item) => item.databaseId === commentId && item.kind === "comment");
 }
 
 function fallbackIssueValues(repoFullName: string, key: "labels" | "assignees") {
@@ -6587,7 +6677,7 @@ export function updateGitHubIssue(
     const issues = fallbackGitHubIssues[repoFullName] ?? [];
     const current = issues.find((issue) => issue.number === issueNumber);
     if (!current) throw new Error(`未找到 Issue #${issueNumber}`);
-    const { stateReason: _stateReason, ...issueRequest } = request;
+    const { stateReason: _stateReason, milestone: requestedMilestone, ...issueRequest } = request;
     const updated: GitHubIssue = {
       ...current,
       ...issueRequest,
@@ -6595,6 +6685,13 @@ export function updateGitHubIssue(
       body: request.body ?? current.body,
       labels: request.labels ? [...request.labels] : [...current.labels],
       assignees: request.assignees ? [...request.assignees] : [...current.assignees],
+      milestone: requestedMilestone === undefined
+        ? current.milestone
+        : requestedMilestone === null
+          ? null
+          : current.milestone?.number === requestedMilestone
+            ? current.milestone
+            : { number: requestedMilestone, title: `#${requestedMilestone}` },
       updatedAt: new Date().toISOString(),
     };
     fallbackGitHubIssues[repoFullName] = issues.map((issue) => issue.number === issueNumber ? updated : issue);

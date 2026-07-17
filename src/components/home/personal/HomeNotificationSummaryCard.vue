@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
-import { useWorkspace } from "../../../composables/useWorkspace";
 import { listPersonalNotifications, type PersonalHomeNotification } from "../../../services/personalHome";
 import { notificationTypeCounts } from "../../../utils/personalHome";
 import HomePanelShell from "./HomePanelShell.vue";
 
-const workspace = useWorkspace();
 const componentEpoch = useComponentEpoch();
 const loader = createLatestAsyncLoader({ componentEpoch });
 const notifications = ref<PersonalHomeNotification[]>([]);
@@ -29,15 +28,6 @@ async function load(forceRefresh = false) {
       if (loader.isCurrent(runId)) loading.value = false;
     }
   });
-}
-
-async function openNotifications() {
-  error.value = null;
-  try {
-    await workspace.openUrl("https://github.com/notifications");
-  } catch {
-    if (componentEpoch.assertAlive()) error.value = "无法打开 GitHub 通知，请重试。";
-  }
 }
 
 onMounted(() => void load());
@@ -63,9 +53,9 @@ onUnmounted(loader.invalidate);
         <li v-for="group in groups" :key="group.label"><span>{{ group.label }}</span><strong>{{ group.count }}</strong></li>
       </ul>
       <p v-else class="home-panel-empty">当前没有未读通知</p>
-      <button type="button" class="home-panel-link" data-agent-id="personal-home.notifications.open" @click="openNotifications">
-        查看 GitHub 通知
-      </button>
+      <RouterLink to="/notifications" class="home-panel-link" data-agent-id="personal-home.notifications.open">
+        查看通知
+      </RouterLink>
     </template>
   </HomePanelShell>
 </template>
@@ -78,6 +68,6 @@ onUnmounted(loader.invalidate);
 .notification-groups { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
 .notification-groups li { display: inline-flex; gap: 5px; padding: 3px 6px; border-radius: 5px; background: var(--bg-subtle); color: var(--text-muted); font-size: 11px; }
 .notification-groups strong { color: var(--text); }
-.home-panel-link { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 12px; }
+.home-panel-link { display: inline-flex; width: fit-content; margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 12px; text-decoration: none; }
 .home-panel-link:hover { color: var(--accent-strong); text-decoration: underline; }
 </style>

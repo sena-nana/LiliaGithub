@@ -7,6 +7,11 @@ import type {
   GitHubRepositoryDiscussionPage,
   GitHubRepositoryDiscussionCommentPage,
   GitHubRepositoryDiscussionPageOptions,
+  GitHubCreateDiscussionCommentRequest,
+  GitHubUpdateDiscussionCommentRequest,
+  GitHubDiscussionReactionRequest,
+  GitHubDiscussionStateRequest,
+  GitHubDiscussionAnswerRequest,
 } from "./types";
 
 const categories = [
@@ -120,6 +125,67 @@ export async function createDiscussionFallback(
   discussions.unshift(discussion);
   comments.set(number, []);
   return clone(discussion);
+}
+
+export async function createDiscussionCommentFallback(request: GitHubCreateDiscussionCommentRequest) {
+  const discussion = discussions.find((item) => item.id === request.discussionId);
+  if (!discussion) throw new Error("Discussion 已失效，请刷新后重试");
+  const body = request.body.trim();
+  if (!body) throw new Error("评论内容不能为空");
+  const now = new Date().toISOString();
+  const item: GitHubRepositoryDiscussionComment = {
+    id: `discussion-comment-${Date.now()}`, body, createdAt: now, updatedAt: now,
+    author: { login: "sena-nana", avatarUrl: "", url: "https://github.com/sena-nana" },
+    url: discussion.url, isAnswer: false, replyToId: request.replyToId ?? null, replyCount: 0,
+  };
+  if (request.replyToId) {
+    const bucket = replies.get(request.replyToId) ?? [];
+    replies.set(request.replyToId, [...bucket, item]);
+    const parent = [...comments.values()].flat().find((value) => value.id === request.replyToId);
+    if (parent) parent.replyCount += 1;
+  } else {
+    const bucket = comments.get(discussion.number) ?? [];
+    comments.set(discussion.number, [...bucket, item]);
+    discussion.commentCount += 1;
+  }
+  return clone(item);
+}
+
+export async function updateDiscussionCommentFallback(request: GitHubUpdateDiscussionCommentRequest) {
+  const item = findComment(request.commentId);
+  if (!item) throw new Error("评论已失效，请刷新后重试");
+  if (!request.body.trim()) throw new Error("评论内容不能为空");
+  item.body = request.body.trim();
+  item.updatedAt = new Date().toISOString();
+  return clone(item);
+}
+
+export async function deleteDiscussionCommentFallback(commentId: string) {
+  for (const [number, items] of comments) comments.set(number, items.filter((item) => item.id !== commentId));
+  for (const [parent, items] of replies) replies.set(parent, items.filter((item) => item.id !== commentId));
+}
+
+export async function updateDiscussionReactionFallback(_request: GitHubDiscussionReactionRequest) {}
+
+export async function updateDiscussionStateFallback(request: GitHubDiscussionStateRequest) {
+  const item = discussions.find((discussion) => discussion.id === request.discussionId);
+  if (!item) throw new Error("Discussion 已失效，请刷新后重试");
+  if (request.action === "close") item.closed = true;
+  if (request.action === "reopen") item.closed = false;
+  if (request.action === "lock") item.locked = true;
+  if (request.action === "unlock") item.locked = false;
+}
+
+export async function updateDiscussionAnswerFallback(request: GitHubDiscussionAnswerRequest) {
+  const item = findComment(request.commentId);
+  if (!item) throw new Error("评论已失效，请刷新后重试");
+  item.isAnswer = request.mark;
+  const discussion = discussions.find((value) => comments.get(value.number)?.some((comment) => comment.id === request.commentId));
+  if (discussion) { discussion.answerId = request.mark ? request.commentId : null; discussion.isAnswered = request.mark; }
+}
+
+function findComment(commentId: string) {
+  return [...comments.values(), ...replies.values()].flat().find((item) => item.id === commentId);
 }
 
 function paginate<T>(items: readonly T[], first?: number | null, after?: string | null) {

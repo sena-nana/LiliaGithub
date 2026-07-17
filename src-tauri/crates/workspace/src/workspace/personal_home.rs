@@ -1,9 +1,10 @@
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
     build_client, github_account_issue_item_from_response, github_headers, github_json,
-    github_require_notifications_scope, github_require_token, github_send,
-    normalize_optional_string, GitHubIssueResponse, GitHubNotificationResponse,
+    github_require_notifications_scope, github_require_token, github_send, GitHubIssueResponse,
+    GitHubNotificationResponse,
 };
+use crate::workspace::notifications::notification_from_response;
 use crate::workspace::operations::OperationKind;
 use crate::workspace::run_core_operation;
 use crate::workspace::settings::{
@@ -85,7 +86,7 @@ pub async fn github_list_personal_notifications(
                 github_json::<Vec<GitHubNotificationResponse>>("读取个人通知失败", response)?;
             Ok(notifications
                 .into_iter()
-                .map(personal_home_notification_from_response)
+                .map(notification_from_response)
                 .collect())
         },
     )
@@ -109,22 +110,6 @@ pub fn workspace_record_recent_local_repo(
     record_recent_local_repo_visit(&mut settings.recent_local_repos, repo_id, now_millis());
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
-}
-
-fn personal_home_notification_from_response(
-    notification: GitHubNotificationResponse,
-) -> PersonalHomeNotification {
-    PersonalHomeNotification {
-        id: notification.id,
-        repo_full_name: notification.repository.full_name,
-        title: notification.subject.title,
-        reason: notification.reason.trim().to_string(),
-        subject_type: notification.subject.kind.trim().to_string(),
-        subject_url: normalize_optional_string(notification.subject.url),
-        latest_comment_url: normalize_optional_string(notification.subject.latest_comment_url),
-        updated_at: notification.updated_at,
-        unread: notification.unread,
-    }
 }
 
 fn record_recent_local_repo_visit(
@@ -168,7 +153,7 @@ mod tests {
         }))
         .unwrap();
 
-        let notification = personal_home_notification_from_response(response);
+        let notification = notification_from_response(response);
 
         assert_eq!(notification.repo_full_name, "sena-nana/LiliaGithub");
         assert_eq!(notification.subject_type, "Issue");

@@ -1,12 +1,17 @@
 use lilia_github_contracts::workspace::{
-    GitHubCreateRepositoryDiscussionRequest, GitHubRepositoryDiscussion,
+    GitHubCreateDiscussionCommentRequest, GitHubCreateRepositoryDiscussionRequest,
+    GitHubDiscussionAnswerRequest, GitHubDiscussionReactionRequest, GitHubDiscussionStateRequest,
+    GitHubRepositoryDiscussion, GitHubRepositoryDiscussionComment,
     GitHubRepositoryDiscussionCommentPage, GitHubRepositoryDiscussionMetadata,
-    GitHubRepositoryDiscussionPage,
+    GitHubRepositoryDiscussionPage, GitHubUpdateDiscussionCommentRequest,
 };
 use lilia_github_github::discussions::{
-    comments_request, create_request, detail_request, list_request, metadata_request,
-    parse_comments_response, parse_create_response, parse_detail_response, parse_list_response,
-    parse_metadata_response, parse_replies_response, replies_request, GitHubGraphQlRequest,
+    add_comment_request, answer_request, comments_request, create_request, delete_comment_request,
+    detail_request, discussion_state_request, list_request, metadata_request,
+    parse_comment_mutation_response, parse_comments_response, parse_create_response,
+    parse_detail_response, parse_list_response, parse_metadata_response, parse_mutation_response,
+    parse_replies_response, reaction_request, replies_request, update_comment_request,
+    GitHubGraphQlRequest,
 };
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -209,6 +214,117 @@ pub async fn github_create_discussion(
                 .map_err(|error| error.contextualize("创建 GitHub Discussion 失败"))
         },
     )
+    .await
+}
+
+pub async fn github_create_discussion_comment(
+    app: AppHandle,
+    request: GitHubCreateDiscussionCommentRequest,
+) -> Result<GitHubRepositoryDiscussionComment, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "新增 GitHub Discussion 评论",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let graphql =
+                add_comment_request(request.discussion_id, request.body, request.reply_to_id)?;
+            let value = send_graphql(
+                &app,
+                &client,
+                &token,
+                "新增 GitHub Discussion 评论失败",
+                &graphql,
+            )?;
+            parse_comment_mutation_response(value, "addDiscussionComment")
+                .map_err(|error| error.contextualize("新增 GitHub Discussion 评论失败"))
+        },
+    )
+    .await
+}
+
+pub async fn github_update_discussion_comment(
+    app: AppHandle,
+    request: GitHubUpdateDiscussionCommentRequest,
+) -> Result<GitHubRepositoryDiscussionComment, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "编辑 GitHub Discussion 评论",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let graphql = update_comment_request(request.comment_id, request.body)?;
+            let value = send_graphql(
+                &app,
+                &client,
+                &token,
+                "编辑 GitHub Discussion 评论失败",
+                &graphql,
+            )?;
+            parse_comment_mutation_response(value, "updateDiscussionComment")
+                .map_err(|error| error.contextualize("编辑 GitHub Discussion 评论失败"))
+        },
+    )
+    .await
+}
+
+pub async fn github_delete_discussion_comment(
+    app: AppHandle,
+    comment_id: String,
+) -> Result<(), String> {
+    run_discussion_mutation(app, "删除 GitHub Discussion 评论", move || {
+        delete_comment_request(comment_id)
+    })
+    .await
+}
+
+pub async fn github_update_discussion_reaction(
+    app: AppHandle,
+    request: GitHubDiscussionReactionRequest,
+) -> Result<(), String> {
+    run_discussion_mutation(app, "更新 GitHub Discussion Reaction", move || {
+        reaction_request(request.subject_id, request.content, request.remove)
+    })
+    .await
+}
+
+pub async fn github_update_discussion_state(
+    app: AppHandle,
+    request: GitHubDiscussionStateRequest,
+) -> Result<(), String> {
+    run_discussion_mutation(app, "更新 GitHub Discussion 状态", move || {
+        discussion_state_request(request.discussion_id, &request.action)
+    })
+    .await
+}
+
+pub async fn github_update_discussion_answer(
+    app: AppHandle,
+    request: GitHubDiscussionAnswerRequest,
+) -> Result<(), String> {
+    run_discussion_mutation(app, "更新 GitHub Discussion 答案", move || {
+        answer_request(request.comment_id, request.mark)
+    })
+    .await
+}
+
+async fn run_discussion_mutation<F>(
+    app: AppHandle,
+    label: &'static str,
+    build: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<GitHubGraphQlRequest, String> + Send + 'static,
+{
+    run_core_operation(app.clone(), OperationKind::GitHubWrite, label, move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let graphql = build()?;
+        let value = send_graphql(&app, &client, &token, label, &graphql)?;
+        parse_mutation_response(value).map_err(|error| error.contextualize(label))
+    })
     .await
 }
 

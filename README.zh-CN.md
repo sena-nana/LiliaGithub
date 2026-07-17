@@ -38,15 +38,15 @@
 
 ## 产品定位
 
-LiliaGithub 是 Lilia 系列中的 GitHub 工作区工具。它面向同时维护多个本地仓库的开发者，目标是在不启动 GitHub 网页端的情况下完成大部分日常 GitHub 操作。
+LiliaGithub 是 Lilia 系列中面向 Git 与 GitHub 的个人开发中控台。它服务于同时维护多个仓库的开发者，集中回答哪些工作需要关注、最近工作如何继续，并减少完成日常协作时反复返回网页端的次数。
 
-长期方向是提供一个桌面优先的工作流，覆盖本地 Git 管理、GitHub 仓库和项目查看、个人账号工作区管理，以及推送 / 同步活动回顾。GitHub 网页端仍作为少见管理操作、组织策略和 GitHub 高级能力的兜底入口。
+产品明确优先处理聚焦的开发决策和可恢复工作流，而不是追求 GitHub 网页端能力对齐。Git 和 GitHub 始终作为业务真值；少见管理操作、组织策略及不适合个人中控台的高级能力继续由网页端兜底。
 
 ## 阶段目标
 
 - `1.0 收尾稳定性`：稳定现有本地 Git、GitHub 协作、Actions、Release、快速启动和打包发布关键路径，补齐恢复指引、失败诊断和发布验收。
-- `2.0 GitHub 网页端能力对齐`：将仓库配置、仓库界面、Discussions、个人配置和偏好与 GitHub 网页端核心能力对齐。
-- `3.0 账号级活动与发现`：支持 GitHub 账号活动时间线、远端仓库搜索、通知收件箱和跨仓库工作流聚合。
+- `协作与中控`：在应用内完成高频 review、评论、通知、Attention、Today 和 Continue 工作流。
+- `聚焦扩展`：在不复制完整 GitHub 网页端的前提下，补充结构化 LiliaCode 交接、多工作区、账号活动、Projects V2 上下文和 Actions 控制。
 
 ## Lilia 系列
 
@@ -59,7 +59,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - 工作区优先的仓库视图：扫描本地工作区，将仓库状态、分支、变更、历史和同步状态放在同一套界面里。
 - 聚焦单仓库操作：在单仓库界面完成暂存、提交、pull、push、checkout、必要时打开远端页面和打开本地文件夹。
 - GitHub 项目查看：把仓库、issue、pull request、review、release 和 project 看板信息带入桌面端，减少频繁切换浏览器。
-- 个人工作区管理：提供登录后的个人首页，用于查看账号状态、仓库列表、通知、保存的工作区和个人偏好。
+- 个人工作区控制：提供登录后的个人首页，用于查看账号状态、仓库列表、通知摘要、关注仓库和个人偏好。
 - 推送活动回顾：在管理仓库的同一界面查看最近推送、待推送变更、CI / release 结果和同步问题。
 - 快速启动命令：保存仓库启动目标，轮询运行状态，并查看最近输出日志，而不是把主工作区改造成纯终端界面。
 - 队列化同步工作流：对 pull / push 做预检，并按受控队列执行。
@@ -67,62 +67,71 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 
 ## 功能状态
 
-以下按当前真实接入面记录。只有已经能作为用户功能使用的项目标记为完成；部分接入和未接入项目均保持未完成并标注目标阶段。最近核对时间：2026-06-24。
+<!-- 由 docs/feature-status.json 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 yarn feature-status:generate。 -->
+
+以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-17。
 
 ### 本地 Git 和仓库管理
 
 - [x] 工作区选择和本地 Git 仓库扫描。
-- [x] 仓库状态总览、分支信息、变更详情、历史和仓库详情视图。
-- [x] 单仓库暂存、提交、pull、push、checkout、打开远端页面和打开文件夹。
+- [x] 仓库状态、分支、变更、历史和仓库详情视图。
+- [x] 暂存、提交、pull、push、checkout、打开远端页面和打开文件夹。
 - [x] pull / push 批量预检和队列执行。
 - [x] GitHub 设备码授权和系统钥匙串凭证复用。
-- [x] 在应用内提供更清晰的冲突、同步失败和多步骤恢复指引。
+- [x] 应用内冲突、同步失败和多步骤恢复指引。
 
-### GitHub 项目和协作查看
+### GitHub 项目和协作视图
 
 - [x] GitHub 仓库元信息、star、fork、topic、release、默认分支状态和仓库设置。
-- [x] Issue 浏览、筛选、详情时间线、模板辅助创建、路由持久化筛选状态和仓库 project 字段。
-- [x] Pull Request 浏览、筛选、详情时间线、checks、创建流程、合并操作和路由持久化筛选状态。
-- [x] 在 issue 和 pull request 详情中渲染 discussion Markdown 时间线。
-- [x] GitHub Projects 元数据读取和基于已关联 issue、pull request 的看板查看。
-- [x] Actions run 列表、run 详情、job 图、job 日志、workflow 节点图和 artifact 预览。
-- [x] 首页 GitHub 时间线，覆盖最近 issue、pull request、workflow run、push 和同步事件。
+- [x] Issue 浏览、筛选、详情时间线、模板辅助创建和路由持久化筛选状态。
+- [x] Pull Request 浏览、筛选、详情时间线、checks、创建、合并和路由持久化筛选状态。
+- [x] Issue 和 Pull Request 详情中的 Discussion Markdown 时间线。
+- [x] 基于关联 Issue 和 Pull Request 分组的仓库 Milestones。
+- [x] Issue 和 Pull Request 详情中的已关联 project 字段元数据。
+- [x] Actions run 详情、job 与 workflow 图、日志、artifact 预览、失败诊断和重跑。
+- [x] 当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的首页时间线。
 - [x] Release 列表和状态管理。
-- [ ] GitHub Discussions 浏览和创建。`2.0`
-- [ ] 通知收件箱，支持按仓库、issue、pull request 和 review 过滤。`3.0`
-- [x] 更完整的失败 workflow 查看。
+- [x] GitHub Discussions 浏览、详情查看和主题创建。
+- [x] 包含 Changed Files、thread、回复和 review 提交的完整 Pull Request Code Review。
+- [x] 具备可恢复写入的 Issue、Pull Request 和 Discussion 评论往返。
+- [x] 支持筛选、已读状态、取消订阅和内部路由的应用内通知收件箱。
+- [ ] 与工作项模型联通的 Projects V2 浏览和常用字段更新。 `P2`
+- [ ] Actions workflow dispatch、运行取消和部署审批控制。 `P2`
 
-### 个人工作区
+### 个人开发中控台
 
-- [x] GitHub 账号登录连接。
-- [x] 本地工作区偏好和主题持久化。
-- [x] 账号仓库列表读取，并在侧边栏提供创建仓库入口。
-- [x] GitHub 仓库创建和克隆到工作区流程。
-- [ ] 个人首页，展示分配给自己的工作、最近处理的仓库和保存的工作区。`3.0`
-- [ ] 关注仓库和通知偏好。`2.0`
-- [ ] 收藏仓库和常用工作区的本地组织。`2.0`
+- [x] GitHub 账号连接和个人资料管理。
+- [x] 账号仓库范围、列表偏好、本地工作区偏好和主题持久化。
+- [x] 个人与组织仓库浏览、仓库创建和克隆到工作区流程。
+- [x] 展示分配工作、最近仓库、通知摘要和当前工作区上下文的个人首页。
+- [x] 关注仓库和仓库通知偏好。
+- [x] 本地仓库收藏和仓库分组。
+- [x] 可解释的 Attention / Today / Continue 工作项组织和精确上下文恢复。
+- [x] 包含来源上下文、验收条件和结果返回路径的结构化 LiliaCode 任务交接。
+- [ ] 支持多个根目录和工作区独立偏好的多个命名工作区。 `P1`
+- [ ] 支持类型、仓库和所有者范围筛选的应用内账号活动时间线。 `P1`
 
 ### 快速启动
 
 - [x] 仓库启动候选发现和选择。
 - [x] 按仓库保存快速启动配置。
-- [x] 启动运行状态轮询和最近输出日志展示。
-- [x] 更清晰的启动历史和失败诊断。
+- [x] 启动运行状态轮询和最近输出日志。
+- [x] 启动历史和失败诊断。
 
 ### 桌面体验
 
-- [x] 支持工作区、仓库和设置导航的紧凑桌面壳。
+- [x] 支持工作区、仓库、个人资料和设置导航的紧凑桌面壳。
 - [x] 窗口位置、尺寸和最大化状态恢复。
-- [x] 浅色 / 深色主题切换。
-- [x] 仓库操作使用右键菜单和确认弹层。
+- [x] 浅色和深色主题。
+- [x] 仓库操作的右键菜单和确认弹层。
 - [x] 面向重复 GitHub 操作的键盘导航。
 
 ### 构建和发布
 
 - [x] Windows 桌面应用打包。
-- [x] 面向贡献者的测试和构建验证命令。
+- [x] 覆盖测试、构建、Rust 检查和 Feature Status 生成一致性的贡献者验证命令。
 - [x] GitHub Actions CI、文档构建和 release 打包工作流。
-- [ ] 签名安装包集成。`1.0`
+- [ ] 签名安装包集成。 `1.0`
 
 ## 项目结构
 

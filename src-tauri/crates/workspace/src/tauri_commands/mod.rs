@@ -58,11 +58,14 @@ macro_rules! delegate_dialog_command {
 }
 
 mod bulk;
+mod code_review;
+mod conversations;
 mod discovery;
 mod file_browser;
 mod github;
 mod github_discussions;
 mod launch;
+mod notifications;
 mod personal_home;
 mod refresh;
 mod repos;
@@ -267,6 +270,9 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_list_action_notifications,
         personal_home::github_list_assigned_work,
         personal_home::github_list_personal_notifications,
+        notifications::github_list_notifications,
+        notifications::github_mark_notifications_read,
+        notifications::github_unsubscribe_notification,
         github::github_list_repo_contribution,
         github::github_list_repo_owners,
         github::github_list_repo_templates,
@@ -291,6 +297,10 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_update_pull_request,
         github::github_merge_pull_request,
         github::github_list_pull_request_checks,
+        code_review::github_get_pull_request_code_review,
+        code_review::github_create_pull_request_line_comment,
+        code_review::github_reply_pull_request_review_thread,
+        code_review::github_submit_pull_request_code_review,
         github::github_list_repo_files,
         github::github_get_repo_file_preview,
         github::github_list_issues,
@@ -306,6 +316,16 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github_discussions::github_list_discussion_comments,
         github_discussions::github_list_discussion_comment_replies,
         github_discussions::github_create_discussion,
+        github_discussions::github_create_discussion_comment,
+        github_discussions::github_update_discussion_comment,
+        github_discussions::github_delete_discussion_comment,
+        github_discussions::github_update_discussion_reaction,
+        github_discussions::github_update_discussion_state,
+        github_discussions::github_update_discussion_answer,
+        conversations::github_create_issue_comment,
+        conversations::github_update_issue_comment,
+        conversations::github_delete_issue_comment,
+        conversations::github_add_issue_comment_reaction,
         github::github_list_workflow_runs,
         github::github_get_workflow_run_detail,
         github::github_get_workflow_job_log,
@@ -382,7 +402,10 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         bulk::bulk_sync_execute,
         system::system_open_path,
         system::system_open_path_target,
-        system::system_open_url
+        system::system_open_url,
+        system::lilia_code_create_task_handoff,
+        system::lilia_code_get_task_handoff_status,
+        system::lilia_code_open_task_handoff_result
     ]
 }
 

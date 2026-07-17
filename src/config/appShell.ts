@@ -1,4 +1,5 @@
 import {
+  Bell,
   FolderGit2,
   Boxes,
   Home,
@@ -49,6 +50,12 @@ export const SIDEBAR_NAV: SidebarNavItems = [
     to: "/discovery",
     label: "跨仓库",
     icon: Boxes,
+  },
+  {
+    key: "notifications",
+    to: "/notifications",
+    label: "通知",
+    icon: Bell,
   },
 ];
 

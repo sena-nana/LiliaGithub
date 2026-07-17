@@ -1,17 +1,43 @@
 <script setup lang="ts">
-import { FolderOpen, LoaderCircle, ShieldCheck } from "@lucide/vue";
-import { ref } from "vue";
+import { FolderOpen, LoaderCircle, RefreshCw, ShieldCheck } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterLink } from "vue-router";
+import ControlCenterBoard from "../components/control-center/ControlCenterBoard.vue";
+import { useDiscoveryRepositories } from "../composables/discovery/useDiscoveryRepositories";
+import { useDiscoveryScan } from "../composables/discovery/useDiscoveryScan";
 import { useWorkspace } from "../composables/useWorkspace";
-import { createCachedAsyncComponent } from "../utils/asyncComponent";
+import { listAssignedWork } from "../services/personalHome";
+import type { GitHubAccountIssueItem } from "../services/workspace";
 
 const workspace = useWorkspace();
 const setupError = ref<string | null>(null);
-const assignedWork = createCachedAsyncComponent(() => import("../components/home/personal/HomeAssignedWorkCard.vue"));
-const recentRepositories = createCachedAsyncComponent(() => import("../components/home/personal/HomeRecentRepositoriesCard.vue"));
-const savedWorkspace = createCachedAsyncComponent(() => import("../components/home/personal/HomeSavedWorkspaceCard.vue"));
-const notifications = createCachedAsyncComponent(() => import("../components/home/personal/HomeNotificationSummaryCard.vue"));
-const activity = createCachedAsyncComponent(() => import("../components/home/personal/HomeActivityEntryCard.vue"));
+const discovery = useDiscoveryRepositories();
+const scan = useDiscoveryScan(discovery.repositories, discovery.refreshToken);
+const accountItems = ref<GitHubAccountIssueItem[]>([]);
+const accountItemsLoading = ref(false);
+const accountItemsError = ref<string | null>(null);
+const controlScope = computed(() => workspace.githubBinding.value?.login || "anonymous");
+let disposed = false;
+
+async function loadAccountItems(forceRefresh = false) {
+  accountItemsLoading.value = true;
+  accountItemsError.value = null;
+  try {
+    const items = await listAssignedWork(50, { forceRefresh });
+    if (!disposed) accountItems.value = items;
+  } catch {
+    if (!disposed) accountItemsError.value = "暂时无法读取分配给你的工作，请重试。";
+  } finally {
+    if (!disposed) accountItemsLoading.value = false;
+  }
+}
+
+async function refreshControlCenter() {
+  await Promise.all([discovery.refresh(), loadAccountItems(true)]);
+}
+
+onMounted(() => void loadAccountItems());
+onUnmounted(() => { disposed = true; });
 
 async function chooseWorkspace() {
   setupError.value = null;
@@ -39,9 +65,20 @@ async function bindGitHub() {
         <h1>个人首页</h1>
         <p>{{ workspace.githubBinding.value?.login ? `@${workspace.githubBinding.value.login}` : "你的 GitHub 工作与工作区" }}</p>
       </div>
-      <RouterLink v-if="workspace.isReady.value" to="/overview" class="ghost personal-home__overview-link">
+      <RouterLink v-if="workspace.isReady.value" to="/overview" class="ghost personal-home__overview-link" data-agent-id="personal-home.overview">
         项目总览
       </RouterLink>
+      <button
+        v-if="workspace.isReady.value"
+        type="button"
+        class="ghost personal-home__refresh"
+        data-agent-id="personal-home.refresh"
+        :disabled="discovery.loading.value || accountItemsLoading"
+        @click="refreshControlCenter"
+      >
+        <RefreshCw :size="13" aria-hidden="true" :class="{ 'sb-spin': discovery.loading.value || accountItemsLoading }" />
+        刷新
+      </button>
     </header>
 
     <div v-if="!workspace.isReady.value" class="personal-home-setup card" data-agent-id="personal-home.setup">
@@ -66,32 +103,17 @@ async function bindGitHub() {
       </p>
     </div>
 
-    <div v-else class="personal-home__grid">
-      <div class="personal-home__primary">
-        <Suspense>
-          <component :is="assignedWork.component" />
-          <template #fallback><div class="card personal-home__placeholder" aria-label="正在加载分配给我的工作" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="recentRepositories.component" />
-          <template #fallback><div class="card personal-home__placeholder" aria-label="正在加载最近仓库" /></template>
-        </Suspense>
-      </div>
-      <div class="personal-home__secondary">
-        <Suspense>
-          <component :is="savedWorkspace.component" />
-          <template #fallback><div class="card personal-home__placeholder personal-home__placeholder--small" aria-label="正在加载已保存工作区" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="notifications.component" />
-          <template #fallback><div class="card personal-home__placeholder personal-home__placeholder--small" aria-label="正在加载通知摘要" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="activity.component" />
-          <template #fallback><div class="card personal-home__placeholder personal-home__placeholder--small" aria-label="正在加载活动入口" /></template>
-        </Suspense>
-      </div>
-    </div>
+    <ControlCenterBoard
+      v-else
+      :repositories="discovery.repositories.value"
+      :local-repositories="workspace.state.repos"
+      :scan="scan.result.value"
+      :account-items="accountItems"
+      :tasks="workspace.state.tasks"
+      :loading="scan.loading.value || discovery.loading.value || accountItemsLoading"
+      :error="scan.error.value || accountItemsError"
+      :scope="controlScope"
+    />
   </section>
 </template>
 
@@ -101,11 +123,8 @@ async function bindGitHub() {
 .personal-home__header h1, .personal-home__header p { margin: 0; }
 .personal-home__header h1 { font-size: 18px; font-weight: 600; }
 .personal-home__header p { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
-.personal-home__overview-link { display: inline-flex; min-height: 28px; align-items: center; padding: 0 9px; text-decoration: none; }
-.personal-home__grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, 0.8fr); gap: 12px; align-items: start; }
-.personal-home__primary, .personal-home__secondary { display: grid; gap: 12px; min-width: 0; }
-.personal-home__placeholder { min-height: 220px; background: var(--bg-subtle); }
-.personal-home__placeholder--small { min-height: 120px; }
+.personal-home__overview-link, .personal-home__refresh { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 9px; text-decoration: none; }
+.personal-home__overview-link { margin-left: auto; }
 .personal-home-setup { display: grid; gap: 14px; padding: 18px; }
 .personal-home-setup h2, .personal-home-setup p { margin: 0; }
 .personal-home-setup h2 { font-size: 14px; }
@@ -113,5 +132,4 @@ async function bindGitHub() {
 .personal-home-setup__actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .personal-home-setup__actions button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; }
 .personal-home-setup__error { color: var(--err) !important; }
-@media (max-width: 760px) { .personal-home__grid { grid-template-columns: minmax(0, 1fr); } }
 </style>
