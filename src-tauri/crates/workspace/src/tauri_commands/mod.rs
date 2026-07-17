@@ -58,6 +58,7 @@ macro_rules! delegate_dialog_command {
 }
 
 mod bulk;
+mod discovery;
 mod file_browser;
 mod github;
 mod github_discussions;
@@ -246,6 +247,8 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         personal_home::workspace_record_recent_local_repo,
         tasks::workspace_list_tasks,
         tasks::workspace_cancel_task,
+        discovery::github_discovery_get_repository_status,
+        discovery::github_discovery_submit_pull_request_review,
         github::github_get_binding_status,
         github::github_get_account_profile,
         github::github_get_account_readme,

@@ -99,6 +99,10 @@ import type {
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
+import type {
+  DiscoveryPullRequestReviewRequest,
+  DiscoveryRepositoryStatus,
+} from "../discovery/types";
 import type { PersonalHomeNotification } from "../personalHome/types";
 import type {
   GitHubCreateRepositoryDiscussionRequest,
@@ -226,6 +230,14 @@ export interface WorkspaceCommandContracts {
   github_list_repo_templates: CommandContract<NoArgs, GitHubRepoTemplate[]>;
   github_create_repo: CommandContract<{ request: GitHubCreateRepoRequest }, GitHubRepoSummary>;
   github_get_repo_management: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRepoManagement>;
+  github_discovery_get_repository_status: CommandContract<
+    RepoFullNameArg & ForceRefreshArg,
+    DiscoveryRepositoryStatus
+  >;
+  github_discovery_submit_pull_request_review: CommandContract<
+    RepoFullNameArg & { pullNumber: number; request: DiscoveryPullRequestReviewRequest },
+    void
+  >;
   github_update_repo_settings: CommandContract<
     RepoFullNameArg & { request: GitHubUpdateRepoSettingsRequest },
     GitHubRepoManagement
