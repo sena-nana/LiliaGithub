@@ -4295,8 +4295,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         :max-size="420"
         resizable
         resize-label="调整仓库信息面板宽度"
-        narrow-behavior="collapse"
-        :collapse-below="960"
+        narrow-behavior="shrink"
         overflow="hidden"
       >
         <aside
@@ -4723,6 +4722,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-layout {
+  gap: 14px;
   min-width: 0;
   min-height: 0;
   height: 100%;
