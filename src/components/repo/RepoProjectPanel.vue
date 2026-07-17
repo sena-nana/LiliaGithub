@@ -3557,7 +3557,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       class="project-layout"
       aria-label="仓库工作区"
     >
-      <LiliaPrimaryContent id="repo-primary" overflow="hidden">
+      <LiliaPrimaryContent id="repo-primary" overflow="hidden" :style="{ '--lilia-primary-inset': '0' }">
         <main
           ref="projectMainRef"
           class="project-main"
@@ -4878,8 +4878,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-sidebar-switcher__button.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--lilia-state-layer-selected);
+  color: var(--lilia-state-foreground-selected);
 }
 
 .project-sidebar-switcher__button:disabled {

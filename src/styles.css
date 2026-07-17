@@ -22,8 +22,7 @@
 
 .repo-list-row.is-active,
 .repo-list-row.is-target {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
-  background: var(--accent-soft);
+  background: var(--lilia-state-layer-selected);
 }
 
 .repo-list-row__status {

@@ -231,8 +231,8 @@ onBeforeUnmount(() => {
 }
 
 .sb-footer__btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--lilia-state-layer-selected);
+  color: var(--lilia-state-foreground-selected);
 }
 
 .sb-tasks {
