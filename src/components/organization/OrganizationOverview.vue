@@ -20,8 +20,6 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
-  getGitHubOrganizationOverview,
-  getGitHubOrganizationProfile,
   type GitHubOrganizationOverview,
   type GitHubOrganizationProfile,
   type GitHubOrganizationProfileView,
@@ -93,7 +91,7 @@ async function loadProfile() {
     profileLoading.value = true;
     profileError.value = null;
     try {
-      const result = await getGitHubOrganizationProfile(login);
+      const result = await workspace.getOrganizationProfile(login);
       if (!profileLoader.isCurrent(runId) || requestIdentity.value !== identity) return;
       profile.value = result;
     } catch {
@@ -114,7 +112,7 @@ async function loadOverview(view: GitHubOrganizationProfileView = selectedView.v
     overviewLoading.value = true;
     overviewError.value = null;
     try {
-      const result = await getGitHubOrganizationOverview(login, view);
+      const result = await workspace.getOrganizationOverview(login, view);
       if (!overviewLoader.isCurrent(runId) || requestIdentity.value !== identity) return;
       overview.value = result;
       selectedView.value = result.effectiveView;

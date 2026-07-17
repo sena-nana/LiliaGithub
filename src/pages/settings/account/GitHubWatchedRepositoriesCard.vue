@@ -5,11 +5,10 @@ import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../../composables/useWorkspace";
 import {
-  githubErrorCode,
-  isGitHubPermissionError,
   type GitHubRepositorySubscriptionMode,
   type GitHubRepoSummary,
 } from "../../../services/workspace";
+import { githubErrorCode, isGitHubPermissionError } from "../../../utils/githubErrors";
 
 const WATCHING_URL = "https://github.com/watching";
 const NOTIFICATION_SETTINGS_URL = "https://github.com/settings/notifications";

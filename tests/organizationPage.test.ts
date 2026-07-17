@@ -9,13 +9,7 @@ import type {
 } from "../src/services/workspace";
 import { repoSummary } from "./fixtures/workspace";
 
-const {
-  getGitHubOrganizationOverview,
-  getGitHubOrganizationProfile,
-  workspace,
-} = vi.hoisted(() => ({
-  getGitHubOrganizationOverview: vi.fn(),
-  getGitHubOrganizationProfile: vi.fn(),
+const { workspace } = vi.hoisted(() => ({
   workspace: {
     state: {
       repos: [] as ReturnType<typeof repoSummary>[],
@@ -30,13 +24,9 @@ const {
     },
     rememberRemoteRepo: vi.fn(async () => undefined),
     openUrl: vi.fn(async () => undefined),
+    getOrganizationOverview: vi.fn(),
+    getOrganizationProfile: vi.fn(),
   },
-}));
-
-vi.mock("../src/services/workspace", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/services/workspace")>(),
-  getGitHubOrganizationOverview,
-  getGitHubOrganizationProfile,
 }));
 
 vi.mock("../src/composables/useWorkspace", async () => {
@@ -45,6 +35,9 @@ vi.mock("../src/composables/useWorkspace", async () => {
   workspace.githubBinding = ref(workspace.githubBinding.value);
   return { useWorkspace: () => workspace };
 });
+
+const getGitHubOrganizationOverview = workspace.getOrganizationOverview;
+const getGitHubOrganizationProfile = workspace.getOrganizationProfile;
 
 function githubRepository(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
   const [ownerLogin = "", name = fullName] = fullName.split("/");

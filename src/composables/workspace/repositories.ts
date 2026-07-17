@@ -40,6 +40,13 @@ import type {
   WorkspaceCloneRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
+  CommitDetail,
+  RepoStashDetail,
+  GitHubRepoManagement,
+  BranchSummary,
+  CommitSummary,
+  GitHubProjectFetchOptions,
+  GitHubCommitListOptions,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 import { waitForWorkspaceTask } from "./taskWaiters";
@@ -1319,4 +1326,45 @@ export async function continueConflictOperation(repoId: string) {
     () => service.continueConflictOperation(repoId),
     { includeCommits: true },
   );
+}
+
+export async function getRepoCommitDetail(
+  repoId: string,
+  hash: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<CommitDetail> {
+  const service = await loadWorkspaceService();
+  return service.getRepoCommitDetail(repoId, hash, options);
+}
+
+export async function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
+  const service = await loadWorkspaceService();
+  return service.getRepoStashDetail(repoId, stashId);
+}
+
+export async function getGitHubRepoManagement(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubRepoManagement> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubRepoManagement(repoFullName, options);
+}
+
+export async function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubBranches(repoFullName);
+}
+
+export async function listGitHubRepoCommits(
+  repoFullName: string,
+  options: GitHubCommitListOptions = {},
+  fetchOptions: GitHubProjectFetchOptions = {},
+): Promise<CommitSummary[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubRepoCommits(repoFullName, options, fetchOptions);
+}
+
+export async function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
+  const service = await loadWorkspaceService();
+  return service.deleteGitHubBranch(repoFullName, branchName);
 }

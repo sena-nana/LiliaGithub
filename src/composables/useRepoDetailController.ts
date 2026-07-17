@@ -5,7 +5,6 @@ import {
   repoSettingValue,
   type RepoSettingKey,
 } from "../config/repoSettingsManifest";
-import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
@@ -612,8 +611,8 @@ export function useRepoDetailController() {
       githubDefaultBranch.value = null;
       try {
         const [management, branches] = await Promise.all([
-          getGitHubRepoManagement(repoFullName, { forceRefresh }),
-          listGitHubBranches(repoFullName),
+          workspace.getGitHubRepoManagement(repoFullName, { forceRefresh }),
+          workspace.listGitHubBranches(repoFullName),
         ]);
         if (!githubBranchesLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
         githubDefaultBranch.value = management.defaultBranch || null;
@@ -642,7 +641,7 @@ export function useRepoDetailController() {
     await githubCommitsLoader.run(repoFullName, async (runId) => {
       githubCommits.value = [];
       try {
-        const commits = await listGitHubRepoCommits(
+        const commits = await workspace.listGitHubRepoCommits(
           repoFullName,
           { perPage: 100 },
           { forceRefresh },
@@ -1224,7 +1223,7 @@ export function useRepoDetailController() {
       void (async () => {
         try {
           await actionTracker.run(
-            () => deleteGitHubBranch(repoFullName, branchName),
+            () => workspace.deleteGitHubBranch(repoFullName, branchName),
           );
           if (!isActionCurrent(generation, targetRepoId)) return;
           githubBranches.value = githubBranches.value.filter((item) => item.name !== branchName);

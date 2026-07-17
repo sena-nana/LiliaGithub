@@ -6,12 +6,6 @@ import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { useWorkspace } from "./useWorkspace";
 import { useAccountPreferences } from "./useAccountPreferences";
 import {
-  getGitHubBindingStatus,
-  isGitHubBindingExpiredError,
-  listGitHubRepos,
-  listGitHubRepoOwners,
-  preloadGitHubRepos,
-  readCachedGitHubRepos,
   type GitHubBindingStatus,
   type GitHubRepoOwner,
   type GitHubRepoSummary,
@@ -19,6 +13,8 @@ import {
   type RepoSummary,
   type WorkspaceRepoPlacement,
 } from "../services/workspace";
+import { readCachedGitHubRepos } from "../services/workspace/cache";
+import { isGitHubBindingExpiredError } from "../utils/githubErrors";
 import {
   ALL_GITHUB_REPOSITORIES,
   githubOrganizationAccessLimited,
@@ -214,8 +210,8 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       }
       try {
         const result = page === 1
-          ? await preloadGitHubRepos({ force: loadOptions.force, scope })
-          : await listGitHubRepos(scope, page);
+          ? await workspace.preloadGitHubRepos({ force: loadOptions.force, scope })
+          : await workspace.listGitHubRepos(scope, page);
         if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value || !cloneGitHubBound.value) return;
         if (githubRepositoryScopeKey(cloneRepositoryScope.value) !== scopeKey) return;
         applyCloneRepoPage(result, append);
@@ -238,7 +234,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       cloneRepoOwnersLoading.value = true;
       cloneRepoOwnersError.value = null;
       try {
-        const owners = await listGitHubRepoOwners();
+        const owners = await workspace.getAccountRepositoryOwners();
         if (!cloneRepoOwnersLoader.isCurrent(runId) || !cloneOpen.value) return;
         cloneRepoOwners.value = owners;
       } catch (err) {
@@ -340,7 +336,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     clonePlacement.value = placement;
     await cloneBindingLoader.run("clone-binding", async (runId) => {
       try {
-        const status = await getGitHubBindingStatus();
+        const status = await workspace.getGitHubBindingStatus();
         if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
         cloneBindingStatus.value = status;
         if (cloneGitHubBound.value) {

@@ -1,6 +1,35 @@
 import { invoke } from "../../tauri/runtime";
 import { createCachedAsyncModule } from "../../utils/asyncModule";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
+import { isGitHubBindingExpiredError, githubErrorCode, isGitHubPermissionError } from "../../utils/githubErrors";
+import {
+  ALL_GITHUB_REPOSITORIES,
+  githubRepoCache,
+  githubRepoPreloadPromises,
+  githubRepoBindingRevision,
+  githubAccountIssueCache,
+  githubAccountIssueCacheGeneration,
+  githubActionNotificationCache,
+  githubProjectCache,
+  setGitHubAccountIssueCache,
+  setGitHubActionNotificationCache,
+  cloneProjectData,
+  cloneProjectList,
+  cloneRepoPage,
+  githubProjectRepoKey,
+  githubProjectRepoCache,
+  clearGitHubProjectRepoCache,
+  cachedWorkspaceRead,
+  invalidateGitHubAccountIssueCache,
+  githubRepositoryCacheKey,
+  applyGitHubBindingRevision,
+  writeGitHubRepoCache,
+  clearGitHubRepoCache,
+  readCachedGitHubRepos,
+} from "./cache";
+import type { GitHubProjectFetchOptions } from "./cache";
+export { readCachedGitHubRepos, clearGitHubRepoCache };
+export type { GitHubProjectFetchOptions };
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
 import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
 import type {
@@ -116,55 +145,6 @@ const agentDebugMockWorkspace = typeof import.meta !== "undefined"
 const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
 type WorkspaceFallback = typeof import("./fallback");
 
-export type GitHubProjectFetchOptions = {
-  forceRefresh?: boolean;
-};
-
-type GitHubProjectRepoClientCache = {
-  management?: GitHubRepoManagement;
-  files: Record<string, RepoFileTreeEntry[] | undefined>;
-  filePreviews: Record<string, RepoFilePreview | undefined>;
-  commits: Record<string, CommitSummary[] | undefined>;
-  commitDetails: Record<string, CommitDetail | undefined>;
-  issueLabels?: string[];
-  issueAssignees?: string[];
-  issueFilterMetadata?: GitHubIssueFilterMetadata;
-  issues: Record<string, GitHubIssue[] | undefined>;
-  issueDiscussions: Record<number, GitHubIssueDiscussion | undefined>;
-  pullRequests: Record<string, GitHubPullRequest[] | undefined>;
-  pullRequestDiscussions: Record<number, GitHubPullRequestDiscussion | undefined>;
-  pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
-  workflowRuns: Record<number, GitHubWorkflowRun[] | undefined>;
-  workflowRunDetails: Record<number, GitHubWorkflowRunDetail | undefined>;
-  workflowJobLogs: Record<number, GitHubWorkflowJobLog | undefined>;
-  workflowArtifactEntries: Record<number, GitHubWorkflowArtifactEntry[] | undefined>;
-  workflowArtifactPreviews: Record<string, RepoFilePreview | undefined>;
-  releases?: GitHubRelease[];
-  settingsSections: Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>;
-};
-
-type GitHubRepoCacheEntry = {
-  items: GitHubRepoPage["items"];
-  nextPage: number | null;
-  scope?: GitHubRepositoryScope;
-  fetchedAt: number;
-};
-const githubRepoCache = new Map<string, GitHubRepoCacheEntry>();
-const githubRepoPreloadPromises = new Map<string, Promise<GitHubRepoPage>>();
-let githubRepoBindingRevision = "unknown";
-let githubAccountIssueCache: {
-  key: string;
-  items: GitHubAccountIssueItem[];
-  fetchedAt: number;
-} | null = null;
-let githubAccountIssueCacheGeneration = 0;
-let githubActionNotificationCache: {
-  key: string;
-  items: GitHubActionNotification[];
-  fetchedAt: number;
-} | null = null;
-const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
-const pendingWorkspaceReads = new Map<string, Promise<unknown>>();
 const workspaceFallbackModuleLoader = createCachedAsyncModule(() => import("./fallback"));
 let workspaceFallbackModule: WorkspaceFallback | null = null;
 
@@ -289,52 +269,6 @@ export function pickWorkspaceRoot(): Promise<string | null> {
   return call("workspace_pick_root", undefined, () => workspaceFallback().pickWorkspaceRoot());
 }
 
-function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
-  return {
-    items: page.items.map((repo) => ({
-      ...repo,
-      owner: repo.owner ? { ...repo.owner } : repo.owner,
-      permissions: repo.permissions ? { ...repo.permissions } : repo.permissions,
-    })),
-    nextPage: page.nextPage,
-    scope: page.scope ? { ...page.scope } : page.scope,
-  };
-}
-
-function cloneProjectData<T>(value: T): T {
-  if (typeof globalThis.structuredClone === "function") {
-    return globalThis.structuredClone(value);
-  }
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function cloneProjectList<T>(items: readonly T[]): T[] {
-  return items.map((item) => cloneProjectData(item));
-}
-
-function githubProjectRepoKey(repoFullName: string) {
-  return repoFullName.trim().toLowerCase();
-}
-
-function workspaceReadCacheKey(command: string, args: unknown) {
-  return `${command}:${JSON.stringify(args)}`;
-}
-
-function cachedWorkspaceRead<T>(
-  command: string,
-  args: unknown,
-  request: () => Promise<T>,
-): Promise<T> {
-  const key = workspaceReadCacheKey(command, args);
-  const pending = pendingWorkspaceReads.get(key);
-  if (pending) return pending as Promise<T>;
-  const next = request().finally(() => {
-    if (pendingWorkspaceReads.get(key) === next) pendingWorkspaceReads.delete(key);
-  });
-  pendingWorkspaceReads.set(key, next);
-  return next;
-}
-
 function cachedCall<TCommand extends WorkspaceCommandName>(
   command: TCommand,
   args: WorkspaceCommandArgs<TCommand>,
@@ -342,46 +276,6 @@ function cachedCall<TCommand extends WorkspaceCommandName>(
   cacheArgs: unknown = args,
 ): Promise<WorkspaceCommandResult<TCommand>> {
   return cachedWorkspaceRead(command, cacheArgs, () => call(command, args, fallback));
-}
-
-function invalidateGitHubAccountIssueCache() {
-  githubAccountIssueCache = null;
-  githubAccountIssueCacheGeneration += 1;
-  const commandPrefix = "github_list_account_issues:";
-  for (const key of pendingWorkspaceReads.keys()) {
-    if (key.startsWith(commandPrefix)) pendingWorkspaceReads.delete(key);
-  }
-}
-
-function githubProjectRepoCache(repoFullName: string) {
-  const key = githubProjectRepoKey(repoFullName);
-  let cache = githubProjectCache.get(key);
-  if (!cache) {
-    cache = {
-      files: {},
-      filePreviews: {},
-      commits: {},
-      commitDetails: {},
-      issues: {},
-      issueDiscussions: {},
-      pullRequests: {},
-      pullRequestDiscussions: {},
-      pullRequestChecks: {},
-      workflowRuns: {},
-      workflowRunDetails: {},
-      workflowJobLogs: {},
-      workflowArtifactEntries: {},
-      workflowArtifactPreviews: {},
-      releases: undefined,
-      settingsSections: {},
-    };
-    githubProjectCache.set(key, cache);
-  }
-  return cache;
-}
-
-function clearGitHubProjectRepoCache(repoFullName: string) {
-  githubProjectCache.delete(githubProjectRepoKey(repoFullName));
 }
 
 function githubIssueCacheKey(options: GitHubIssueListOptions) {
@@ -527,76 +421,7 @@ function removeGitHubReleaseAsset(repoFullName: string, releaseId: number, asset
   });
 }
 
-const ALL_GITHUB_REPOSITORIES: GitHubRepositoryScope = { kind: "all" };
-
-function githubScopeCacheKey(scope: GitHubRepositoryScope) {
-  if (scope.kind === "all") return "all";
-  return `${scope.kind}:${scope.login.trim().toLocaleLowerCase()}`;
-}
-
-function githubRepositoryCacheKey(scope: GitHubRepositoryScope, page: number) {
-  return `${githubRepoBindingRevision}:${githubScopeCacheKey(scope)}:${page}`;
-}
-
-function bindingRevision(status: GitHubBindingStatus) {
-  if (status.state !== "bound" || !status.binding) return "unbound";
-  const scopes = [...status.binding.scopes].sort().join(",");
-  return `${status.binding.login.toLocaleLowerCase()}:${status.binding.boundAt}:${scopes}`;
-}
-
-function applyGitHubBindingRevision(status: GitHubBindingStatus) {
-  const next = bindingRevision(status);
-  if (next === githubRepoBindingRevision) return;
-  clearGitHubRepoCache();
-  githubRepoBindingRevision = next;
-}
-
-function writeGitHubRepoCache(cacheKey: string, scope: GitHubRepositoryScope, page: GitHubRepoPage) {
-  githubRepoCache.set(cacheKey, {
-    items: page.items.map((repo) => ({ ...repo })),
-    nextPage: page.nextPage,
-    scope: page.scope ?? scope,
-    fetchedAt: Date.now(),
-  });
-}
-
-export function readCachedGitHubRepos(
-  scope: GitHubRepositoryScope = ALL_GITHUB_REPOSITORIES,
-  page = 1,
-): GitHubRepoPage | null {
-  const cached = githubRepoCache.get(githubRepositoryCacheKey(scope, page));
-  return cached ? cloneRepoPage(cached) : null;
-}
-
-export function clearGitHubRepoCache() {
-  githubRepoCache.clear();
-  githubRepoPreloadPromises.clear();
-  invalidateGitHubAccountIssueCache();
-  githubActionNotificationCache = null;
-  githubProjectCache.clear();
-  pendingWorkspaceReads.clear();
-}
-
-export function isGitHubBindingExpiredError(err: unknown): boolean {
-  const message = String(err);
-  return message.includes("GitHub 绑定已失效") ||
-    message.includes("HTTP 401") ||
-    message.toLowerCase().includes("bad credentials");
-}
-
-export function githubErrorCode(error: unknown): string | null {
-  const message = (error instanceof Error ? error.message : String(error))
-    .replace(/^Error:\s*/, "")
-    .trim();
-  return message.match(/^(github_[a-z0-9_]+)\s*[:：]/i)?.[1]?.toLocaleLowerCase() ?? null;
-}
-
-export function isGitHubPermissionError(error: unknown): boolean {
-  const code = githubErrorCode(error);
-  return code === "github_forbidden"
-    || code === "github_org_sso_required"
-    || code === "github_notifications_scope_required";
-}
+export { isGitHubBindingExpiredError, githubErrorCode, isGitHubPermissionError };
 
 export function preloadGitHubRepos(
   opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
@@ -906,11 +731,11 @@ export function listGitHubAccountIssues(
   return cachedCall("github_list_account_issues", args, () => workspaceFallback().listGitHubAccountIssues(args))
     .then((items) => {
       if (cacheGeneration === githubAccountIssueCacheGeneration) {
-        githubAccountIssueCache = {
+        setGitHubAccountIssueCache({
           key: cacheKey,
           items: cloneProjectList(items),
           fetchedAt: Date.now(),
-        };
+        });
       }
       return cloneProjectList(items);
     });
@@ -937,11 +762,11 @@ export function listGitHubActionNotifications(
     workspaceFallback().listGitHubActionNotifications(perPage)
   )
     .then((items) => {
-      githubActionNotificationCache = {
+      setGitHubActionNotificationCache({
         key: cacheKey,
         items: cloneProjectList(items),
         fetchedAt: Date.now(),
-      };
+      });
       return cloneProjectList(items);
     });
 }

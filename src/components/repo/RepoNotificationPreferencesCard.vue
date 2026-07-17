@@ -6,13 +6,10 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
-  getGitHubRepositorySubscription,
   githubErrorCode,
   isGitHubBindingExpiredError,
   isGitHubPermissionError,
-  openUrl,
-  updateGitHubRepositorySubscription,
-} from "../../services/workspace";
+} from "../../utils/githubErrors";
 import type { GitHubRepositorySubscriptionMode } from "../../services/workspace";
 
 const props = defineProps<{
@@ -90,7 +87,7 @@ async function loadSubscription() {
     error.value = null;
     unavailable.value = null;
     try {
-      const subscription = await getGitHubRepositorySubscription(props.repoFullName);
+      const subscription = await workspace.getGitHubRepositorySubscription(props.repoFullName);
       if (!subscriptionLoader.isCurrent(runId) || requestKey.value !== key) return;
       mode.value = subscription.mode;
     } catch (err) {
@@ -114,7 +111,7 @@ async function updateMode(next: string) {
     saving.value = true;
     error.value = null;
     try {
-      const subscription = await updateGitHubRepositorySubscription(props.repoFullName, nextMode);
+      const subscription = await workspace.updateGitHubRepositorySubscription(props.repoFullName, nextMode);
       if (!subscriptionSaver.isCurrent(runId) || requestKey.value !== key) return;
       mode.value = subscription.mode;
     } catch (err) {
@@ -131,7 +128,7 @@ async function openCustomization() {
   const key = requestKey.value;
   customizeError.value = null;
   try {
-    await openUrl(repositoryUrl.value);
+    await workspace.openUrl(repositoryUrl.value);
   } catch {
     if (componentEpoch.assertAlive() && requestKey.value === key) {
       customizeError.value = "无法打开 GitHub，请稍后重试。";
