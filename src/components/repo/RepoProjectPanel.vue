@@ -4299,7 +4299,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         overflow="hidden"
       >
         <aside
-          class="project-sidebar"
+          class="card card--outlined project-sidebar"
           :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
         >
         <div
@@ -4799,6 +4799,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   --repo-sidebar-list-gap: 4px;
   --repo-sidebar-label-width: 72px;
 
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--repo-sidebar-card-gap);
