@@ -1224,7 +1224,7 @@ async function runHomePendingFlow(sessionId) {
 }
 
 async function runRepoLaunchFlow(sessionId) {
-  const candidateTarget = launchCandidateAgentId("yarn dev", null);
+  const candidateTarget = launchCandidateAgentId("pnpm dev", null);
 
   await waitForAgentElement(sessionId, "repo.toolbar.launch.input", 30_000, true);
   await waitForAgentElement(sessionId, "repo.toolbar.launch.toggle", 30_000, true);
@@ -1489,7 +1489,7 @@ async function main() {
   const needsDevServer = !(await isUrlReady(devUrl));
   const shouldBuildDebugApp = !explicitAppBinary;
   const readinessBlockers = [
-    needsDevServer && !preflight.localViteExists ? "local Vite is missing; run yarn install" : null,
+    needsDevServer && !preflight.localViteExists ? "local Vite is missing; run pnpm install" : null,
     explicitAppBinary && !preflight.appBinaryExists
       ? `configured debug app binary does not exist: ${appBinary}`
       : null,
@@ -1503,7 +1503,7 @@ async function main() {
       reason: "Agent debug readiness prerequisites are missing.",
       preflight,
       blockers: readinessBlockers,
-      nextStep: "Run yarn install, ensure cargo is on PATH, build a debug binary, or set LILIA_GITHUB_AGENT_DEBUG_APP.",
+      nextStep: "Run pnpm install, ensure cargo is on PATH, build a debug binary, or set LILIA_GITHUB_AGENT_DEBUG_APP.",
     });
     process.exitCode = 2;
     return;

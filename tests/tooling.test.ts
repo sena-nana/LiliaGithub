@@ -29,7 +29,7 @@ function runTauriInstallDryRun(rustflags: string) {
       env: {
         ...process.env,
         LILIA_GITHUB_INSTALL_DRY_RUN: "1",
-        npm_config_user_agent: "yarn/4.17.1 npm/? node/v26.5.0",
+        npm_config_user_agent: "pnpm/4.17.1 npm/? node/v26.5.0",
         RUSTFLAGS: rustflags,
       },
       encoding: "utf-8",
@@ -51,11 +51,11 @@ function scriptEnv(extra: Record<string, string>) {
 }
 
 describe("工具链行为", () => {
-  it("包管理器检查接受 Yarn 4 并拒绝其他入口", () => {
+  it("包管理器检查接受 pnpm 4 并拒绝其他入口", () => {
     const ok = spawnSync("node", ["scripts/check-package-manager.mjs"], {
       cwd: resolve("."),
       env: scriptEnv({
-        npm_config_user_agent: "yarn/4.14.1 npm/? node/?",
+        npm_config_user_agent: "pnpm/4.14.1 npm/? node/?",
       }),
       encoding: "utf-8",
     });
@@ -69,7 +69,7 @@ describe("工具链行为", () => {
       encoding: "utf-8",
     });
     expect(bad.status).toBe(1);
-    expect(bad.stderr).toContain("LiliaGithub requires Yarn 4 through Corepack.");
+    expect(bad.stderr).toContain("LiliaGithub requires pnpm 4 through Corepack.");
   });
 
   it("Tauri dev 脚本 dry-run 输出动态端口配置", () => {

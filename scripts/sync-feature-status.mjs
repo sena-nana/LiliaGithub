@@ -86,8 +86,8 @@ function validateStatus(status) {
 
 function renderStatus(status, target) {
   const generatedNotice = target.locale === "en"
-    ? `<!-- Generated from ${target.sourceLabel} by scripts/sync-feature-status.mjs. Edit the source, then run yarn feature-status:generate. -->`
-    : `<!-- 由 ${target.sourceLabel} 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 yarn feature-status:generate。 -->`;
+    ? `<!-- Generated from ${target.sourceLabel} by scripts/sync-feature-status.mjs. Edit the source, then run pnpm feature-status:generate. -->`
+    : `<!-- 由 ${target.sourceLabel} 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 pnpm feature-status:generate。 -->`;
   const sections = status.sections.map((section) => {
     const lines = section.items.map((item) => {
       const checkbox = item.complete ? "x" : " ";
@@ -134,7 +134,7 @@ const staleTargets = plans.filter(({ current, expected }) => current !== expecte
 if (staleTargets.length) {
   if (checkOnly) {
     const files = staleTargets.map(({ path }) => relative(repoRoot, path)).join(", ");
-    throw new Error(`Generated feature status is out of date: ${files}. Run yarn feature-status:generate.`);
+    throw new Error(`Generated feature status is out of date: ${files}. Run pnpm feature-status:generate.`);
   }
   await Promise.all(staleTargets.map(({ path, expected }) => writeFile(path, expected, "utf8")));
 }

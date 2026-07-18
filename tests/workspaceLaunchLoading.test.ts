@@ -45,7 +45,7 @@ beforeEach(() => {
     repoId,
     state: "running",
     pid: 1,
-    command: "yarn dev",
+    command: "pnpm dev",
     startedAt: 1,
     exitCode: null,
     error: null,
@@ -57,7 +57,7 @@ describe("workspace launch loading", () => {
     const config = deferred<null>();
     service.getRepoLaunchConfig.mockReturnValue(config.promise);
     service.listRepoLaunchCandidates.mockResolvedValue([
-      { command: "yarn dev", label: "dev", hint: null, kind: "package", cwd: null },
+      { command: "pnpm dev", label: "dev", hint: null, kind: "package", cwd: null },
     ]);
 
     const firstLoad = loadLaunch("repo-a");
@@ -65,7 +65,7 @@ describe("workspace launch loading", () => {
     config.resolve(null);
     const [first, second] = await Promise.all([firstLoad, secondLoad]);
 
-    expect(first.candidates.map((item) => item.command)).toEqual(["yarn dev"]);
+    expect(first.candidates.map((item) => item.command)).toEqual(["pnpm dev"]);
     expect(second).toBe(first);
     expect(service.getRepoLaunchConfig).toHaveBeenCalledTimes(1);
     expect(service.listRepoLaunchCandidates).toHaveBeenCalledTimes(1);
@@ -102,28 +102,28 @@ describe("workspace launch loading", () => {
     service.getRepoLaunchLogs
       .mockReturnValueOnce(oldLogs.promise)
       .mockResolvedValueOnce([
-        { index: 1, repoId: "repo-a", stream: "system", line: "启动命令：yarn dev", timestamp: 2 },
+        { index: 1, repoId: "repo-a", stream: "system", line: "启动命令：pnpm dev", timestamp: 2 },
       ]);
 
     const staleRefresh = refreshLaunchLogs("repo-a");
     await waitFor(() => expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(1));
 
     await startLaunch("repo-a");
-    expect(state.launchLogs["repo-a"]?.map((log) => log.line)).toEqual(["启动命令：yarn dev"]);
+    expect(state.launchLogs["repo-a"]?.map((log) => log.line)).toEqual(["启动命令：pnpm dev"]);
 
     oldLogs.resolve([
       { index: 2, repoId: "repo-a", stream: "stdout", line: "旧进程迟到输出", timestamp: 3 },
     ]);
     await staleRefresh;
 
-    expect(state.launchLogs["repo-a"]?.map((log) => log.line)).toEqual(["启动命令：yarn dev"]);
+    expect(state.launchLogs["repo-a"]?.map((log) => log.line)).toEqual(["启动命令：pnpm dev"]);
   });
 
   it("并发日志刷新按 index 去重合并", async () => {
     const firstLogs = deferred<NonNullable<(typeof state.launchLogs)[string]>>();
     const secondLogs = deferred<NonNullable<(typeof state.launchLogs)[string]>>();
     state.launchLogs["repo-a"] = [
-      { index: 1, repoId: "repo-a", stream: "system", line: "启动命令：yarn dev", timestamp: 1 },
+      { index: 1, repoId: "repo-a", stream: "system", line: "启动命令：pnpm dev", timestamp: 1 },
     ];
     service.getRepoLaunchLogs
       .mockReturnValueOnce(firstLogs.promise)

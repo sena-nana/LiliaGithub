@@ -753,7 +753,7 @@ vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
 });
 
 const launchConfig: ProjectLaunchConfig = {
-  command: "yarn dev",
+  command: "pnpm dev",
   cwd: null,
   source: "inferred",
   updatedAt: null,
@@ -1063,8 +1063,8 @@ describe("RepoProjectPanel", () => {
     const terminal = await view.findByLabelText("启动终端");
     expect(within(terminal).getByText("暂无输出。")).toBeInTheDocument();
     expect(within(terminal).queryByText("请选择一个启动指令并运行。")).toBeNull();
-    expect(within(terminal).queryByText("当前指令：yarn dev")).toBeNull();
-    expect(view.queryByRole("button", { name: "yarn dev" })).toBeNull();
+    expect(within(terminal).queryByText("当前指令：pnpm dev")).toBeNull();
+    expect(view.queryByRole("button", { name: "pnpm dev" })).toBeNull();
     expect(view.queryByRole("button", { name: "隐藏" })).toBeNull();
     expect(view.queryByRole("button", { name: "运行" })).toBeNull();
   });
@@ -1149,7 +1149,7 @@ describe("RepoProjectPanel", () => {
 
   it("启动终端按终端输出渲染 ANSI 颜色和多行日志", async () => {
     const launchLogs: ProjectLaunchLog[] = [
-      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：yarn dev", timestamp: 1 },
+      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：pnpm dev", timestamp: 1 },
       { index: 2, repoId: "local-repo", stream: "stdout", line: "line 1\nline 2", timestamp: 2 },
       { index: 3, repoId: "local-repo", stream: "stdout", line: "\u001b[32mready\u001b[0m <tag>", timestamp: 3 },
       { index: 4, repoId: "local-repo", stream: "stderr", line: "plain error", timestamp: 4 },
@@ -1162,7 +1162,7 @@ describe("RepoProjectPanel", () => {
     });
 
     const terminal = await view.findByLabelText("启动终端");
-    expect(terminal).toHaveTextContent("启动命令：yarn dev");
+    expect(terminal).toHaveTextContent("启动命令：pnpm dev");
     expect(terminal.textContent).toContain("line 1\nline 2\nready <tag>\nplain error");
     expect(terminal).not.toHaveTextContent("[stdout]");
     expect(terminal).not.toHaveTextContent("[stderr]");
@@ -1171,7 +1171,7 @@ describe("RepoProjectPanel", () => {
 
   it("启动终端将动态进度日志折叠为当前行", async () => {
     const launchLogs: ProjectLaunchLog[] = [
-      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：yarn tauri:dev", timestamp: 1 },
+      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：pnpm tauri:dev", timestamp: 1 },
       { index: 2, repoId: "local-repo", stream: "stdout", line: "\u001b[36mBuilding 1/3\u001b[0m <old>", writeMode: "replace", timestamp: 2 },
       { index: 3, repoId: "local-repo", stream: "stdout", line: "\u001b[36mBuilding 2/3\u001b[0m <mid>", writeMode: "replace", timestamp: 3 },
       { index: 4, repoId: "local-repo", stream: "stdout", line: "\u001b[32mBuilding 3/3\u001b[0m <done>", writeMode: "append", timestamp: 4 },
@@ -1187,7 +1187,7 @@ describe("RepoProjectPanel", () => {
 
     const terminal = await view.findByLabelText("启动终端");
     const text = terminal.textContent ?? "";
-    expect(terminal).toHaveTextContent("启动命令：yarn tauri:dev");
+    expect(terminal).toHaveTextContent("启动命令：pnpm tauri:dev");
     expect(text).not.toContain("Building 1/3");
     expect(text).not.toContain("Building 2/3");
     expect(text.match(/Building 3\/3/g)).toHaveLength(1);
@@ -1209,7 +1209,7 @@ describe("RepoProjectPanel", () => {
 
     expect(view.queryByRole("region", { name: "快速启动" })).toBeNull();
     expect(view.queryByLabelText("启动终端")).toBeNull();
-    expect(view.queryByRole("button", { name: "yarn dev" })).toBeNull();
+    expect(view.queryByRole("button", { name: "pnpm dev" })).toBeNull();
     expect(view.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
@@ -2051,7 +2051,7 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("button", { name: "查看日志" }));
-    expect((await view.findAllByText(/yarn test/)).length).toBeGreaterThan(0);
+    expect((await view.findAllByText(/pnpm test/)).length).toBeGreaterThan(0);
     expect(getGitHubWorkflowJobLog).toHaveBeenCalledWith("sena-nana/remote-repo", 13103, { forceRefresh: false });
 
     await fireEvent.click(view.getByText("dist"));

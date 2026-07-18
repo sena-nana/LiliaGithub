@@ -790,12 +790,12 @@ describe("workspace incremental refresh", () => {
       },
     };
     state.repoDetails[target.id] = repoDetail(target);
-    state.launchConfigs[target.id] = { command: "yarn dev", cwd: null, source: "manual", updatedAt: 1 };
+    state.launchConfigs[target.id] = { command: "pnpm dev", cwd: null, source: "manual", updatedAt: 1 };
     state.launchStatuses[target.id] = {
       repoId: target.id,
       state: "running",
       pid: 1234,
-      command: "yarn dev",
+      command: "pnpm dev",
       startedAt: 1,
       exitCode: null,
       error: null,

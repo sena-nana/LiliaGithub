@@ -44,14 +44,14 @@ async function findAvailablePort(startPort) {
 function yarnSpawn() {
   if (process.platform !== "win32") {
     return {
-      command: "yarn",
+      command: "pnpm",
       argsPrefix: [],
     };
   }
 
   return {
     command: process.env.ComSpec || "cmd.exe",
-    argsPrefix: ["/d", "/s", "/c", "yarn.cmd"],
+    argsPrefix: ["/d", "/s", "/c", "pnpm.cmd"],
   };
 }
 

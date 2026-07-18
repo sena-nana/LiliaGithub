@@ -67,7 +67,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 
 ## Feature Status
 
-<!-- Generated from docs/feature-status.json by scripts/sync-feature-status.mjs. Edit the source, then run yarn feature-status:generate. -->
+<!-- Generated from docs/feature-status.json by scripts/sync-feature-status.mjs. Edit the source, then run pnpm feature-status:generate. -->
 
 The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-17.
 
@@ -152,41 +152,39 @@ LiliaGithub/
 │   └── tauri.conf.json
 ├── tests/                      # Vitest coverage
 ├── package.json
-└── yarn.lock
+└── pnpm-lock.yaml
 ```
 
 ## Early Development
 
-LiliaGithub uses Node.js 26.5.0, Corepack 0.35.0, and the repository-pinned Yarn 4.17.1. Rust is pinned through the repository root `rust-toolchain.toml`. Install Corepack explicitly because Node.js 26 no longer bundles it, then run contributor commands from the repository root.
+LiliaGithub uses Node.js 26.5.0, Corepack 0.35.0, and the repository-pinned pnpm 4.17.1. Rust is pinned through the repository root `rust-toolchain.toml`. Install Corepack explicitly because Node.js 26 no longer bundles it, then run contributor commands from the repository root.
 
 ```bash
-# 1) Install Corepack and enable the repository Yarn shim
+# 1) Install Corepack and enable the repository pnpm shim
 npm install --global corepack@0.35.0
-corepack enable yarn
-
-# 2) Install dependencies
-yarn install
+corepack enable pnpm # 2) Install dependencies
+pnpm install
 
 # 3) Start only the Vite frontend
-yarn dev
+pnpm dev
 
 # 4) Start the Tauri desktop app
-yarn tauri:dev
+pnpm tauri:dev
 
 # 5) Run tests, frontend build, and Tauri Rust check
-yarn verify
+pnpm verify
 
 # 6) Start, build, or preview the documentation site
-yarn docs:dev
-yarn docs:build
-yarn docs:preview
+pnpm docs:dev
+pnpm docs:build
+pnpm docs:preview
 ```
 
-If `yarn --version` does not report `4.17.1`, run commands through Corepack explicitly, for example `corepack yarn install` and `corepack yarn dev`.
+If `pnpm --version` does not report `4.17.1`, run commands through Corepack explicitly, for example `pnpm install` and `pnpm dev`.
 
 ## First Release Packaging
 
-Release packaging is driven by the GitHub Actions release workflow. Both CI and release jobs load Rust from `rust-toolchain.toml` before running `yarn verify` or the Tauri release action, so release validation and bundle builds use the same pinned Rust version as local development. The root `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` are aligned to the same release version, such as `1.0.0-beta.1`.
+Release packaging is driven by the GitHub Actions release workflow. Both CI and release jobs load Rust from `rust-toolchain.toml` before running `pnpm verify` or the Tauri release action, so release validation and bundle builds use the same pinned Rust version as local development. The root `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` are aligned to the same release version, such as `1.0.0-beta.1`.
 
 ### `v1.0.0-beta.1` Notes
 

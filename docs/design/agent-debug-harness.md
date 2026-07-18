@@ -41,7 +41,7 @@ The backend keeps a bounded in-memory log buffer. It is intentionally separate f
 Run:
 
 ```powershell
-yarn agent-debug:verify
+pnpm agent-debug:verify
 ```
 
 The script expects `cargo` for readiness and uses `tauri-driver` plus EdgeDriver when desktop replay is available. It rebuilds the managed debug binary for the selected Tauri `devUrl` before full replay so the desktop shell and Vite server cannot drift to different ports. If the default dev server port is already occupied by another app, it picks a free localhost port and starts Vite on the same port.

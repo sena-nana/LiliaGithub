@@ -1,6 +1,6 @@
 ---
 name: lilia-agent-debug
-description: Agent debugging workflow for LiliaGithub. Use when adding, changing, validating, or reviewing Agent debug support, data-agent-id targets, window.__liliaAgentDebug, yarn agent-debug:verify, tauri-driver readiness, debug-only UI instrumentation, or desktop replay/debug harness behavior.
+description: Agent debugging workflow for LiliaGithub. Use when adding, changing, validating, or reviewing Agent debug support, data-agent-id targets, window.__liliaAgentDebug, pnpm agent-debug:verify, tauri-driver readiness, debug-only UI instrumentation, or desktop replay/debug harness behavior.
 ---
 
 # Lilia Agent Debug
@@ -29,7 +29,7 @@ Treat Agent debugging as a real developer interface, not as visible product UI. 
 
 ## Expected Interfaces
 
-- `yarn agent-debug:verify`: returns readiness, important files, stable targets, relevant environment flags, and external tool availability.
+- `pnpm agent-debug:verify`: returns readiness, important files, stable targets, relevant environment flags, and external tool availability.
 - `window.__liliaAgentDebug.observe()`: returns route, viewport, active element, visible `data-agent-id` tree, and recent errors.
 - `window.__liliaAgentDebug.act(...)`: operates by `data-agent-id`, not by text, class, coordinate, or screenshot matching.
 - `window.__liliaAgentDebug.mark(...)`: records a debug marker without changing business data.
@@ -47,6 +47,6 @@ Use `tauri-driver` for desktop automation, but do not model it as an npm depende
 ## Validation
 
 - For harness changes in LiliaUI, run focused UI tests plus the relevant package typecheck.
-- For `@lilia/tools` report changes, run focused tools tests and `yarn workspace @lilia/tools typecheck`.
-- For agent debug script or target changes, run `yarn agent-debug:verify`, `yarn test tests/tooling.test.ts`, and `yarn build` when frontend files changed.
+- For `@lilia/tools` report changes, run focused tools tests and `pnpm --filter @lilia/tools typecheck`.
+- For agent debug script or target changes, run `pnpm agent-debug:verify`, `pnpm test tests/tooling.test.ts`, and `pnpm build` when frontend files changed.
 - If a full desktop replay is expected but cannot run, report the missing tool, command, artifact path if any, and remaining risk.

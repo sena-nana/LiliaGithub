@@ -30,7 +30,7 @@ describe("parseWorkflowJobLogSections", () => {
       "prepare runner",
       "##[endgroup]",
       "##[group]Run tests",
-      "yarn test",
+      "pnpm test",
       "\u001b[32mpass\u001b[0m",
       "##[endgroup]",
     ].join("\n"));
@@ -38,7 +38,7 @@ describe("parseWorkflowJobLogSections", () => {
     expect(sections).toHaveLength(2);
     expect(sections[0]).toMatchObject({ matched: true, content: "prepare runner" });
     expect(sections[1].matched).toBe(true);
-    expect(sections[1].content).toContain("yarn test");
+    expect(sections[1].content).toContain("pnpm test");
     expect(sections[1].content).toContain("\u001b[32mpass\u001b[0m");
   });
 

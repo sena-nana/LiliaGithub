@@ -20,7 +20,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely.
 - `$lilia-app-boundary`: 判断改动属于 LiliaGithub 应用代码还是 LiliaUI 公共能力。
 - `$lilia-app-validation`: 选择功能验证、测试、构建、Tauri 检查和结果汇报方式。
 - `$lilia-app-git`: 暂存、提交、推送、合并和依赖更新收口。
-- `$lilia-agent-debug`: Agent 调试入口、`data-agent-id`、`window.__liliaAgentDebug`、`yarn agent-debug:verify` 和 `tauri-driver` 调试验证。
+- `$lilia-agent-debug`: Agent 调试入口、`data-agent-id`、`window.__liliaAgentDebug`、`pnpm agent-debug:verify` 和 `tauri-driver` 调试验证。
 
 ## 框架边界
 

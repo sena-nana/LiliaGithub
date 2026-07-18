@@ -67,7 +67,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 
 ## 功能状态
 
-<!-- 由 docs/feature-status.json 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 yarn feature-status:generate。 -->
+<!-- 由 docs/feature-status.json 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 pnpm feature-status:generate。 -->
 
 以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-17。
 
@@ -152,37 +152,35 @@ LiliaGithub/
 │   └── tauri.conf.json
 ├── tests/                      # Vitest 测试
 ├── package.json
-└── yarn.lock
+└── pnpm-lock.yaml
 ```
 
 ## 早期开发
 
-LiliaGithub 固定使用 Node.js 26.5.0、Corepack 0.35.0 和 Yarn 4.17.1。Node.js 26 不再内置 Corepack，因此首次使用时需显式安装，再从仓库根目录运行贡献命令。
+LiliaGithub 固定使用 Node.js 26.5.0、Corepack 0.35.0 和 pnpm 4.17.1。Node.js 26 不再内置 Corepack，因此首次使用时需显式安装，再从仓库根目录运行贡献命令。
 
 ```bash
-# 1) 安装 Corepack 并启用仓库要求的 Yarn shim
+# 1) 安装 Corepack 并启用仓库要求的 pnpm shim
 npm install --global corepack@0.35.0
-corepack enable yarn
-
-# 2) 安装依赖
-yarn install
+corepack enable pnpm # 2) 安装依赖
+pnpm install
 
 # 3) 仅启动 Vite 前端
-yarn dev
+pnpm dev
 
 # 4) 启动 Tauri 桌面端
-yarn tauri:dev
+pnpm tauri:dev
 
 # 5) 运行测试、前端构建和 Tauri Rust 编译检查
-yarn verify
+pnpm verify
 
 # 6) 启动、构建或预览文档站
-yarn docs:dev
-yarn docs:build
-yarn docs:preview
+pnpm docs:dev
+pnpm docs:build
+pnpm docs:preview
 ```
 
-如果 `yarn --version` 不是 `4.17.1`，请显式通过 Corepack 运行命令，例如 `corepack yarn install` 和 `corepack yarn dev`。
+如果 `pnpm --version` 不是 `4.17.1`，请显式通过 Corepack 运行命令，例如 `pnpm install` 和 `pnpm dev`。
 
 ## 首发发布打包
 
