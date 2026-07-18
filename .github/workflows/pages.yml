@@ -2,8 +2,7 @@ name: Deploy Pages
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,20 +18,15 @@ jobs:
   build:
     name: Build docs
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
+      - name: Set up Node.js and pnpm
+        uses: sena-nana/LiliaUI/.github/actions/setup-node-pnpm@aa0c1df985de80420764ca5d952afa29f47c4ea8
       - name: Build docs
-        run: corepack yarn docs:build
-
+        run: pnpm docs:build
       - name: Configure Pages
         uses: actions/configure-pages@v6
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
@@ -45,7 +39,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
