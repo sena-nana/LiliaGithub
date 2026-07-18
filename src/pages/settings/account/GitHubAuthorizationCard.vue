@@ -3,6 +3,7 @@ import { SettingsRow, UiButton, UiCard } from "../../../ui";
 import { computed, ref, watch } from "vue";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { useWorkspace } from "../../../composables/useWorkspace";
+import { hasCompleteGitHubAuthorization } from "../../../services/workspace/authScopes";
 
 const workspace = useWorkspace();
 const confirmingUnbind = ref(false);
@@ -15,15 +16,15 @@ const authError = computed(() => error.value || (
     ? workspace.state.error
     : null
 ));
-const organizationAccessLimited = computed(() =>
-  Boolean(workspace.githubBinding.value && !workspace.githubBinding.value.scopes.includes("read:org")),
+const authorizationIncomplete = computed(() =>
+  Boolean(workspace.githubBinding.value && !hasCompleteGitHubAuthorization(workspace.githubBinding.value.scopes)),
 );
 
 async function startBinding() {
   if (workspace.state.authLoading || unbinding.value) return;
   error.value = null;
   try {
-    await workspace.startAuthFlow("binding");
+    await workspace.startAuthFlow();
     if (componentEpoch.assertAlive()) error.value = workspace.state.error;
   } catch (err) {
     if (componentEpoch.assertAlive()) error.value = String(err);
@@ -67,8 +68,8 @@ watch(() => workspace.githubBinding.value, (binding) => {
         </template>
       </div>
     </SettingsRow>
-    <SettingsRow v-if="organizationAccessLimited" label="组织访问受限" hint="部分组织可能不会出现在仓库范围中。">
-      <UiButton size="sm" agent-id="settings.account.github.organization-authorize" @click="startBinding">补充授权</UiButton>
+    <SettingsRow v-if="authorizationIncomplete" label="授权待补全" hint="部分 GitHub 功能暂不可用。">
+      <UiButton size="sm" agent-id="settings.account.github.complete-authorization" @click="startBinding">补全授权</UiButton>
     </SettingsRow>
     <SettingsRow v-if="workspace.deviceFlow.value" label="设备码" :hint="workspace.authRemainingText.value ? `剩余 ${workspace.authRemainingText.value}` : undefined">
       <code class="github-card__device-code">{{ workspace.deviceFlow.value.userCode }}</code>

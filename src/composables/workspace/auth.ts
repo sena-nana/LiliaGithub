@@ -1,7 +1,7 @@
 import { deviceFlow, applyBindingStatus, state } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 import { copyText } from "./system";
-import type { GitHubAuthPurpose, GitHubDeviceFlowPollResult } from "../../services/workspace";
+import type { GitHubDeviceFlowPollResult } from "../../services/workspace";
 import { reloadAccountWorkspace } from "./account";
 
 let authPollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -71,7 +71,7 @@ async function copyAuthUserCode() {
   state.authNotice = "授权码已复制，请在 GitHub 授权页粘贴。";
 }
 
-export async function startAuthFlow(purpose: GitHubAuthPurpose = "binding") {
+export async function startAuthFlow() {
   authFlowVersion += 1;
   const currentVersion = authFlowVersion;
   clearAuthTimers();
@@ -82,7 +82,7 @@ export async function startAuthFlow(purpose: GitHubAuthPurpose = "binding") {
   state.authRemainingSeconds = null;
   try {
     const service = await loadWorkspaceService();
-    const flow = await service.startGitHubDeviceFlow(purpose);
+    const flow = await service.startGitHubDeviceFlow();
     if (currentVersion !== authFlowVersion) return;
     deviceFlow.value = flow;
     state.authFlowStatus = "pending";

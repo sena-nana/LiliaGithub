@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AccountSection from "../src/pages/settings/AccountSection.vue";
+import { REQUIRED_GITHUB_AUTH_SCOPES } from "../src/services/workspace/authScopes";
 
 const { preferences, workspace } = vi.hoisted(() => {
   const preferences = {
@@ -73,6 +74,28 @@ describe("账户设置", () => {
         repositorySort: { key: "updated", direction: "desc" },
         actions: { state: "all", sort: "updated", direction: "desc" },
       }));
+    });
+  });
+
+  it("旧绑定统一提示补全授权，完整授权后不再提示", async () => {
+    const view = render(AccountSection);
+    const completeAuthorization = view.container.querySelector(
+      '[data-agent-id="settings.account.github.complete-authorization"]',
+    ) as HTMLButtonElement;
+
+    expect(completeAuthorization).toBeInTheDocument();
+    expect(screen.getByText("授权待补全")).toBeInTheDocument();
+    await fireEvent.click(completeAuthorization);
+    expect(workspace.startAuthFlow).toHaveBeenCalledWith();
+
+    workspace.githubBinding.value = {
+      ...workspace.githubBinding.value!,
+      scopes: [...REQUIRED_GITHUB_AUTH_SCOPES],
+    };
+    await waitFor(() => {
+      expect(view.container.querySelector(
+        '[data-agent-id="settings.account.github.complete-authorization"]',
+      )).toBeNull();
     });
   });
 });

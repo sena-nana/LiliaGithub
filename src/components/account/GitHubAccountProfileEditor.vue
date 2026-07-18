@@ -182,7 +182,7 @@ async function authorizeEditing() {
   error.value = null;
   notice.value = null;
   try {
-    await workspace.startAuthFlow("profileWrite");
+    await workspace.startAuthFlow();
     if (componentEpoch.assertAlive() && workspace.state.error) error.value = profileError(workspace.state.error);
   } catch (err) {
     if (componentEpoch.assertAlive()) error.value = profileError(err);
@@ -354,7 +354,7 @@ watch(
             :disabled="authPending"
             @click="authorizeEditing"
           >
-            授权编辑资料
+            补全授权
           </UiButton>
         </div>
 

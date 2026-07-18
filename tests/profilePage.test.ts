@@ -277,7 +277,6 @@ describe("用户资料页", () => {
 
     await fireEvent.click(agent(view.container, "profile.authorize"));
     expect(workspace.startAuthFlow).toHaveBeenCalledTimes(1);
-    expect(workspace.startAuthFlow).toHaveBeenCalledWith("profileWrite");
 
     workspace.githubBinding.value = {
       ...workspace.githubBinding.value!,

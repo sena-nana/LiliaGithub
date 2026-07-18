@@ -29,7 +29,7 @@ use crate::workspace::{run_core_operation, run_core_operation_as};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
     GitHubAccountProfile, GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest,
-    GitHubAuthPurpose, GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult,
+    GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult,
     GitHubCreateIssueRequest, GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest,
     GitHubCreateRepoRequest, GitHubDevelopmentItem, GitHubDeviceFlowPollResult,
     GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion,
@@ -55,8 +55,6 @@ use lilia_github_contracts::workspace::{
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub(super) const GITHUB_SCOPE: &str =
-    "repo workflow read:user read:org delete_repo read:project notifications";
-pub(super) const GITHUB_PROFILE_WRITE_SCOPE: &str =
     "repo workflow user read:org delete_repo read:project notifications";
 pub(super) const GITHUB_USER_SCOPE: &str = "user";
 pub(super) const GITHUB_REPO_SCOPE: &str = "repo";
@@ -4172,10 +4170,7 @@ pub async fn github_update_account_profile(
     .await
 }
 
-pub async fn github_start_device_flow(
-    app: AppHandle,
-    purpose: Option<GitHubAuthPurpose>,
-) -> Result<GitHubDeviceFlowStart, String> {
+pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlowStart, String> {
     run_core_operation(
         app.clone(),
         OperationKind::GitHubRead,
@@ -4185,13 +4180,9 @@ pub async fn github_start_device_flow(
                 return Err("GitHub Client ID 未配置".to_string());
             };
             let client = build_client()?;
-            let scope = match purpose.unwrap_or_default() {
-                GitHubAuthPurpose::Binding => GITHUB_SCOPE,
-                GitHubAuthPurpose::ProfileWrite => GITHUB_PROFILE_WRITE_SCOPE,
-            };
             let response =
                 github_oauth_headers(client.post("https://github.com/login/device/code"))
-                    .form(&[("client_id", client_id), ("scope", scope)])
+                    .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
                     .send()
                     .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
             if !response.status().is_success() {
@@ -5642,17 +5633,19 @@ mod repository_scope_tests {
     }
 
     #[test]
-    fn oauth_scope_requests_read_org() {
-        assert!(normalize_scope_list(Some(GITHUB_SCOPE))
-            .iter()
-            .any(|scope| scope == GITHUB_READ_ORG_SCOPE));
-    }
-
-    #[test]
-    fn profile_write_scope_upgrades_read_user_to_user() {
-        let scopes = normalize_scope_list(Some(GITHUB_PROFILE_WRITE_SCOPE));
-        assert!(scopes.iter().any(|scope| scope == GITHUB_USER_SCOPE));
-        assert!(!scopes.iter().any(|scope| scope == "read:user"));
+    fn oauth_scope_requests_complete_access_once() {
+        assert_eq!(
+            normalize_scope_list(Some(GITHUB_SCOPE)),
+            vec![
+                GITHUB_REPO_SCOPE.to_string(),
+                "workflow".to_string(),
+                GITHUB_USER_SCOPE.to_string(),
+                GITHUB_READ_ORG_SCOPE.to_string(),
+                GITHUB_DELETE_REPO_SCOPE.to_string(),
+                GITHUB_READ_PROJECT_SCOPE.to_string(),
+                GITHUB_NOTIFICATIONS_SCOPE.to_string(),
+            ]
+        );
     }
 
     #[test]

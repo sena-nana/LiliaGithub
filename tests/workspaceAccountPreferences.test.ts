@@ -13,6 +13,7 @@ import {
   updateGitHubAccountProfile,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
+import { REQUIRED_GITHUB_AUTH_SCOPES } from "../src/services/workspace/authScopes";
 import type { AccountPreferences, GitHubBindingStatus } from "../src/services/workspace";
 
 type WorkspaceFallback = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
@@ -80,7 +81,7 @@ describe("workspace account preferences fallback", () => {
     expect((await getWorkspaceSettings()).workspaceRoot).toBe("C:\\Accounts\\Anonymous");
   });
 
-  it("grants profile write scope on demand and persists editable profile fields per account", async () => {
+  it("upgrades a legacy binding to the complete scope set and persists editable profile fields", async () => {
     const request = {
       name: "Lilia User",
       email: "lilia@example.com",
@@ -92,10 +93,11 @@ describe("workspace account preferences fallback", () => {
       hireable: true,
     };
 
+    fallback.setFallbackGitHubBindingStatusForTests(binding("legacy-account", ["repo", "read:user"]));
     await expect(updateGitHubAccountProfile(request)).rejects.toThrow();
-    await startGitHubDeviceFlow("profileWrite");
-    await pollGitHubDeviceFlow("device-code-profileWrite");
-    expect((await getGitHubBindingStatus()).binding?.scopes).toContain("user");
+    await startGitHubDeviceFlow();
+    await pollGitHubDeviceFlow("device-code");
+    expect((await getGitHubBindingStatus()).binding?.scopes).toEqual(REQUIRED_GITHUB_AUTH_SCOPES);
     expect(await updateGitHubAccountProfile(request)).toMatchObject(request);
     expect(await getGitHubAccountProfile()).toMatchObject(request);
 
