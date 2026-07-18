@@ -9,12 +9,12 @@ description: Validation strategy for LiliaGithub changes. Use when Codex needs t
 
 Run checks that validate real behavior affected by the change. Prefer targeted functional checks over broad or brittle assertions.
 
-- Always consider `yarn agent-debug:verify` when app boundaries, important files, or recommended checks may have changed.
+- Always consider `pnpm agent-debug:verify` when app boundaries, important files, or recommended checks may have changed.
 - Use `$lilia-agent-debug` to choose checks for UI main paths, `data-agent-id`, debug harnesses, and desktop replay support.
-- Use `yarn test` for route behavior, command wiring, component behavior, config synchronization expectations, and business logic.
-- Use `yarn build` for frontend compile, bundling, route import, and type integration risk.
+- Use `pnpm test` for route behavior, command wiring, component behavior, config synchronization expectations, and business logic.
+- Use `pnpm build` for frontend compile, bundling, route import, and type integration risk.
 - Use `cargo check --manifest-path src-tauri/Cargo.toml` for app-owned Rust changes.
-- Use `yarn verify` for broader final confidence when the change crosses frontend, Tauri, config, or build boundaries.
+- Use `pnpm verify` for broader final confidence when the change crosses frontend, Tauri, config, or build boundaries.
 
 ## Test Quality
 
@@ -32,16 +32,16 @@ When changing LiliaGithub's local LiliaUI dependency switch, package scripts, or
 
 - Treat the switch itself as the behavior under test. Do not add low-value tests that hard-match script output.
 - Run `node --check scripts/lilia-ui-deps.mjs` after editing the switch script.
-- Run `yarn liliaui:local`, confirm the four `@lilia/*` packages report local `portal:` sources, then run `yarn liliaui:remote` and confirm `yarn liliaui:status` reports remote again.
-- Confirm `package.json` and `yarn.lock` do not retain LiliaUI `resolutions` or `portal:../LiliaUI` entries after switching back. Preserve unrelated resolutions such as dependency overrides.
-- Run `yarn install --immutable` to prove the committed default dependency state still uses the pinned GitHub lockfile.
+- Run `pnpm liliaui:local`, confirm the four `@lilia/*` packages report local `portal:` sources, then run `pnpm liliaui:remote` and confirm `pnpm liliaui:status` reports remote again.
+- Confirm `package.json` and `pnpm-lock.yaml` do not retain LiliaUI `resolutions` or `portal:../LiliaUI` entries after switching back. Preserve unrelated resolutions such as dependency overrides.
+- Run `pnpm install --frozen-lockfile` to prove the committed default dependency state still uses the pinned GitHub lockfile.
 - Skip broader desktop or Agent validation unless the change also affects app runtime behavior, build wrappers, UI, commands, or the Agent debug harness.
 
 When a LiliaGithub app consumes a changed LiliaUI package:
 
-- Validate LiliaUI in its source repository first: use `yarn typecheck` and `yarn test` for package or UI changes.
+- Validate LiliaUI in its source repository first: use `pnpm typecheck` and `pnpm test` for package or UI changes.
 - For shared Tauri runtime changes in LiliaUI, run the relevant Cargo package tests in LiliaUI.
-- After refreshing the LiliaGithub app dependency or lockfile, run at least `yarn agent-debug:verify`, `yarn test`, and any affected build or Tauri check.
+- After refreshing the LiliaGithub app dependency or lockfile, run at least `pnpm agent-debug:verify`, `pnpm test`, and any affected build or Tauri check.
 
 ## Reporting
 

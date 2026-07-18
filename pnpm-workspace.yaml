@@ -1,0 +1,5 @@
+overrides:
+  "glob@^10.4.2": "13.0.6"
+
+allowBuilds:
+  esbuild: true

@@ -1009,7 +1009,7 @@ describe("基础路由", () => {
   it("仓库详情页右上角刷新 Run 的启动配置数据", async () => {
     workspaceFallback.setFallbackLaunchCandidatesForTests({
       LiliaGithub: [{
-        command: "yarn old-refresh-command",
+        command: "pnpm old-refresh-command",
         label: "old refresh command",
         hint: null,
         kind: "script",
@@ -1018,12 +1018,12 @@ describe("基础路由", () => {
     });
     await renderAt("/repos/LiliaGithub/run");
     await waitFor(() => {
-      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn old-refresh-command");
+      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("pnpm old-refresh-command");
     });
 
     workspaceFallback.setFallbackLaunchCandidatesForTests({
       LiliaGithub: [{
-        command: "yarn refreshed-command",
+        command: "pnpm refreshed-command",
         label: "refreshed command",
         hint: null,
         kind: "script",
@@ -1034,7 +1034,7 @@ describe("基础路由", () => {
     await waitFor(() => expect(refresh).toBeEnabled());
     await fireEvent.click(refresh);
     await waitFor(() => {
-      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn refreshed-command");
+      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("pnpm refreshed-command");
     });
   });
 
@@ -1362,7 +1362,7 @@ describe("基础路由", () => {
     const launchGroup = screen.getByRole("group", { name: "命令执行" });
     const launchInput = await within(launchGroup).findByRole("combobox", { name: "启动命令" });
     await waitFor(() => {
-      expect(launchInput).toHaveValue("yarn tauri:dev");
+      expect(launchInput).toHaveValue("pnpm tauri:dev");
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
@@ -1382,20 +1382,20 @@ describe("基础路由", () => {
     expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));
     await waitFor(() => {
-      expect(launchInput).toHaveValue("yarn verify");
+      expect(launchInput).toHaveValue("pnpm verify");
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     const idleTerminal = screen.getByLabelText("启动终端");
     expect(idleTerminal).toHaveTextContent("暂无输出。");
     expect(idleTerminal).not.toHaveTextContent("启动命令：");
-    expect(within(launchCard).queryByRole("button", { name: /yarn verify/ })).toBeNull();
+    expect(within(launchCard).queryByRole("button", { name: /pnpm verify/ })).toBeNull();
     expect(within(launchCard).queryByRole("button", { name: "隐藏" })).toBeNull();
 
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
       const terminal = screen.getByLabelText("启动终端");
-      expect(terminal).toHaveTextContent("启动命令：yarn verify");
+      expect(terminal).toHaveTextContent("启动命令：pnpm verify");
       expect(terminal).toHaveTextContent("开发服务已启动");
     });
     expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();
@@ -1405,17 +1405,17 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
-    expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：yarn verify");
+    expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：pnpm verify");
     await waitFor(() => {
       expect(screen.getByLabelText("启动终端")).toHaveTextContent("已停止快速启动进程");
     });
 
     await fireEvent.update(launchInput, "   ");
     expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeDisabled();
-    await fireEvent.update(launchInput, "yarn test --watch");
+    await fireEvent.update(launchInput, "pnpm test --watch");
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
     await waitFor(() => {
-      expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：yarn test --watch");
+      expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：pnpm test --watch");
     });
     await waitFor(() => {
       expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();

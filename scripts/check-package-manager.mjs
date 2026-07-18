@@ -8,16 +8,16 @@ const packageJson = JSON.parse(
 const requiredPackageManager = packageJson.packageManager;
 const userAgent = process.env.npm_config_user_agent ?? "";
 
-const yarnMatch = userAgent.match(/\byarn\/([^\s]+)/);
-const yarnVersion = yarnMatch?.[1];
-const yarnMajor = Number.parseInt(yarnVersion?.split(".")[0] ?? "", 10);
+const pnpmMatch = userAgent.match(/\bpnpm\/([^\s]+)/);
+const pnpmVersion = pnpmMatch?.[1];
+const pnpmMajor = Number.parseInt(pnpmVersion?.split(".")[0] ?? "", 10);
 
-if (yarnMajor >= 4) {
+if (pnpmMajor >= 11) {
   process.exit(0);
 }
 
-const reason = yarnVersion
-  ? `Detected Yarn ${yarnVersion}.`
+const reason = pnpmVersion
+  ? `Detected pnpm ${pnpmVersion}.`
   : userAgent
     ? `Detected package manager: ${userAgent}.`
     : "Could not detect the active package manager.";
@@ -28,19 +28,19 @@ process.exit(1);
 function formatMessage(reason) {
   return [
     "",
-    "LiliaGithub requires Yarn 4 through Corepack.",
+    "LiliaGithub requires pnpm 4 through Corepack.",
     reason,
     "",
     `Expected package manager: ${requiredPackageManager}`,
     "",
     "Fix:",
     "  npm install --global corepack@0.35.0",
-    "  corepack enable yarn",
-    "  yarn install",
+    "  corepack enable pnpm",
+    "  pnpm install",
     "",
-    "If the `yarn` command still resolves to Yarn 1, run the commands through Corepack:",
-    "  corepack yarn install",
-    "  corepack yarn dev",
+    "If the `pnpm` command still resolves to pnpm 1, run the commands through Corepack:",
+    "  pnpm install",
+    "  pnpm dev",
     "",
   ].join("\n");
 }

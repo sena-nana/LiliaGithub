@@ -20,7 +20,7 @@ const packages = [
 
 const mode = process.argv[2] || "status";
 if (!["local", "remote", "status"].includes(mode)) {
-  fail("Usage: yarn liliaui:local | yarn liliaui:remote | yarn liliaui:status");
+  fail("Usage: pnpm liliaui:local | pnpm liliaui:remote | pnpm liliaui:status");
 }
 
 if (mode === "status") {
@@ -54,7 +54,7 @@ function assertLocalPackages(packageRoots) {
 function runYarn(args) {
   const yarnCli = process.env.npm_execpath;
   if (!yarnCli) {
-    fail("Run this script through a root Yarn command, for example: yarn liliaui:local");
+    fail("Run this script through a root pnpm command, for example: pnpm liliaui:local");
   }
 
   const isWindowsShim = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(yarnCli);

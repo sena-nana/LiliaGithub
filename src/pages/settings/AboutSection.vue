@@ -42,7 +42,7 @@
           </div>
         </details>
       </template>
-      <p v-else class="about-license-fallback">未生成许可清单，请重试 yarn about:licenses</p>
+      <p v-else class="about-license-fallback">未生成许可清单，请重试 pnpm about:licenses</p>
     </section>
   </div>
 </template>

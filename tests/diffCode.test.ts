@@ -38,7 +38,7 @@ describe("diff code rendering helpers", () => {
     expectHighlightedText("  <h1>LiliaGithub</h1>", "vue");
     expectHighlightedText("  pub github_full_name: Option<String>,", "rust");
     expectHighlightedText("export const title: string = \"Lilia\";", "typescript");
-    expectHighlightedText("## Use `yarn test` in [CI](https://example.com)", "markdown");
+    expectHighlightedText("## Use `pnpm test` in [CI](https://example.com)", "markdown");
   });
 
   it("falls back to plain text for unknown languages and empty lines", () => {

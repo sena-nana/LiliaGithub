@@ -213,7 +213,7 @@ export async function call<TCommand extends WorkspaceCommandName>(
     return fallbackCall();
   }
   throw new Error(
-    `Tauri command ${commandEntry.command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
+    `Tauri command ${commandEntry.command} is unavailable outside Tauri. Use pnpm tauri:dev, or pnpm dev for the development mock mode.`,
   );
 }
 

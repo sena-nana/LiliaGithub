@@ -57,7 +57,7 @@ body:
       value: |
         - OS:
         - 模板版本 / commit:
-        - Node / Yarn:
+        - Node / pnpm:
         - Rust:
         - 相关配置:
     validations:

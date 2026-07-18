@@ -2509,13 +2509,13 @@ function createFallbackSettings(
     accountPreferences: createDefaultAccountPreferences(workspaceRoot),
     projectLaunchConfigs: {
       LiliaGithub: {
-        command: "yarn tauri:dev",
+        command: "pnpm tauri:dev",
         cwd: null,
         source: "manual",
         updatedAt: Date.now(),
       },
       LiliaDocs: {
-        command: "yarn docs:dev",
+        command: "pnpm docs:dev",
         cwd: null,
         source: "manual",
         updatedAt: Date.now(),
@@ -7230,24 +7230,24 @@ function fallbackConflictState(repoId: string): RepoConflictState {
 
 function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
   return fallbackSettings.projectLaunchConfigs[repoId] ?? {
-    command: repoId === "LiliaGithub" ? "yarn tauri:dev" : "yarn dev",
+    command: repoId === "LiliaGithub" ? "pnpm tauri:dev" : "pnpm dev",
     cwd: null,
     source: "inferred",
     updatedAt: null,
   };
 }
 
-function fallbackPackageManagerName(field: unknown): "yarn" | "pnpm" | "npm" {
+function fallbackPackageManagerName(field: unknown): "pnpm" | "pnpm" | "npm" {
   if (typeof field === "string") {
     const name = field.split("@")[0]?.trim();
-    if (name === "yarn" || name === "pnpm" || name === "npm") {
+    if (name === "pnpm" || name === "pnpm" || name === "npm") {
       return name;
     }
   }
   return "npm";
 }
 
-function fallbackPackageScriptCommand(packageManager: "yarn" | "pnpm" | "npm", script: string) {
+function fallbackPackageScriptCommand(packageManager: "pnpm" | "pnpm" | "npm", script: string) {
   return packageManager === "npm" ? `npm run ${script}` : `${packageManager} ${script}`;
 }
 
@@ -7279,7 +7279,7 @@ function fallbackLaunchCandidates(repoId: string): ProjectLaunchCandidate[] {
   const base = repoId === "LiliaGithub"
     ? createLiliaGithubLaunchCandidates()
     : [
-        { command: "yarn dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
+        { command: "pnpm dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
         { command: "cargo run", label: "cargo run", hint: "Cargo.toml", kind: "cargo", cwd: null },
       ];
   if (!command || base.some((candidate) => candidate.command === command && candidate.cwd === (config?.cwd ?? null))) {
