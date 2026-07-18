@@ -462,14 +462,6 @@ pub struct GitHubBindingMetadata {
     pub client_id_source: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum GitHubAuthPurpose {
-    #[default]
-    Binding,
-    ProfileWrite,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubAccountProfile {

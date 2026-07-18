@@ -14,7 +14,6 @@ import type {
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
   GitHubAccountProfile,
-  GitHubAuthPurpose,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreatePullRequestRequest,
@@ -206,7 +205,7 @@ export interface WorkspaceCommandContracts {
   workspace_enqueue_repo_refresh: CommandContract<{ request: WorkspaceRepoRefreshRequest }, string>;
 
   github_get_binding_status: CommandContract<NoArgs, GitHubBindingStatus>;
-  github_start_device_flow: CommandContract<{ purpose?: GitHubAuthPurpose }, GitHubDeviceFlowStart>;
+  github_start_device_flow: CommandContract<NoArgs, GitHubDeviceFlowStart>;
   github_poll_device_flow: CommandContract<
     { deviceCode: string; intervalSeconds: Maybe<number> },
     GitHubDeviceFlowPollResult

@@ -25,8 +25,6 @@ export interface RecentLocalRepoVisit {
   openedAt: number;
 }
 
-export type GitHubAuthPurpose = "binding" | "profileWrite";
-
 export type AccountPreferenceDirection = "asc" | "desc";
 
 export interface AccountPreferences {

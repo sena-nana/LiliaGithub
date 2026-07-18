@@ -1,4 +1,5 @@
 import packageJson from "../../../package.json";
+import { REQUIRED_GITHUB_AUTH_SCOPES } from "./authScopes";
 import { normalizeWorkspaceTasks } from "./taskRetention";
 import {
   cloneRepoRemoteSyncPolicy,
@@ -19,7 +20,6 @@ import type {
   GitHubActionNotification,
   GitHubAccountIssueItem,
   GitHubAccountProfile,
-  GitHubAuthPurpose,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
   GitHubBranchProtection,
@@ -429,7 +429,7 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "workflow", "read:user", "read:org", "delete_repo", "notifications"],
+    scopes: [...REQUIRED_GITHUB_AUTH_SCOPES],
     clientIdSource: "bundled",
   },
 };
@@ -2548,7 +2548,6 @@ let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 const FALLBACK_ANONYMOUS_ACCOUNT_KEY = "__anonymous__";
 let fallbackSettingsByAccount = new Map<string, WorkspaceSettings>();
 let fallbackAccountProfiles = new Map<string, GitHubAccountProfile>();
-let fallbackPendingAuthPurpose: GitHubAuthPurpose = "binding";
 let fallbackBulkExecuteOverride:
   | ((
       operation: BulkOperation,
@@ -2691,7 +2690,6 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackSettingsByAccount = new Map();
   fallbackAccountProfiles = new Map();
-  fallbackPendingAuthPurpose = "binding";
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
   fallbackConflictStates.clear();
@@ -5103,17 +5101,14 @@ export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
   }));
 }
 
-export function startGitHubDeviceFlow(purpose: GitHubAuthPurpose = "binding"): Promise<GitHubDeviceFlowStart> {
-  return call("github_start_device_flow", { purpose }, () => {
-    fallbackPendingAuthPurpose = purpose;
-    return {
-      deviceCode: `device-code-${purpose}`,
-      userCode: "ABCD-1234",
-      verificationUri: "https://github.com/login/device",
-      expiresAt: Date.now() + 600_000,
-      intervalSeconds: 5,
-    };
-  });
+export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
+  return call("github_start_device_flow", undefined, () => ({
+    deviceCode: "device-code",
+    userCode: "ABCD-1234",
+    verificationUri: "https://github.com/login/device",
+    expiresAt: Date.now() + 600_000,
+    intervalSeconds: 5,
+  }));
 }
 
 export function pollGitHubDeviceFlow(
@@ -5124,15 +5119,12 @@ export function pollGitHubDeviceFlow(
     const currentBinding = fallbackBinding.state === "bound" && fallbackBinding.binding
       ? fallbackBinding.binding
       : defaultFallbackBinding.binding!;
-    const scopes = new Set(currentBinding.scopes);
-    if (fallbackPendingAuthPurpose === "profileWrite") scopes.add("user");
     switchFallbackAccount({
       state: "bound",
       clientIdConfigured: true,
       clientIdSource: fallbackBinding.clientIdSource,
-      binding: { ...currentBinding, scopes: [...scopes] },
+      binding: { ...currentBinding, scopes: [...REQUIRED_GITHUB_AUTH_SCOPES] },
     });
-    fallbackPendingAuthPurpose = "binding";
     return {
       status: "authorized",
       intervalSeconds: intervalSeconds ?? 5,

@@ -46,7 +46,6 @@ import type {
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
   GitHubAccountProfile,
-  GitHubAuthPurpose,
   GitHubCommitListOptions,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -588,8 +587,8 @@ export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
   return status;
 }
 
-export function startGitHubDeviceFlow(purpose: GitHubAuthPurpose = "binding"): Promise<GitHubDeviceFlowStart> {
-  return call("github_start_device_flow", { purpose }, () => workspaceFallback().startGitHubDeviceFlow(purpose));
+export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
+  return call("github_start_device_flow", undefined, () => workspaceFallback().startGitHubDeviceFlow());
 }
 
 export async function pollGitHubDeviceFlow(
