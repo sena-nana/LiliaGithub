@@ -1221,6 +1221,16 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText("删除本地仓库")).toBeNull();
   });
 
+  it.each([false, true])("根据 hasDiscussions=%s 更新 Discussions 入口状态", async (hasDiscussions) => {
+    vi.mocked(getGitHubRepoManagement).mockResolvedValue({ ...githubSettings, hasDiscussions });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await view.findByText("Remote repository tools");
+    expect(view.getByRole("tab", { name: "Discussions" })).toHaveProperty("disabled", !hasDiscussions);
+  });
+
   it("仓库通知卡仅在存在 GitHub 仓库标识时接入 Settings", async () => {
     const remoteView = await renderProjectPanel({
       repoId: "github:sena-nana/remote-repo",

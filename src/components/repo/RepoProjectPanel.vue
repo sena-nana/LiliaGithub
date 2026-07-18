@@ -852,6 +852,7 @@ const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
     key: section.key,
     label: section.label,
     icon: section.icon,
+    disabled: section.key === "discussions" && settings.value?.hasDiscussions === false,
   })),
 ]);
 const canUseLaunchWorkflow = computed(() => resolvedRepoContext.value.capabilities.launch.available);
