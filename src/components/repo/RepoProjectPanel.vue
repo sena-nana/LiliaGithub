@@ -3639,7 +3639,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
-        <section v-else-if="activeSection === 'issues'" class="project-section project-github-section">
+        <section v-else-if="activeSection === 'issues'" class="project-section project-github-section project-section--flush">
           <RepoGitHubUnavailableNotice
             v-if="issuesAccessUnavailable"
             :title="issuesAccessUnavailable.title"
@@ -3809,7 +3809,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
         </section>
 
-        <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
+        <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section project-section--flush">
           <RepoGitHubUnavailableNotice
             v-if="pullsAccessUnavailable"
             :title="pullsAccessUnavailable.title"
