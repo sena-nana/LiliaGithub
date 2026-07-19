@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::future::Future;
 
 use futures_util::stream::{self, StreamExt};
-use lilia_github_contracts::discovery::{GitHubDiscoveryRepositoryFailure, GitHubDiscoverySection};
+use lilia_github_contracts::home_attention::{
+    GitHubHomeAttentionRepositoryFailure, GitHubHomeAttentionSection,
+};
 
 pub(super) const SOURCE_PAGE_SIZE: u32 = 100;
 pub(super) const REPOSITORY_CONCURRENCY: usize = 4;
@@ -21,7 +23,7 @@ struct SettledRepository<T> {
 pub(super) async fn aggregate_repositories<T, F, Fut>(
     repositories: Vec<String>,
     load: F,
-) -> GitHubDiscoverySection<T>
+) -> GitHubHomeAttentionSection<T>
 where
     F: Fn(String) -> Fut + Clone,
     Fut: Future<Output = Result<RepositoryItems<T>, String>>,
@@ -54,13 +56,13 @@ where
                 items.extend(value.items);
                 truncated |= value.truncated;
             }
-            Err(message) => failures.push(GitHubDiscoveryRepositoryFailure {
+            Err(message) => failures.push(GitHubHomeAttentionRepositoryFailure {
                 repo_full_name: entry.repo_full_name,
                 message,
             }),
         }
     }
-    GitHubDiscoverySection {
+    GitHubHomeAttentionSection {
         items,
         successful_repository_count: requested_repository_count - failures.len(),
         failures,
@@ -113,7 +115,7 @@ mod tests {
         assert_eq!(result.items, vec!["Acme/One", "Acme/Truncated"]);
         assert_eq!(
             result.failures,
-            vec![GitHubDiscoveryRepositoryFailure {
+            vec![GitHubHomeAttentionRepositoryFailure {
                 repo_full_name: "Acme/Fail".to_string(),
                 message: "forbidden".to_string(),
             }]

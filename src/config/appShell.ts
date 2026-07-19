@@ -1,7 +1,6 @@
 import {
   Bell,
   FolderGit2,
-  Boxes,
   Info,
   Palette,
   Sparkles,
@@ -38,12 +37,6 @@ export const SIDEBAR_NAV: SidebarNavItems = [
     to: "/",
     label: "项目总览",
     icon: FolderGit2,
-  },
-  {
-    key: "discovery",
-    to: "/discovery",
-    label: "跨仓库",
-    icon: Boxes,
   },
   {
     key: "notifications",

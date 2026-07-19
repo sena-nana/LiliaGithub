@@ -5,8 +5,10 @@ import type {
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubRepoSummary,
+  GitHubWorkflowRun,
   RepoSummary,
 } from "../src/services/workspace";
+import type { HomeAttentionPendingPullRequest } from "../src/services/homeAttention";
 import { buildHomePendingItems, type HomePendingRepoSource } from "../src/utils/homePendingItems";
 
 const repoFullName = "sena-nana/LiliaGithub";
@@ -137,6 +139,8 @@ function source(overrides: Partial<HomePendingRepoSource> = {}): HomePendingRepo
     pullRequests: [],
     pullRequestChecksByPull: {},
     actionNotifications: [],
+    attentionPullRequests: [],
+    failedWorkflows: [],
     ...overrides,
   };
 }
@@ -250,6 +254,65 @@ describe("buildHomePendingItems", () => {
     });
   });
 
+  it("prioritizes review requests, removes duplicate account PRs, and leaves review rows without generic semantics", () => {
+    const review = pullRequest(7, { updatedAt: "2026-06-25T08:00:00Z" });
+    const assigned = pullRequest(8, { updatedAt: "2026-06-25T09:00:00Z" });
+    const attentionPullRequests: HomeAttentionPendingPullRequest[] = [
+      { repoFullName, pullRequest: review, reasons: ["review_requested", "assigned"] },
+      { repoFullName, pullRequest: assigned, reasons: ["assigned"] },
+    ];
+
+    const items = buildHomePendingItems([source({
+      pullRequests: [review, assigned, pullRequest(9)],
+      attentionPullRequests,
+    })]);
+
+    expect(items.map((item) => item.id)).toEqual([
+      `review-request:${repoFullName}:7`,
+      `assigned-pull:${repoFullName}:8`,
+      `pull-request:${repoFullName}:9`,
+    ]);
+    expect(items[0]).toMatchObject({ kind: "review", target: { kind: "pull", number: 7 } });
+    expect(items.filter((item) => item.target.kind === "pull")).toHaveLength(3);
+  });
+
+  it("surfaces failed workflows without notifications and deduplicates notifications for the same run", () => {
+    const run = workflowRun(91, "2026-06-25T13:00:00Z");
+    const items = buildHomePendingItems([source({
+      failedWorkflows: [{ repoFullName, run }],
+      actionNotifications: [actionNotification("91", "CI failed", "2026-06-25T13:00:00Z")],
+    })]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: `workflow-run:${repoFullName}:91`,
+      title: "Workflow 失败",
+      target: { kind: "workflow", runId: 91 },
+    });
+  });
+
+  it("collapses dirty work into the conflict root cause and otherwise links local changes", () => {
+    const conflictItems = buildHomePendingItems([source({
+      localRepo: localRepo({ conflictCount: 2, stagedCount: 1, unstagedCount: 2 }),
+    })]);
+    const dirtyItems = buildHomePendingItems([source({
+      localRepo: localRepo({ stagedCount: 1, unstagedCount: 2, untrackedCount: 3 }),
+    })]);
+
+    expect(conflictItems).toHaveLength(1);
+    expect(conflictItems[0]).toMatchObject({
+      title: "冲突待处理",
+      detail: "2 个冲突文件，另有 3 项本地改动",
+      target: { view: "conflicts" },
+    });
+    expect(dirtyItems).toHaveLength(1);
+    expect(dirtyItems[0]).toMatchObject({
+      title: "本地改动待处理",
+      detail: "6 项未提交改动",
+      target: { view: "changes" },
+    });
+  });
+
   it("can build only the top pending items without changing ordering", () => {
     const sources = [
       source({
@@ -272,3 +335,18 @@ describe("buildHomePendingItems", () => {
     expect(buildHomePendingItems(sources, 0)).toEqual([]);
   });
 });
+
+function workflowRun(id: number, updatedAt: string): GitHubWorkflowRun {
+  return {
+    id,
+    name: "CI",
+    displayTitle: "CI failed",
+    status: "completed",
+    conclusion: "failure",
+    branch: "main",
+    event: "push",
+    htmlUrl: `https://github.com/${repoFullName}/actions/runs/${id}`,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}

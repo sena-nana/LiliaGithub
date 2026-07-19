@@ -38,15 +38,15 @@
 
 ## 产品定位
 
-LiliaGithub 是 Lilia 系列中面向 Git 与 GitHub 的个人开发中控台。它服务于同时维护多个仓库的开发者，集中回答哪些工作需要关注、最近工作如何继续，并减少完成日常协作时反复返回网页端的次数。
+LiliaGithub 是 Lilia 系列中面向 Git 与 GitHub 的桌面工作区。它服务于同时维护多个仓库的开发者，集中回答哪些工作需要关注，并减少完成日常协作时反复返回网页端的次数。
 
-产品明确优先处理聚焦的开发决策和可恢复工作流，而不是追求 GitHub 网页端能力对齐。Git 和 GitHub 始终作为业务真值；少见管理操作、组织策略及不适合个人中控台的高级能力继续由网页端兜底。
+产品明确优先处理聚焦的开发决策和可恢复工作流，而不是追求 GitHub 网页端能力对齐。Git 和 GitHub 始终作为业务真值；少见管理操作、组织策略及不适合桌面工作区的高级能力继续由网页端兜底。
 
 ## 阶段目标
 
 - `1.0 收尾稳定性`：稳定现有本地 Git、GitHub 协作、Actions、Release、快速启动和打包发布关键路径，补齐恢复指引、失败诊断和发布验收。
-- `协作与中控`：在应用内完成高频 review、评论、通知、Attention、Today 和 Continue 工作流。
-- `聚焦扩展`：在不复制完整 GitHub 网页端的前提下，补充结构化 LiliaCode 交接、多工作区、账号活动、Projects V2 上下文和 Actions 控制。
+- `协作与关注`：在应用内完成高频 review、评论、通知和首页待处理 Attention 工作流。
+- `聚焦扩展`：在不复制完整 GitHub 网页端的前提下，补充从 Pull Request Review 到 LiliaCode 的交接、多工作区、账号活动、Projects V2 上下文和 Actions 控制。
 
 ## Lilia 系列
 
@@ -69,7 +69,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 
 <!-- 由 docs/feature-status.json 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 yarn feature-status:generate。 -->
 
-以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-17。
+以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-19。
 
 ### 本地 Git 和仓库管理
 
@@ -98,15 +98,15 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [ ] 与工作项模型联通的 Projects V2 浏览和常用字段更新。 `P2`
 - [ ] Actions workflow dispatch、运行取消和部署审批控制。 `P2`
 
-### 个人开发中控台
+### 个人工作区
 
 - [x] GitHub 账号连接和个人资料管理。
 - [x] 账号仓库范围、列表偏好、本地工作区偏好和主题持久化。
 - [x] 个人与组织仓库浏览、仓库创建和克隆到工作区流程。
 - [x] 关注仓库和仓库通知偏好。
 - [x] 本地仓库收藏和仓库分组。
-- [x] 可解释的 Attention / Today / Continue 工作项组织和精确上下文恢复。
-- [x] 包含来源上下文、验收条件和结果返回路径的结构化 LiliaCode 任务交接。
+- [x] 首页待处理 Attention 汇总 Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和既有协作信号，并提供仓库直达入口。
+- [x] 从完整 Pull Request Review 发起结构化 LiliaCode 修复任务交接，包含来源上下文、验收条件和结果返回路径。
 - [ ] 支持多个根目录和工作区独立偏好的多个命名工作区。 `P1`
 - [ ] 支持类型、仓库和所有者范围筛选的应用内账号活动时间线。 `P1`
 

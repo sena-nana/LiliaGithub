@@ -412,6 +412,7 @@ describe("AppShell sidebar", () => {
 
     const mainNavigation = view.getByRole("navigation", { name: "主导航" });
     expect(within(mainNavigation).getByRole("link", { name: "项目总览" })).toHaveAttribute("href", "/");
+    expect(within(mainNavigation).queryByRole("link", { name: "跨仓库" })).toBeNull();
     expect(within(mainNavigation).queryByRole("link", { name: "首页" })).toBeNull();
     const profileRow = sidebarRowForText(view.container, "lilia-user");
     expect(profileRow).toHaveAttribute("href", "/profile");

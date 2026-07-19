@@ -14,8 +14,6 @@ afterEach(async () => {
   resetWorkspaceStateForTests();
   clearHomeGitHubOverviewSnapshot();
   await resetWorkspaceFallbacksForTests();
-  const { resetAssignedWorkFallbackForTests } = await import("../src/services/discovery/fallback");
-  resetAssignedWorkFallbackForTests();
   const { resetNotificationFallbackForTests } = await import("../src/services/notifications/fallback");
   resetNotificationFallbackForTests();
   clearGitHubRepoCache();

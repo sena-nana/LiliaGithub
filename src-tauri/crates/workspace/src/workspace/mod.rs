@@ -1,10 +1,10 @@
 pub mod bulk;
 pub mod code_review;
 pub mod conversations;
-pub mod discovery;
 pub mod file_browser;
 pub mod github;
 pub mod github_discussions;
+pub mod home_attention;
 pub mod launch;
 mod lilia_code_handoff;
 pub mod notifications;

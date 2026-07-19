@@ -38,15 +38,15 @@
 
 ## Product Positioning
 
-LiliaGithub is the personal developer control center for Git and GitHub in the Lilia family. It is built for developers who keep many repositories active and need one place to understand what needs attention, continue recent work, and complete everyday collaboration without repeatedly returning to the web UI.
+LiliaGithub is the Git and GitHub workspace in the Lilia family. It is built for developers who keep many repositories active and need one place to understand what needs attention and complete everyday collaboration without repeatedly returning to the web UI.
 
-The product deliberately prioritizes focused developer decisions and recoverable workflows over GitHub web parity. Git and GitHub remain the source of truth; the web UI remains the fallback for uncommon administration, organization policy, and advanced capabilities that do not belong in a personal control center.
+The product deliberately prioritizes focused developer decisions and recoverable workflows over GitHub web parity. Git and GitHub remain the source of truth; the web UI remains the fallback for uncommon administration, organization policy, and advanced capabilities that do not belong in the desktop workspace.
 
 ## Milestones
 
 - `1.0 Closing Stability`: stabilize the existing local Git, GitHub collaboration, Actions, Release, quick launch, and packaging paths, then close recovery guidance, failure diagnostics, and release validation gaps.
-- `Collaboration And Control`: complete high-frequency review, comment, notification, Attention, Today, and Continue workflows inside the app.
-- `Focused Extensions`: add structured LiliaCode handoff, multiple workspaces, account activity, Projects V2 context, and Actions controls where they strengthen the personal developer workflow without copying the full GitHub web UI.
+- `Collaboration And Attention`: complete high-frequency review, comment, notification, and home pending Attention workflows inside the app.
+- `Focused Extensions`: add pull request review handoff to LiliaCode, multiple workspaces, account activity, Projects V2 context, and Actions controls where they strengthen the personal developer workflow without copying the full GitHub web UI.
 
 ## The Lilia Family
 
@@ -69,7 +69,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 
 <!-- Generated from docs/feature-status.json by scripts/sync-feature-status.mjs. Edit the source, then run yarn feature-status:generate. -->
 
-The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-17.
+The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-19.
 
 ### Local Git And Repository Management
 
@@ -98,15 +98,15 @@ The list below is generated from the project's canonical feature-status data. On
 - [ ] Projects V2 browsing and common field updates connected to the work-item model. `P2`
 - [ ] Actions workflow dispatch, run cancellation, and deployment approval controls. `P2`
 
-### Personal Developer Control Center
+### Personal Workspace
 
 - [x] Signed-in GitHub account connection and profile management.
 - [x] Account repository scope, list preferences, local workspace preference, and theme persistence.
 - [x] Account and organization repository browsing, repository creation, and clone-to-workspace flow.
 - [x] Watched repositories and repository notification preferences.
 - [x] Local repository favorites and repository groups.
-- [x] Explainable Attention / Today / Continue work-item organization and exact context restoration.
-- [x] Structured LiliaCode task handoff with source context, acceptance criteria, and result return path.
+- [x] Home pending Attention for review requests, assigned pull requests, failed workflows, local blockers, and existing collaboration signals, with direct repository routes.
+- [x] Structured LiliaCode fix-task handoff from full pull request reviews, with source context, acceptance criteria, and result return path.
 - [ ] Multiple named workspaces with multiple roots and workspace-specific preferences. `P1`
 - [ ] In-app account activity timeline with type, repository, and owner-scope filters. `P1`
 
