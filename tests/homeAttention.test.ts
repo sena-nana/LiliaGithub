@@ -5,7 +5,7 @@ import {
   type HomeAttentionResult,
 } from "../src/services/homeAttention";
 import {
-  isRecentHomeAttentionWorkflowRun,
+  isHomeAttentionWorkflowRun,
   listHomeAttentionFallback,
   mergeHomeAttentionPullRequestCandidates,
 } from "../src/services/homeAttention/fallback";
@@ -50,14 +50,19 @@ describe("home attention", () => {
     ]);
   });
 
-  it("loads review PRs and actionable workflow failures while retaining partial successes", async () => {
+  it("loads review PRs and actionable workflow runs while retaining partial successes", async () => {
     workspace.listGitHubPullRequests.mockImplementation(async (repo, options) => {
       if (repo === "acme/failing") throw new Error("forbidden");
       return options.query ? [pullRequest(7, "2026-07-18T12:00:00Z")] : [pullRequest(7, "2026-07-18T12:00:00Z")];
     });
     workspace.listGitHubWorkflowRuns.mockImplementation(async (repo) => {
       if (repo === "acme/failing") throw new Error("forbidden");
-      return [workflowRun(91, "failure", "2026-07-18T12:00:00Z"), workflowRun(92, "success", "2026-07-18T13:00:00Z")];
+      return [
+        workflowRun(91, "completed", "failure", "2026-07-18T12:00:00Z"),
+        workflowRun(92, "completed", "success", "2026-07-18T13:00:00Z"),
+        workflowRun(93, "queued", null, "2026-05-18T13:00:00Z"),
+        workflowRun(94, "in_progress", null, "2026-07-18T14:00:00Z"),
+      ];
     });
 
     const result = await listHomeAttentionFallback(
@@ -70,7 +75,7 @@ describe("home attention", () => {
       pullRequest: { number: 7 },
       reasons: ["review_requested", "assigned"],
     });
-    expect(result.failedWorkflows.items.map(({ run }) => run.id)).toEqual([91]);
+    expect(result.workflowRuns.items.map(({ run }) => run.id)).toEqual([91, 94, 93]);
     expect(result.pendingPullRequests.failures).toEqual([{ repoFullName: "acme/failing", message: "forbidden" }]);
     expect(workspace.listGitHubPullRequests.mock.calls.every((call) => call[2]?.forceRefresh === true)).toBe(true);
   });
@@ -88,11 +93,16 @@ describe("home attention", () => {
     expect(mergeHomeAttentionResult(previous, next).pendingPullRequests.items).toHaveLength(1);
   });
 
-  it("accepts only recent actionable workflow conclusions", () => {
+  it("accepts active runs and only recent completed actionable failures", () => {
     const now = new Date("2026-07-19T00:00:00Z");
-    expect(isRecentHomeAttentionWorkflowRun(workflowRun(1, "timed_out", "2026-07-18T00:00:00Z"), now)).toBe(true);
-    expect(isRecentHomeAttentionWorkflowRun(workflowRun(2, "success", "2026-07-18T00:00:00Z"), now)).toBe(false);
-    expect(isRecentHomeAttentionWorkflowRun(workflowRun(3, "failure", "2026-06-01T00:00:00Z"), now)).toBe(false);
+    expect(isHomeAttentionWorkflowRun(workflowRun(1, "completed", "timed_out", "2026-07-18T00:00:00Z"), now)).toBe(true);
+    expect(isHomeAttentionWorkflowRun(workflowRun(2, "completed", "success", "2026-07-18T00:00:00Z"), now)).toBe(false);
+    expect(isHomeAttentionWorkflowRun(workflowRun(3, "completed", "failure", "2026-06-01T00:00:00Z"), now)).toBe(false);
+    expect(isHomeAttentionWorkflowRun(workflowRun(4, "queued", null, "2026-06-01T00:00:00Z"), now)).toBe(true);
+    expect(isHomeAttentionWorkflowRun(workflowRun(5, "in_progress", null, "2026-07-18T00:00:00Z"), now)).toBe(true);
+    expect(isHomeAttentionWorkflowRun(workflowRun(6, "waiting", null, "2026-07-18T00:00:00Z"), now)).toBe(false);
+    expect(isHomeAttentionWorkflowRun(workflowRun(7, "pending", null, "2026-07-18T00:00:00Z"), now)).toBe(false);
+    expect(isHomeAttentionWorkflowRun(workflowRun(8, "completed", "cancelled", "2026-07-18T00:00:00Z"), now)).toBe(false);
   });
 });
 
@@ -104,7 +114,7 @@ function emptyResult(): HomeAttentionResult {
     requestedRepositoryCount: 0,
     successfulRepositoryCount: 0,
   });
-  return { pendingPullRequests: section(), failedWorkflows: section() };
+  return { pendingPullRequests: section(), workflowRuns: section() };
 }
 
 function pullRequest(number: number, updatedAt: string): GitHubPullRequest {
@@ -128,12 +138,17 @@ function pullRequest(number: number, updatedAt: string): GitHubPullRequest {
   };
 }
 
-function workflowRun(id: number, conclusion: string, updatedAt: string): GitHubWorkflowRun {
+function workflowRun(
+  id: number,
+  status: string,
+  conclusion: string | null,
+  updatedAt: string,
+): GitHubWorkflowRun {
   return {
     id,
     name: "CI",
     displayTitle: "CI",
-    status: "completed",
+    status,
     conclusion,
     branch: "main",
     event: "push",

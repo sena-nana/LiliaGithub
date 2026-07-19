@@ -44,9 +44,11 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
+  cancelGitHubWorkflowRun,
   listGitHubAccountIssues,
   listGitHubActionNotifications,
   mergeGitHubPullRequest,
+  rerunFailedGitHubWorkflowRun,
   updateGitHubIssue,
   updateGitHubPullRequest,
   type GitHubActionNotification,
@@ -70,6 +72,11 @@ import {
   type HomeAttentionResult,
 } from "../services/homeAttention";
 import { isGitHubBindingExpiredError } from "../utils/githubErrors";
+import {
+  workflowCancelErrorMessage,
+  workflowRerunErrorMessage,
+  workflowRunWriteActionAvailability,
+} from "../utils/workflowActions";
 import {
   clearHomeGitHubOverviewSnapshot,
   homeGitHubOverviewSnapshotNeedsRefresh,
@@ -221,7 +228,13 @@ type HomePendingLink = {
   kind: "none";
 };
 
-type HomePendingAction = "issue-complete" | "issue-close" | "pull-merge" | "pull-close";
+type HomePendingAction =
+  | "issue-complete"
+  | "issue-close"
+  | "pull-merge"
+  | "pull-close"
+  | "workflow-rerun"
+  | "workflow-cancel";
 
 type HomePendingRow = {
   item: HomePendingItem;
@@ -317,6 +330,7 @@ const homeAttentionLoading = ref(false);
 const homeAttentionError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
 const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction } | null>(null);
+const homePendingMutationError = ref<string | null>(null);
 const cloningFullNames = reactive(new Set<string>());
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -725,8 +739,8 @@ const homeTimelineActionNotificationsPending = computed(() =>
 const homeAttentionPullRequestsByRepo = computed(() => groupHomeAttentionItemsByRepo(
   homeAttentionResult.value?.pendingPullRequests.items ?? [],
 ));
-const homeAttentionFailedWorkflowsByRepo = computed(() => groupHomeAttentionItemsByRepo(
-  homeAttentionResult.value?.failedWorkflows.items ?? [],
+const homeAttentionWorkflowRunsByRepo = computed(() => groupHomeAttentionItemsByRepo(
+  homeAttentionResult.value?.workflowRuns.items ?? [],
 ));
 function groupHomeAttentionItemsByRepo<T extends { repoFullName: string }>(items: readonly T[]) {
   return items.reduce<Record<string, T[]>>((grouped, item) => {
@@ -746,7 +760,7 @@ function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
       pullRequestChecksByPull: undefined,
       actionNotifications: overviewActionNotificationsByRepo.value[githubRepo.fullName] ?? [],
       attentionPullRequests: homeAttentionPullRequestsByRepo.value[githubRepo.fullName] ?? [],
-      failedWorkflows: homeAttentionFailedWorkflowsByRepo.value[githubRepo.fullName] ?? [],
+      workflowRuns: homeAttentionWorkflowRunsByRepo.value[githubRepo.fullName] ?? [],
     }));
   const remoteNames = new Set(remoteSources.map(({ githubRepo }) => githubRepositoryIdentityKey(githubRepo.fullName)));
   const localSources = overviewStatusRepos.value.flatMap((localRepo): HomePendingRepoSource[] => {
@@ -765,7 +779,7 @@ function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
       pullRequestChecksByPull: undefined,
       actionNotifications: [],
       attentionPullRequests: [],
-      failedWorkflows: [],
+      workflowRuns: [],
     }];
   });
   return [...remoteSources, ...localSources];
@@ -1072,6 +1086,7 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
   homeAttentionLoadedKey.value = "";
   homeAttentionLoading.value = false;
   homeAttentionError.value = null;
+  homePendingMutationError.value = null;
   homeOverviewSnapshot.value = null;
   homeContributionSnapshot.value = null;
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
@@ -1234,7 +1249,7 @@ async function loadHomeAttention(repos: GitHubRepoSummary[], refresh = false) {
     homeAttentionResult.value = mergeHomeAttentionResult(previous, result);
     const failures = new Set([
       ...result.pendingPullRequests.failures.map((failure) => failure.repoFullName),
-      ...result.failedWorkflows.failures.map((failure) => failure.repoFullName),
+      ...result.workflowRuns.failures.map((failure) => failure.repoFullName),
     ]);
     if (failures.size) {
       homeAttentionError.value = `${failures.size} 个仓库的关注事项暂时无法读取。`;
@@ -1265,6 +1280,7 @@ function clearGitHubPendingItems() {
   homeAttentionLoadedKey.value = "";
   homeAttentionLoading.value = false;
   homeAttentionError.value = null;
+  homePendingMutationError.value = null;
   githubIssuesByRepo.value = {};
   githubPullRequestsByRepo.value = {};
   githubActionNotificationsByRepo.value = {};
@@ -1316,6 +1332,7 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
 }
 
 function retryHomePendingItems() {
+  homePendingMutationError.value = null;
   prepareGitHubTimeline(homeTimelineRepos.value, true);
 }
 
@@ -1503,6 +1520,8 @@ function homePendingActionLabel(action: HomePendingAction) {
   if (action === "issue-complete") return "完成";
   if (action === "issue-close") return "关闭";
   if (action === "pull-merge") return "合并";
+  if (action === "workflow-rerun") return "重跑";
+  if (action === "workflow-cancel") return "取消";
   return "关闭";
 }
 
@@ -1514,12 +1533,23 @@ function homePendingButtonLabel(row: HomePendingRow, action: HomePendingAction) 
 function homePendingActionIcon(action: HomePendingAction) {
   if (action === "issue-complete") return CheckCircle2;
   if (action === "pull-merge") return GitMerge;
+  if (action === "workflow-rerun") return RotateCw;
   return X;
 }
 
 function homePendingActions(item: HomePendingItem): HomePendingAction[] {
   if (item.target.kind === "issue") return ["issue-complete", "issue-close"];
   if (item.kind === "pull" && item.target.kind === "pull") return ["pull-merge", "pull-close"];
+  if (item.target.kind === "workflow" && item.target.run) {
+    const action = item.target.run.status === "completed" ? "rerun" : "cancel";
+    if (workflowRunWriteActionAvailability(
+      action,
+      item.target.run,
+      item.target.permissions,
+    ).available) {
+      return [action === "rerun" ? "workflow-rerun" : "workflow-cancel"];
+    }
+  }
   return [];
 }
 
@@ -1572,6 +1602,7 @@ watch(homePendingArmedAction, (value, _, onCleanup) => {
 
 async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
   if (homePendingRunningActions.value[item.id]) return;
+  homePendingMutationError.value = null;
   homePendingRunningActions.value = {
     ...homePendingRunningActions.value,
     [item.id]: action,
@@ -1579,16 +1610,39 @@ async function runHomePendingAction(item: HomePendingItem, action: HomePendingAc
   try {
     if (action === "issue-complete" || action === "issue-close") {
       await updateHomePendingIssue(item, action);
-    } else {
+    } else if (action === "pull-merge" || action === "pull-close") {
       await updateHomePendingPullRequest(item, action);
+    } else {
+      await updateHomePendingWorkflow(item, action);
     }
-  } catch {
-    return;
+  } catch (err) {
+    homePendingMutationError.value = action === "workflow-rerun"
+      ? workflowRerunErrorMessage(err)
+      : action === "workflow-cancel"
+        ? workflowCancelErrorMessage(err)
+        : `${homePendingActionLabel(action)}失败：${githubUserFacingError(err)}`;
   } finally {
     if (homePendingRunningActions.value[item.id] === action) {
       const { [item.id]: _removed, ...next } = homePendingRunningActions.value;
       homePendingRunningActions.value = next;
     }
+  }
+}
+
+async function updateHomePendingWorkflow(
+  item: HomePendingItem,
+  action: Extract<HomePendingAction, "workflow-rerun" | "workflow-cancel">,
+) {
+  const target = item.target;
+  if (target.kind !== "workflow" || !target.run || target.runId == null) return;
+  try {
+    if (action === "workflow-rerun") {
+      await rerunFailedGitHubWorkflowRun(target.repoFullName, target.runId);
+    } else {
+      await cancelGitHubWorkflowRun(target.repoFullName, target.runId);
+    }
+  } finally {
+    await loadHomeAttention(homeTimelineRepos.value, true);
   }
 }
 
@@ -2431,6 +2485,14 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
           <div class="home-scroll-card__body">
             <p
+              v-if="homePendingMutationError"
+              class="repo-status-error"
+              role="alert"
+              data-agent-id="home.pending.mutation-error"
+            >
+              {{ homePendingMutationError }}
+            </p>
+            <p
               v-if="homePendingError"
               class="repo-status-error"
             >
@@ -2497,7 +2559,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       class="home-pending-action"
                       :class="{
                         'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
-                        'home-pending-action--danger': action === 'issue-close' || action === 'pull-close',
+                        'home-pending-action--danger': action === 'issue-close' || action === 'pull-close' || action === 'workflow-cancel',
                         'is-confirming': row.confirmingAction === action,
                         'is-expanded': row.confirmingAction === action || row.runningAction === action,
                       }"

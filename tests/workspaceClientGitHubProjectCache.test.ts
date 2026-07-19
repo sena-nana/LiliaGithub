@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachGitHubWorkflowArtifactAsset,
+  cancelGitHubWorkflowRun,
   clearGitHubRepoCache,
   createGitHubRelease,
   deleteGitHubBranch,
@@ -21,6 +22,7 @@ import {
   listGitHubPullRequests,
   listGitHubReleases,
   listGitHubWorkflowRuns,
+  listWorkspaceTasks,
   rerunFailedGitHubWorkflowRun,
   rerunGitHubWorkflowJob,
   mergeGitHubPullRequest,
@@ -752,6 +754,53 @@ describe("workspace GitHub project cache", () => {
     await rerunGitHubWorkflowJob(repoFullName, 13101);
     const afterJobRerun = await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
     expect(afterJobRerun.run).toMatchObject({ status: "queued", conclusion: null, runAttempt: 3 });
+  });
+
+  it("允许从 Home 的 run 列表直接重跑而无需预加载详情", async () => {
+    const run = workflowRunDetail().run;
+    run.conclusion = "failure";
+    run.runAttempt = 1;
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({ [repoFullName]: [run] });
+
+    await rerunFailedGitHubWorkflowRun(repoFullName, run.id);
+
+    expect((await listGitHubWorkflowRuns(repoFullName))[0]).toMatchObject({
+      status: "queued",
+      conclusion: null,
+      runAttempt: 2,
+    });
+  });
+
+  it("取消活动 run 后同步 fallback 状态、失效 Actions 缓存并记录 GitHubWrite 任务", async () => {
+    const detail = workflowRunDetail();
+    detail.run.status = "in_progress";
+    detail.run.conclusion = null;
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({ [repoFullName]: [detail.run] });
+    workspaceFallback.setFallbackGitHubWorkflowRunDetailsForTests({
+      [repoFullName]: { [detail.run.id]: detail },
+    });
+
+    await listGitHubWorkflowRuns(repoFullName);
+    await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
+    await cancelGitHubWorkflowRun(repoFullName, detail.run.id);
+
+    const afterCancelDetail = await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
+    expect(afterCancelDetail.run).toMatchObject({ status: "completed", conclusion: "cancelled" });
+    const afterCancelList = await listGitHubWorkflowRuns(repoFullName);
+    expect(afterCancelList[0]).toMatchObject({ status: "completed", conclusion: "cancelled" });
+    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
+    expect((await listWorkspaceTasks()).find((task) => task.title === "取消 GitHub Actions 运行")).toMatchObject({
+      kind: "github",
+      status: "success",
+    });
+  });
+
+  it("拒绝取消非活动 workflow run", async () => {
+    const detail = workflowRunDetail();
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({ [repoFullName]: [detail.run] });
+
+    await expect(cancelGitHubWorkflowRun(repoFullName, detail.run.id))
+      .rejects.toThrow("GitHub Actions run 当前状态不可取消");
   });
 
   it("从 Actions artifact 附加 release asset 后同步 releases 缓存", async () => {

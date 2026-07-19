@@ -8,7 +8,7 @@ export interface HomeAttentionPendingPullRequest {
   reasons: HomeAttentionPullRequestReason[];
 }
 
-export interface HomeAttentionFailedWorkflowRun {
+export interface HomeAttentionWorkflowRun {
   repoFullName: string;
   run: GitHubWorkflowRun;
 }
@@ -28,7 +28,7 @@ export interface HomeAttentionSection<T> {
 
 export interface HomeAttentionResult {
   pendingPullRequests: HomeAttentionSection<HomeAttentionPendingPullRequest>;
-  failedWorkflows: HomeAttentionSection<HomeAttentionFailedWorkflowRun>;
+  workflowRuns: HomeAttentionSection<HomeAttentionWorkflowRun>;
 }
 
 export interface HomeAttentionLoadOptions {

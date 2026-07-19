@@ -36,9 +36,9 @@ export function mergeHomeAttentionResult(
       next.pendingPullRequests,
       (item) => `${item.repoFullName.toLocaleLowerCase()}:${item.pullRequest.number}`,
     ),
-    failedWorkflows: preserveFailedRepositoryItems(
-      previous.failedWorkflows,
-      next.failedWorkflows,
+    workflowRuns: preserveFailedRepositoryItems(
+      previous.workflowRuns,
+      next.workflowRuns,
       (item) => `${item.repoFullName.toLocaleLowerCase()}:${item.run.id}`,
     ),
   };

@@ -122,6 +122,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_list_workflow_runs",
     "github_get_workflow_run_detail",
     "github_get_workflow_job_log",
+    "github_cancel_workflow_run",
     "github_rerun_failed_workflow_run",
     "github_rerun_workflow_job",
     "github_list_workflow_artifact_files",

@@ -1315,6 +1315,13 @@ export async function rerunFailedGitHubWorkflowRun(repoFullName: string, runId: 
   clearGitHubProjectRepoCache(repoFullName);
 }
 
+export async function cancelGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  await call("github_cancel_workflow_run", { repoFullName, runId }, () =>
+    workspaceFallback().cancelGitHubWorkflowRun(repoFullName, runId)
+  );
+  clearGitHubProjectRepoCache(repoFullName);
+}
+
 export async function rerunGitHubWorkflowJob(repoFullName: string, jobId: number): Promise<void> {
   await call("github_rerun_workflow_job", { repoFullName, jobId }, () =>
     workspaceFallback().rerunGitHubWorkflowJob(repoFullName, jobId)

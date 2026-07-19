@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubWorkflowJob, GitHubWorkflowRun } from "../src/services/workspace/types";
 import {
+  workflowCancelErrorMessage,
   workflowJobRerunAvailability,
   workflowRerunErrorMessage,
+  workflowRunCancelAvailability,
   workflowRunRerunAvailability,
-} from "../src/components/repo/workflowRerun";
+  workflowRunWriteActionAvailability,
+} from "../src/utils/workflowActions";
 
 const now = Date.parse("2026-07-11T00:00:00Z");
 
@@ -51,10 +54,31 @@ describe("workflow rerun availability", () => {
     expect(workflowJobRerunAvailability(failedRun(), failedJob({ conclusion: "cancelled" }), now).reason).toContain("只有失败 job");
   });
 
+  it("只允许取消 queued 或 in_progress，并尊重明确只读权限", () => {
+    expect(workflowRunCancelAvailability(failedRun({ status: "queued", conclusion: null }))).toEqual({
+      available: true,
+      reason: null,
+    });
+    expect(workflowRunCancelAvailability(failedRun({ status: "in_progress", conclusion: null })).available).toBe(true);
+    for (const status of ["requested", "waiting", "pending", "completed"]) {
+      expect(workflowRunCancelAvailability(failedRun({ status, conclusion: null })).available).toBe(false);
+    }
+
+    const running = failedRun({ status: "in_progress", conclusion: null });
+    expect(workflowRunWriteActionAvailability("cancel", running, undefined).available).toBe(true);
+    expect(workflowRunWriteActionAvailability("cancel", running, null).available).toBe(true);
+    expect(workflowRunWriteActionAvailability("cancel", running, { push: false, admin: false }).reason).toContain("只读");
+    expect(workflowRunWriteActionAvailability("cancel", running, { push: true, admin: false }).available).toBe(true);
+  });
+
   it("把权限、失效和 GitHub 拒绝响应转成可操作错误", () => {
     expect(workflowRerunErrorMessage(new Error("HTTP 403 Forbidden"))).toContain("没有重跑权限");
     expect(workflowRerunErrorMessage(new Error("HTTP 404 Not Found"))).toContain("已失效");
     expect(workflowRerunErrorMessage(new Error("HTTP 422 cannot be re-run"))).toContain("GitHub 拒绝重跑");
+    expect(workflowCancelErrorMessage(new Error("HTTP 409 Conflict"))).toContain("状态可能已经改变");
+    expect(workflowCancelErrorMessage(new Error("github_rate_limited：HTTP 403 Forbidden"))).toContain("暂时受限");
+    expect(workflowCancelErrorMessage(new Error("github_org_sso_required：HTTP 403 Forbidden"))).toContain("SSO");
+    expect(workflowCancelErrorMessage(new Error("github_authentication_required：HTTP 401"))).toContain("重新绑定");
     expect(workflowRerunErrorMessage(new Error("network offline"))).toBe("network offline");
   });
 });
