@@ -12,6 +12,7 @@ import {
   setRepoDetailPatch,
   setWorkspaceTasks,
   state,
+  isCurrentWorkspaceContext,
   upsertRepo,
   upsertWorkspaceTask,
 } from "./state";
@@ -51,7 +52,9 @@ function isWorkspaceTask(value: unknown): value is WorkspaceTask {
     typeof task.status === "string" &&
     typeof task.createdAt === "number" &&
     typeof task.updatedAt === "number" &&
-    typeof task.cancellable === "boolean";
+    typeof task.cancellable === "boolean" &&
+    (typeof task.workspaceId === "string" || task.workspaceId === null) &&
+    typeof task.contextRevision === "number";
 }
 
 function isRepoRefreshedEvent(value: unknown): value is WorkspaceRepoRefreshedEvent {
@@ -59,11 +62,14 @@ function isRepoRefreshedEvent(value: unknown): value is WorkspaceRepoRefreshedEv
   const event = value as Partial<WorkspaceRepoRefreshedEvent>;
   return typeof event.repoId === "string" &&
     (event.mode === "local" || event.mode === "remote") &&
+    (typeof event.workspaceId === "string" || event.workspaceId === null) &&
+    typeof event.contextRevision === "number" &&
     Boolean(event.summary && typeof event.summary === "object");
 }
 
 export function applyWorkspaceTaskChanged(payload: unknown) {
   if (!isWorkspaceTask(payload)) return;
+  if (!isCurrentWorkspaceContext(payload)) return;
   upsertWorkspaceTask(payload);
   settleWorkspaceTaskWaiters(payload);
   if (payload.kind !== "repoRemote" || !payload.repoId) return;
@@ -81,6 +87,7 @@ export function applyWorkspaceTaskChanged(payload: unknown) {
 
 export function applyWorkspaceRepoRefreshed(payload: unknown) {
   if (!isRepoRefreshedEvent(payload)) return;
+  if (!isCurrentWorkspaceContext(payload)) return;
   if (payload.detailPatch) setRepoDetailPatch(payload.detailPatch, payload.repoId);
   else upsertRepo(payload.summary);
 
@@ -328,7 +335,7 @@ function installVisibilityListener() {
   return () => document.removeEventListener("visibilitychange", listener);
 }
 
-export function resetRepoRefreshRuntimeForTests() {
+export function resetRepoRefreshRuntime() {
   installedCleanup?.();
   installedCleanup = null;
   installationPromise = null;
@@ -343,4 +350,8 @@ export function resetRepoRefreshRuntimeForTests() {
   remoteNextAttemptAt.clear();
   localRefreshPausedApplied = null;
   resetWorkspaceTaskWaitersForTests();
+}
+
+export function resetRepoRefreshRuntimeForTests() {
+  resetRepoRefreshRuntime();
 }

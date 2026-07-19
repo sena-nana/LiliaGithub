@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Dropdown, SettingsRow, UiButton, UiCard, UiInput } from "../../../ui";
+import { Dropdown, SettingsRow, UiButton, UiCard } from "../../../ui";
 import { computed, ref, watch } from "vue";
 import { useAccountPreferences, cloneAccountPreferences } from "../../../composables/useAccountPreferences";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
@@ -12,7 +12,6 @@ const componentEpoch = useComponentEpoch();
 const draft = ref<AccountPreferences>(cloneAccountPreferences(preferences.value));
 const owners = ref<GitHubRepoOwner[]>([]);
 const ownersLoading = ref(false);
-const choosingRoot = ref(false);
 const saving = ref(false);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
@@ -25,9 +24,6 @@ const selectedOrganizationUnavailable = computed(() => {
   return scope.kind === "organization" && !organizations.value.some((owner) =>
     owner.login.toLocaleLowerCase() === scope.login.toLocaleLowerCase());
 });
-const defaultWorkspaceUnavailable = computed(() =>
-  Boolean(preferences.value.defaultWorkspaceRoot && !workspace.state.settings?.workspaceRoot),
-);
 const repositoryScopeValue = computed({
   get: () => {
     const scope = draft.value.repositoryScope;
@@ -79,19 +75,6 @@ async function loadOwners() {
   }
 }
 
-async function chooseWorkspaceRoot() {
-  choosingRoot.value = true;
-  error.value = null;
-  try {
-    const root = await workspace.pickAccountWorkspaceRoot();
-    if (componentEpoch.assertAlive() && root) draft.value.defaultWorkspaceRoot = root;
-  } catch (err) {
-    if (componentEpoch.assertAlive()) error.value = String(err);
-  } finally {
-    if (componentEpoch.assertAlive()) choosingRoot.value = false;
-  }
-}
-
 async function savePreferences() {
   if (saving.value) return;
   saving.value = true;
@@ -118,15 +101,7 @@ watch(() => `${workspace.githubBinding.value?.login ?? ""}:${JSON.stringify(pref
 <template>
   <UiCard title="账户偏好" aria-label="账户偏好" agent-id="settings.account.preferences">
     <section class="preferences-card__group">
-      <h3>工作区与仓库</h3>
-      <SettingsRow label="默认工作区" hint="登录此账号后使用的本地工作区。" divided loose>
-        <div class="preferences-card__path-control">
-          <UiInput :model-value="draft.defaultWorkspaceRoot ?? ''" readonly agent-id="settings.account.preferences.workspace-root" />
-          <UiButton size="sm" agent-id="settings.account.preferences.workspace-root.choose" :busy="choosingRoot" @click="chooseWorkspaceRoot">选择</UiButton>
-          <UiButton v-if="draft.defaultWorkspaceRoot" size="sm" agent-id="settings.account.preferences.workspace-root.clear" @click="draft.defaultWorkspaceRoot = null">清除</UiButton>
-        </div>
-      </SettingsRow>
-      <p v-if="defaultWorkspaceUnavailable" class="preferences-card__warning" role="status">默认工作区当前不可用，可重新选择。</p>
+      <h3>仓库列表</h3>
       <SettingsRow label="仓库范围" hint="项目总览和克隆仓库默认使用此范围。" divided>
         <Dropdown v-model="repositoryScopeValue" :options="repositoryScopeOptions" :disabled="ownersLoading" placement="bottom" agent-id="settings.account.preferences.scope" />
       </SettingsRow>
@@ -157,13 +132,11 @@ watch(() => `${workspace.githubBinding.value?.login ?? ""}:${JSON.stringify(pref
 <style scoped>
 .preferences-card__group + .preferences-card__group { margin-top: 14px; }
 .preferences-card__group h3 { margin: 0 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 600; }
-.preferences-card__path-control { display: flex; min-width: 0; align-items: center; gap: 6px; }
-.preferences-card__path-control :deep(input) { min-width: 180px; }
 .preferences-card__inline { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .preferences-card__warning { margin: 6px 0 8px; color: var(--warn); font-size: 12px; }
 .preferences-card__footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; }
 .preferences-card__error, .preferences-card__notice { flex: 1; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 .preferences-card__error { color: var(--err); }
 .preferences-card__notice { color: var(--ok); }
-@media (max-width: 760px) { .preferences-card__inline, .preferences-card__path-control { width: 100%; justify-content: flex-start; } .preferences-card__path-control { flex-wrap: wrap; } }
+@media (max-width: 760px) { .preferences-card__inline { width: 100%; justify-content: flex-start; } }
 </style>

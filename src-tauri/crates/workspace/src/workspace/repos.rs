@@ -20,11 +20,13 @@ use crate::workspace::repo_guard::{
 use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
     add_managed_repo_id, apply_repo_placement, cached_repo_summary, load_settings,
-    matching_startup_cache, prune_deleted_repo_settings, repo_path_by_id, repo_path_from_id,
+    matching_startup_cache, repo_path_by_id, repo_root_and_path_by_id, root_id_for_path,
     save_settings, settings_write_lock, sort_dedup, validate_repo_placement,
-    visible_workspace_settings, workspace_root, write_startup_repo_summary,
-    write_startup_repo_summary_after_fetch,
+    visible_workspace_settings, workspace_root, workspace_root_by_id, workspace_root_for_path,
+    workspace_roots, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
 };
+#[cfg(test)]
+use crate::workspace::settings::{prune_deleted_repo_settings, repo_path_from_id};
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
@@ -521,13 +523,27 @@ pub(super) fn resolve_repo_worktree(root: &Path, path: &Path) -> ResolvedRepoWor
 pub(super) fn repo_id(root: &Path, path: &Path) -> String {
     let canonical_root = canonical_repo_path(root);
     let canonical_path = canonical_repo_path(path);
-    canonical_path
+    let relative = canonical_path
         .strip_prefix(&canonical_root)
         .or_else(|_| path.strip_prefix(root))
         .ok()
         .and_then(|p| p.to_str())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| path.file_name().and_then(|v| v.to_str()).unwrap_or("repo"))
+        .unwrap_or(".")
+        .replace('\\', "/");
+    format!("local:{}/{}", root_id_for_path(&canonical_root), relative)
+}
+
+fn legacy_repo_id(root: &Path, path: &Path) -> String {
+    let canonical_root = canonical_repo_path(root);
+    let canonical_path = canonical_repo_path(path);
+    canonical_path
+        .strip_prefix(&canonical_root)
+        .or_else(|_| path.strip_prefix(root))
+        .ok()
+        .and_then(|path| path.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(".")
         .replace('\\', "/")
 }
 
@@ -867,7 +883,15 @@ pub(super) fn upsert_workspace_repo_binding(
     let Some(mut binding) = github_binding_identity(path, repository) else {
         return false;
     };
-    let id = repo_id(root, path);
+    let qualified_id = repo_id(root, path);
+    let legacy_id = legacy_repo_id(root, path);
+    let id = if settings.managed_repo_ids.contains(&legacy_id)
+        || settings.repo_bindings.contains_key(&legacy_id)
+    {
+        legacy_id
+    } else {
+        qualified_id
+    };
     if let Some(existing) = settings.repo_bindings.get(&id) {
         if binding.repository_id.is_none()
             && existing
@@ -895,7 +919,12 @@ fn backfill_workspace_repo_bindings(
 }
 
 fn apply_workspace_repo_binding(summary: &mut RepoSummary, settings: &WorkspaceSettings) {
-    let Some(binding) = settings.repo_bindings.get(&summary.id) else {
+    let Some(binding) = settings.repo_bindings.get(&summary.id).or_else(|| {
+        settings
+            .repo_bindings
+            .values()
+            .find(|binding| binding.local_path == summary.path)
+    }) else {
         return;
     };
     summary.github_full_name = Some(binding.remote_full_name.clone());
@@ -1178,7 +1207,7 @@ pub(super) fn plan_workspace_clone(
 
     let target = match &request.target {
         WorkspaceCloneTarget::Custom { path } => custom_clone_target(root, path)?,
-        WorkspaceCloneTarget::Default => {
+        WorkspaceCloneTarget::Default | WorkspaceCloneTarget::Root { .. } => {
             let full_name = request
                 .repository
                 .as_ref()
@@ -1264,7 +1293,7 @@ pub(super) fn should_retry_clone_with_system_git(remote: &str, error: &str) -> b
 }
 
 pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> bool {
-    let Ok(root) = workspace_root(app) else {
+    let Ok(root) = workspace_root_for_path(app, path) else {
         return false;
     };
     let id = repo_id(&root, path);
@@ -1275,7 +1304,7 @@ pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> bool {
 }
 
 pub(super) fn remember_repo_uses_system_git(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let root = workspace_root(app)?;
+    let root = workspace_root_for_path(app, path)?;
     let id = repo_id(&root, path);
     let mut settings = load_settings(app);
     if !settings
@@ -1566,10 +1595,11 @@ fn summarize_repo_from_status(
                 .map(|(_, subject)| subject.to_string())
         })
         .filter(|value| !value.is_empty());
-    let relative_path = repo_id(root, path);
+    let id = repo_id(root, path);
+    let relative_path = legacy_repo_id(root, path);
 
     RepoSummary {
-        id: relative_path.clone(),
+        id,
         name: path
             .file_name()
             .and_then(|value| value.to_str())
@@ -1600,10 +1630,11 @@ fn summarize_repo_from_status(
 }
 
 pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary {
-    let relative_path = repo_id(root, path);
+    let id = repo_id(root, path);
+    let relative_path = legacy_repo_id(root, path);
     let worktree = resolve_repo_worktree(root, path).summary;
     RepoSummary {
-        id: relative_path.clone(),
+        id,
         name: path
             .file_name()
             .and_then(|value| value.to_str())
@@ -1815,16 +1846,6 @@ fn expand_repo_paths_with_root_worktrees_unlocked(
     expanded
 }
 
-pub(super) fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
-    paths
-        .into_iter()
-        .map(|path| {
-            let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
-            with_repo_guard(common_dir, RepoAccess::Read, || summarize_repo(root, &path))
-        })
-        .collect()
-}
-
 fn operation_spec_with_repo_reads(
     mut spec: OperationSpec,
     paths: impl IntoIterator<Item = PathBuf>,
@@ -1876,6 +1897,7 @@ pub(super) fn cached_managed_repos(
     repos
 }
 
+#[cfg(test)]
 pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
     settings
         .managed_repo_ids
@@ -1885,6 +1907,7 @@ pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> V
         .collect()
 }
 
+#[cfg(test)]
 pub(super) fn managed_repo_paths_and_prune_stale(
     root: &Path,
     settings: &mut WorkspaceSettings,
@@ -1904,17 +1927,21 @@ pub(super) fn managed_repo_paths_and_prune_stale(
     (paths, changed)
 }
 
-fn managed_repo_paths_and_prune_settings(
-    app: &AppHandle,
-    root: &Path,
-    settings: &mut WorkspaceSettings,
-) -> Result<Vec<PathBuf>, String> {
-    let (paths, changed) = managed_repo_paths_and_prune_stale(root, settings);
-    if changed {
-        save_settings(app, settings)?;
-        crate::workspace::watcher::sync_repo_watchers(app);
-    }
-    Ok(paths)
+fn managed_repo_entries(app: &AppHandle, settings: &WorkspaceSettings) -> Vec<(PathBuf, PathBuf)> {
+    settings
+        .managed_repo_ids
+        .iter()
+        .filter(|id| !settings.hidden_repo_ids.contains(id))
+        .filter_map(|id| {
+            let path = repo_path_by_id(app, id).ok()?;
+            let root = id
+                .strip_prefix("local:")
+                .and_then(|value| value.split_once('/'))
+                .and_then(|(root_id, _)| workspace_root_by_id(app, root_id).ok())
+                .or_else(|| workspace_root(app).ok())?;
+            Some((root, path))
+        })
+        .collect()
 }
 
 pub(super) fn sort_repos(repos: &mut [RepoSummary]) {
@@ -1940,20 +1967,30 @@ pub(super) fn filter_hidden_repos(
 }
 
 pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    let root = workspace_root(&app)?;
     let settings = load_settings(&app);
+    let entries = managed_repo_entries(&app, &settings);
     let spec = operation_spec_with_repo_reads(
         workspace_analysis_spec("repoStatus", "刷新仓库"),
-        managed_repo_paths(&root, &settings),
+        entries.iter().map(|(_, path)| path.clone()),
     );
     run_operation(app.clone(), spec, move || {
-        let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
-        let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
-        if backfill_workspace_repo_bindings(&mut settings, &root, &paths) {
+        let entries = managed_repo_entries(&app, &settings);
+        let mut groups = HashMap::<PathBuf, Vec<PathBuf>>::new();
+        for (root, path) in &entries {
+            groups.entry(root.clone()).or_default().push(path.clone());
+        }
+        let mut changed = false;
+        for (root, paths) in groups {
+            changed |= backfill_workspace_repo_bindings(&mut settings, &root, &paths);
+        }
+        if changed {
             save_settings(&app, &settings)?;
         }
-        let mut repos = summarize_repos(&root, paths);
+        let mut repos = entries
+            .into_iter()
+            .map(|(root, path)| summarize_repo(&root, &path))
+            .collect::<Vec<_>>();
         for summary in &mut repos {
             apply_workspace_repo_binding(summary, &settings);
         }
@@ -1968,23 +2005,30 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
 
 pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let refresh_app = app.clone();
-    let root = workspace_root(&app)?;
     let settings = load_settings(&app);
+    let entries = managed_repo_entries(&app, &settings);
     let spec = operation_spec_with_repo_reads(
         OperationSpec::new(OperationKind::LocalRead),
-        managed_repo_paths(&root, &settings),
+        entries.iter().map(|(_, path)| path.clone()),
     );
     let repos = run_operation(app.clone(), spec, move || {
-        let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
         let cache = matching_startup_cache(&app, &settings);
-        let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
-        if backfill_workspace_repo_bindings(&mut settings, &root, &paths) {
+        let entries = managed_repo_entries(&app, &settings);
+        let mut groups = HashMap::<PathBuf, Vec<PathBuf>>::new();
+        for (root, path) in &entries {
+            groups.entry(root.clone()).or_default().push(path.clone());
+        }
+        let mut changed = false;
+        for (root, paths) in groups {
+            changed |= backfill_workspace_repo_bindings(&mut settings, &root, &paths);
+        }
+        if changed {
             save_settings(&app, &settings)?;
         }
-        let mut repos: Vec<_> = paths
+        let mut repos: Vec<_> = entries
             .into_iter()
-            .map(|path| {
+            .map(|(root, path)| {
                 let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
                 with_repo_guard(common_dir, RepoAccess::Read, || {
                     let mut summary =
@@ -2015,17 +2059,25 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
         app.clone(),
         workspace_analysis_spec("discoverRepos", "发现仓库"),
         move || {
-            let root = workspace_root(&app)?;
-            let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
             let mut settings = load_settings(&app);
-            for path in &paths {
-                add_managed_repo_id(&mut settings, repo_id(&root, path));
+            let mut entries = Vec::new();
+            for (_, root) in workspace_roots(&app)? {
+                let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
+                for path in &paths {
+                    add_managed_repo_id(&mut settings, repo_id(&root, path));
+                }
+                backfill_workspace_repo_bindings(&mut settings, &root, &paths);
+                entries.extend(paths.into_iter().map(|path| (root.clone(), path)));
             }
-            backfill_workspace_repo_bindings(&mut settings, &root, &paths);
             save_settings(&app, &settings)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
-            let mut repos =
-                filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
+            let mut repos = filter_hidden_repos(
+                entries
+                    .into_iter()
+                    .map(|(root, path)| summarize_repo(&root, &path))
+                    .collect(),
+                &settings.hidden_repo_ids,
+            );
             for summary in &mut repos {
                 apply_workspace_repo_binding(summary, &settings);
             }
@@ -2037,8 +2089,21 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
 }
 
 pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = normalize_repo_path(&root, &repo_path)?;
+    let requested = PathBuf::from(repo_path.trim());
+    let (root, path) = if requested.is_absolute() {
+        workspace_roots(&app)?
+            .into_iter()
+            .find_map(|(_, root)| {
+                normalize_repo_path(&root, &repo_path)
+                    .ok()
+                    .map(|path| (root, path))
+            })
+            .ok_or_else(|| "仓库必须位于当前工作区的某个根目录内".to_string())?
+    } else {
+        let root = workspace_root(&app)?;
+        let path = normalize_repo_path(&root, &repo_path)?;
+        (root, path)
+    };
     let selected_repo_id = repo_id(&root, &path);
     run_repo_visible_blocking(
         app.clone(),
@@ -2100,7 +2165,11 @@ pub async fn workspace_create_local_repo(
         Some("workspace"),
         "创建本地仓库",
         move || {
-            let root = workspace_root(&app)?;
+            let root = request
+                .root_id
+                .as_deref()
+                .map(|root_id| workspace_root_by_id(&app, root_id))
+                .unwrap_or_else(|| workspace_root(&app))?;
             let name = request.name.trim().to_string();
             validate_clone_directory_name(&name)?;
             let target = root.join(&name);
@@ -2163,7 +2232,10 @@ pub async fn workspace_clone_repo(
         "克隆仓库",
         move || {
             validate_repo_placement(&load_settings(&app), &request.placement)?;
-            let root = workspace_root(&app)?;
+            let root = match &request.target {
+                WorkspaceCloneTarget::Root { root_id } => workspace_root_by_id(&app, root_id)?,
+                _ => workspace_root(&app)?,
+            };
             let plan = plan_workspace_clone(&root, &request)?;
             let remote = plan.remote;
             let target = plan.target;
@@ -2284,8 +2356,7 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
         OperationKind::LocalRead,
         "读取仓库摘要",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let mut settings = load_settings(&app);
             if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
                 save_settings(&app, &settings)?;
@@ -2314,8 +2385,7 @@ pub async fn repo_refresh_summary(
         "repoStatus",
         "刷新仓库状态",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let fetch_error = if fetched_remote {
                 match require_valid_remote_sync_config(&app, &repo_id, &path) {
                     Ok(config) => {
@@ -2363,8 +2433,7 @@ pub async fn repo_refresh_language_stats(
         "languageStats",
         "刷新语言统计",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let mut summary = summarize_repo_with_language_stats(&root, &path);
             let mut settings = load_settings(&app);
             if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
@@ -2468,8 +2537,7 @@ pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDeta
         OperationKind::LocalRead,
         "读取仓库详情",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let status = repo_status_snapshot(&path);
             let change_entries = status.entries.clone();
             let conflict_entries = conflict_status_entries(&status.entries);
@@ -2501,8 +2569,7 @@ pub async fn repo_refresh_detail_patch(
         OperationKind::LocalRead,
         "刷新仓库状态",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             Ok(build_repo_detail_patch(&root, &path, &request))
         },
     )
@@ -2536,8 +2603,7 @@ pub(super) fn refresh_repo_for_scheduler(
     request: &RepoRefreshRequest,
     include_detail: bool,
 ) -> Result<(RepoSummary, Option<RepoDetailPatch>, Option<i64>), String> {
-    let root = workspace_root(app)?;
-    let path = repo_path_by_id(app, &request.repo_id)?;
+    let (root, path) = repo_root_and_path_by_id(app, &request.repo_id)?;
     let remote_checked_at = if request.mode == "remote" {
         let config = require_valid_remote_sync_config(app, &request.repo_id, &path)?;
         let steps = run_multi_remote_fetch(app, &path, &config);
@@ -2619,8 +2685,7 @@ pub async fn repo_discard_files(
         OperationKind::LocalWrite,
         "放弃文件更改",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             discard_repo_files(&path, files)?;
             Ok(summarize_repo(&root, &path))
         },
@@ -2639,8 +2704,7 @@ pub async fn repo_add_files_to_gitignore(
         OperationKind::LocalWrite,
         "添加文件到 gitignore",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             add_repo_files_to_gitignore(&path, files)?;
             Ok(summarize_repo(&root, &path))
         },
@@ -2822,8 +2886,7 @@ pub async fn repo_commit(
         OperationKind::LocalWrite,
         "提交仓库",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let trimmed = message.trim();
             if trimmed.is_empty() {
                 return Err("提交说明不能为空".to_string());
@@ -2873,8 +2936,7 @@ pub async fn repo_pull(
         OperationKind::LocalWrite,
         "拉取仓库",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             run_configured_pull(&app, &root, &repo_id, &path, local_changes_mode, false)
         },
     )
@@ -2892,8 +2954,7 @@ pub async fn repo_merge_pull(
         OperationKind::LocalWrite,
         "合并拉取仓库",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             run_configured_pull(&app, &root, &repo_id, &path, local_changes_mode, true)
         },
     )
@@ -2910,8 +2971,7 @@ pub async fn repo_fetch(
         OperationKind::LocalWrite,
         "抓取远端引用",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
             let steps = run_multi_remote_fetch(&app, &path, &config);
             let result = sync_result(&root, &path, steps, "远端抓取已执行");
@@ -2941,8 +3001,7 @@ pub async fn repo_start_rebase(
         OperationKind::LocalWrite,
         "执行 rebase",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             ensure_repo_has_no_conflicts(&root, &path, "rebase")?;
             let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
             if config.resolved_policy.pull_remotes.len() != 1 {
@@ -3013,8 +3072,7 @@ pub async fn repo_push(
         OperationKind::LocalWrite,
         "推送仓库",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
             let steps = run_multi_remote_push(&app, &path, &config, remote_names, None, false)?;
             Ok(sync_result(&root, &path, steps, "推送已执行"))
@@ -3035,8 +3093,7 @@ pub async fn repo_push_new_branch(
         OperationKind::LocalWrite,
         "推送新分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let summary = summarize_repo(&root, &path);
             let branch = normalize_branch_ref(
                 branch_name
@@ -3065,8 +3122,7 @@ pub async fn repo_push_with_system_git(
         OperationKind::LocalWrite,
         "使用系统 Git 推送仓库",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
             let steps = run_multi_remote_push(&app, &path, &config, remote_names, None, true)?;
             Ok(sync_result(&root, &path, steps, "系统 Git 推送已执行"))
@@ -3086,8 +3142,7 @@ pub async fn repo_checkout_branch(
         OperationKind::LocalWrite,
         "切换分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             checkout_branch_at(&root, &path, &branch)
         },
     )
@@ -3107,8 +3162,7 @@ pub async fn repo_create_branch(
         OperationKind::LocalWrite,
         "创建分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             create_branch_at(&root, &path, &name, &from_ref, checkout_after)
         },
     )
@@ -3127,8 +3181,7 @@ pub async fn repo_rename_branch(
         OperationKind::LocalWrite,
         "重命名分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             rename_branch_at(&root, &path, &old_name, &new_name)
         },
     )
@@ -3146,8 +3199,7 @@ pub async fn repo_merge_branch(
         OperationKind::LocalWrite,
         "合并分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             merge_branch_at(&root, &path, &branch)
         },
     )
@@ -3165,8 +3217,7 @@ pub async fn repo_delete_branch(
         OperationKind::LocalWrite,
         "删除分支",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             delete_branch_at(&root, &path, &branch)
         },
     )
@@ -3185,8 +3236,7 @@ pub async fn repo_set_upstream(
         OperationKind::LocalWrite,
         "设置分支 upstream",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let branch = normalize_branch_ref(&branch, "分支名不能为空")?;
             let upstream = normalize_branch_ref(&upstream, "upstream 不能为空")?;
             git_command(
@@ -3259,8 +3309,7 @@ pub async fn repo_stash_save(
         OperationKind::LocalWrite,
         "保存 stash",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let summary = summarize_repo(&root, &path);
             if repo_dirty_count(&summary) == 0 {
                 return Err("当前没有可保存的改动".to_string());
@@ -3294,8 +3343,7 @@ pub async fn repo_stash_apply(
         OperationKind::LocalWrite,
         "应用 stash",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let stash = normalize_stash_id(&stash_id)?;
             run_repo_operation_with_conflicts(
                 &root,
@@ -3321,8 +3369,7 @@ pub async fn repo_stash_pop(
         OperationKind::LocalWrite,
         "弹出 stash",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let stash = normalize_stash_id(&stash_id)?;
             run_repo_operation_with_conflicts(
                 &root,
@@ -3382,8 +3429,7 @@ pub async fn repo_cherry_pick_commit(
         OperationKind::LocalWrite,
         "执行 cherry-pick",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             ensure_repo_ready_for_rewrite(&root, &path, "cherry-pick")?;
             let hash = normalize_commit_hash(&hash)?;
             run_repo_operation_with_conflicts(
@@ -3410,8 +3456,7 @@ pub async fn repo_revert_commit(
         OperationKind::LocalWrite,
         "回退提交",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             ensure_repo_ready_for_rewrite(&root, &path, "revert")?;
             let hash = normalize_commit_hash(&hash)?;
             run_repo_operation_with_conflicts(
@@ -3439,8 +3484,7 @@ pub async fn repo_reset_to_commit(
         OperationKind::LocalWrite,
         "重置到提交",
         move || {
-            let root = workspace_root(&app)?;
-            let path = repo_path_by_id(&app, &repo_id)?;
+            let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let summary = summarize_repo(&root, &path);
             if summary.conflict_count > 0 || !repo_conflicts(&path).files.is_empty() {
                 return Err("当前仓库存在未处理冲突，已阻止 reset".to_string());
@@ -3467,8 +3511,7 @@ pub async fn repo_accept_conflict_file(
         OperationKind::LocalWrite,
         "接受冲突文件",
         move || {
-            let root = workspace_root(&app)?;
-            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let checkout_side = conflict_checkout_side(&side)?;
             git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
             if stage {
@@ -3493,8 +3536,7 @@ pub async fn repo_resolve_conflict_file(
         OperationKind::LocalWrite,
         "解决冲突文件",
         move || {
-            let root = workspace_root(&app)?;
-            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let file_path = safe_repo_file_path(&repo_path, &path)?;
             let content =
                 fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
@@ -3520,8 +3562,7 @@ pub async fn repo_mark_file_resolved(
         OperationKind::LocalWrite,
         "标记冲突文件已解决",
         move || {
-            let root = workspace_root(&app)?;
-            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             git_command(&repo_path, &["add", "--", &path], None)?;
             Ok(summarize_repo(&root, &repo_path))
         },
@@ -3539,8 +3580,7 @@ pub async fn repo_abort_conflict_operation(
         OperationKind::LocalWrite,
         "终止冲突操作",
         move || {
-            let root = workspace_root(&app)?;
-            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let operation = conflict_operation(&repo_path);
             let args = conflict_operation_args(&operation, "终止")?;
             git_command(&repo_path, args, None)?;
@@ -3560,8 +3600,7 @@ pub async fn repo_continue_conflict_operation(
         OperationKind::LocalWrite,
         "继续冲突操作",
         move || {
-            let root = workspace_root(&app)?;
-            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let conflicts = repo_conflicts(&repo_path);
             if !conflicts.files.is_empty() {
                 return Err("仍有冲突文件未解决".to_string());

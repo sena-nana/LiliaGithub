@@ -25,6 +25,7 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
+import WorkspaceSwitcher from "../components/sidebar/WorkspaceSwitcher.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
@@ -104,8 +105,48 @@ const sidebarRepoSort = ref<SidebarRepoSortState>(
   readRepoSort(SIDEBAR_REPO_SORT_STORAGE_KEY, sidebarRepoSortOptions, DEFAULT_REPO_SORT),
 );
 
+function serializedSidebarRepoSort() {
+  return `${sidebarRepoSort.value.sort}:${sidebarRepoSort.value.direction}`;
+}
+
+function parseSidebarRepoSort(value: string | undefined): SidebarRepoSortState | null {
+  const [sort, direction] = value?.split(":") ?? [];
+  if (!sidebarRepoSortOptions.some((option) => option.value === sort)) return null;
+  if (direction !== "asc" && direction !== "desc") return null;
+  return { sort: sort as SidebarRepoSortKey, direction };
+}
+
+function persistSidebarViewPreferences() {
+  const preferences = workspace.activeWorkspace.value?.viewPreferences;
+  if (!preferences) return;
+  void workspace.updateWorkspaceViewPreferences({
+    ...preferences,
+    sidebarRepositorySort: serializedSidebarRepoSort(),
+    collapsedGroupIds: [...collapsedGroupIds.value],
+  }).catch(() => undefined);
+}
+
+watch(
+  () => [
+    workspace.activeWorkspace.value?.id,
+    workspace.activeWorkspace.value?.viewPreferences.sidebarRepositorySort,
+    workspace.activeWorkspace.value?.viewPreferences.collapsedGroupIds.join("\n"),
+  ] as const,
+  () => {
+    const preferences = workspace.activeWorkspace.value?.viewPreferences;
+    if (!preferences) {
+      collapsedGroupIds.value = new Set();
+      return;
+    }
+    sidebarRepoSort.value = parseSidebarRepoSort(preferences.sidebarRepositorySort) ??
+      readRepoSort(SIDEBAR_REPO_SORT_STORAGE_KEY, sidebarRepoSortOptions, DEFAULT_REPO_SORT);
+    collapsedGroupIds.value = new Set(preferences.collapsedGroupIds);
+  },
+  { immediate: true },
+);
+
 const footerStatus = computed(() => {
-  if (!workspace.workspaceRoot.value) {
+  if (!workspace.hasAvailableWorkspaceRoot.value) {
     return {
       to: "/",
       label: "Setup",
@@ -741,6 +782,7 @@ async function createGroup() {
     const groups = settings.repoGroups;
     const createdGroup = groups.find((group) => !beforeGroupIds.has(group.id)) ?? groups[groups.length - 1];
     collapsedGroupIds.value = new Set([UNGROUPED_REPO_GROUP_ID, ...groups.map((group) => group.id)]);
+    persistSidebarViewPreferences();
     if (createdGroup) startRenameGroup(createdGroup);
   } catch (err) {
     editingGroupError.value = err instanceof Error ? err.message : String(err);
@@ -757,6 +799,7 @@ function toggleGroupCollapsed(groupId: string, event?: MouseEvent) {
     next.add(groupId);
   }
   collapsedGroupIds.value = next;
+  persistSidebarViewPreferences();
   if (event?.detail) {
     (event.currentTarget as HTMLElement | null)?.blur();
   }
@@ -769,6 +812,7 @@ function sectionToggleLabel(section: RepoSection) {
 function selectSidebarRepoSort(option: SidebarRepoSortOption) {
   sidebarRepoSort.value = nextRepoSort(sidebarRepoSort.value, option);
   writeRepoSort(SIDEBAR_REPO_SORT_STORAGE_KEY, sidebarRepoSort.value);
+  persistSidebarViewPreferences();
 }
 
 function openSidebarRepoSortMenu(event: MouseEvent) {
@@ -824,6 +868,7 @@ async function deleteGroup(group: { id: string }) {
   const nextCollapsed = new Set(collapsedGroupIds.value);
   nextCollapsed.delete(group.id);
   collapsedGroupIds.value = nextCollapsed;
+  persistSidebarViewPreferences();
   pendingDeleteGroupId.value = null;
 }
 </script>
@@ -835,6 +880,7 @@ async function deleteGroup(group: { id: string }) {
         <div class="sb-section__header">
           <span class="sb-section__title">工作区</span>
         </div>
+        <WorkspaceSwitcher />
         <nav class="sb-tree" aria-label="主导航">
           <RouterLink
             v-for="item in SIDEBAR_NAV"

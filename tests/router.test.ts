@@ -1570,7 +1570,7 @@ describe("基础路由", () => {
 
     await renderAt("/settings?tab=repositories");
 
-    expect(await screen.findAllByRole("heading", { name: "仓库" })).toHaveLength(1);
+    expect(await screen.findAllByRole("heading", { name: "工作区" })).toHaveLength(1);
     expect(await screen.findByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
     await fireEvent.click(await screen.findByRole("button", { name: "恢复管理" }));

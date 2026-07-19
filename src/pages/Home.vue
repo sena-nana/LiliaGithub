@@ -33,6 +33,7 @@ import { cloneAccountPreferences, useAccountPreferences } from "../composables/u
 import {
   buildCalendarHeatmapModel,
   Dropdown,
+  UiDialog,
   openContextMenuAt,
   type ContextMenuItem,
 } from "../ui";
@@ -146,6 +147,8 @@ import {
 } from "../utils/githubRepositoryScope";
 
 const workspace = useWorkspace();
+const activeNamedWorkspace = computed(() => workspace.activeWorkspace.value);
+const hasAvailableWorkspaceRoot = computed(() => workspace.hasAvailableWorkspaceRoot.value);
 const accountPreferences = useAccountPreferences();
 const router = useRouter();
 const route = useRoute();
@@ -161,12 +164,43 @@ const cloneDialog = useCloneRepoDialog({
 });
 const favoritePendingKeys = ref<Set<string>>(new Set());
 const favoriteError = ref<string | null>(null);
+const workspaceCreateOpen = ref(false);
+const workspaceCreateName = ref("");
+const workspaceCreateRoot = ref("");
+const workspaceCreateBusy = ref(false);
+const choosingInitialWorkspaceRoot = ref(false);
 
 async function chooseWorkspaceRoot() {
+  if (choosingInitialWorkspaceRoot.value) return;
+  choosingInitialWorkspaceRoot.value = true;
   try {
-    await workspace.chooseWorkspaceRoot();
+    const root = await workspace.pickWorkspaceRoot();
+    if (!root) return;
+    const active = activeNamedWorkspace.value;
+    if (active) {
+      await workspace.addWorkspaceRoot(active.id, root);
+      return;
+    }
+    workspaceCreateRoot.value = root;
+    const rootSegments = root.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+    workspaceCreateName.value = rootSegments[rootSegments.length - 1] ?? "默认工作区";
+    workspaceCreateOpen.value = true;
   } catch {
     // The workspace lifecycle exposes the failure through its shared error state.
+  } finally {
+    choosingInitialWorkspaceRoot.value = false;
+  }
+}
+
+async function createInitialWorkspace() {
+  const name = workspaceCreateName.value.trim();
+  if (!name || workspaceCreateBusy.value) return;
+  workspaceCreateBusy.value = true;
+  try {
+    await workspace.createWorkspace(name, workspaceCreateRoot.value);
+    workspaceCreateOpen.value = false;
+  } finally {
+    workspaceCreateBusy.value = false;
   }
 }
 
@@ -869,11 +903,13 @@ watch(
 watch(
   () => [
     workspace.isReady.value,
+    activeNamedWorkspace.value?.id,
+    activeNamedWorkspace.value?.viewPreferences.homeRepositoryStatusSort,
     currentGitHubBindingIdentity(),
     accountPreferences.value.repositorySort.key,
     accountPreferences.value.repositorySort.direction,
   ] as const,
-  ([ready, bindingIdentity]) => {
+  ([ready, , , bindingIdentity]) => {
     if (!ready) return;
     if (repoStatusSortBindingIdentity === bindingIdentity && repoStatusSortSelectedOnPage) return;
     const stored = readStoredRepoStatusSort();
@@ -1765,6 +1801,10 @@ function readStoredRepoStatusSort() {
     sort: accountPreferences.value.repositorySort.key,
     direction: accountPreferences.value.repositorySort.direction,
   };
+  const workspaceValue = parseWorkspaceRepoStatusSort(
+    activeNamedWorkspace.value?.viewPreferences.homeRepositoryStatusSort,
+  );
+  if (workspaceValue) return { value: workspaceValue, exists: true };
   const storageKey = repoStatusSortStorageKey();
   try {
     if (localStorage.getItem(storageKey) != null) {
@@ -1779,6 +1819,13 @@ function readStoredRepoStatusSort() {
   } catch {
   }
   return { value: defaultValue, exists: false };
+}
+
+function parseWorkspaceRepoStatusSort(value: string | undefined): RepoStatusSortState | null {
+  const [sort, direction] = value?.split(":") ?? [];
+  if (!repoStatusSortOptions.some((option) => option.value === sort)) return null;
+  if (direction !== "asc" && direction !== "desc") return null;
+  return { sort: sort as RepoStatusSortKey, direction };
 }
 
 function compareRepoStatusRows(left: RepoStatusRow, right: RepoStatusRow) {
@@ -1797,6 +1844,13 @@ function selectRepoStatusSort(option: RepoStatusSortOption) {
   repoStatusSortBindingIdentity = currentGitHubBindingIdentity();
   repoStatusSortSelectedOnPage = true;
   writeRepoSort(repoStatusSortStorageKey(), repoStatusSort.value);
+  const preferences = activeNamedWorkspace.value?.viewPreferences;
+  if (preferences) {
+    void workspace.updateWorkspaceViewPreferences({
+      ...preferences,
+      homeRepositoryStatusSort: `${repoStatusSort.value.sort}:${repoStatusSort.value.direction}`,
+    }).catch(() => undefined);
+  }
 }
 
 function openRepoStatusSortMenu(event: MouseEvent) {
@@ -1844,21 +1898,21 @@ function createRepoMenuItems(): ContextMenuItem[] {
       id: "home-clone-repo",
       label: "克隆仓库",
       icon: CloudDownload,
-      disabled: !workspace.workspaceRoot.value,
+      disabled: !hasAvailableWorkspaceRoot.value,
       onSelect: () => openCloneRepoDialog(),
     },
     {
       id: "home-create-local-repo",
       label: "创建本地仓库",
       icon: FolderGit2,
-      disabled: !workspace.workspaceRoot.value,
+      disabled: !hasAvailableWorkspaceRoot.value,
       onSelect: () => openCreateRepoCard("local"),
     },
     {
       id: "home-create-remote-repo",
       label: "创建远程仓库",
       icon: GitBranchPlus,
-      disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
+      disabled: !hasAvailableWorkspaceRoot.value || !workspace.isAuthorized.value,
       onSelect: () => openCreateRepoCard("remote"),
     },
   ];
@@ -2103,14 +2157,14 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
 
       <div class="setup-list">
-        <div class="setup-step" :class="{ 'is-done': workspace.workspaceRoot.value }">
+        <div class="setup-step" :class="{ 'is-done': hasAvailableWorkspaceRoot }">
           <div class="setup-step__icon">
             <FolderOpen :size="18" aria-hidden="true" />
           </div>
           <div class="setup-step__content">
-            <h2>工作区文件夹</h2>
+            <h2>{{ activeNamedWorkspace ? activeNamedWorkspace.name : "命名工作区" }}</h2>
             <p class="muted">
-              {{ workspace.workspaceRoot.value ?? "尚未选择。本应用会扫描该文件夹下的 Git 仓库。" }}
+              {{ hasAvailableWorkspaceRoot ? workspace.workspaceRoot.value : (activeNamedWorkspace ? "当前工作区没有可用根目录。" : "选择首个根目录并创建工作区。") }}
             </p>
           </div>
           <div class="setup-step__action">
@@ -2118,17 +2172,17 @@ function bulkOperationDescription(operation: BulkOperation) {
               type="button"
               class="primary"
               data-agent-id="setup.workspace.choose"
-              :disabled="workspace.choosingWorkspaceRoot.value"
+              :disabled="choosingInitialWorkspaceRoot"
               @click="chooseWorkspaceRoot"
             >
               <LoaderCircle
-                v-if="workspace.choosingWorkspaceRoot.value"
+                v-if="choosingInitialWorkspaceRoot"
                 :size="14"
                 aria-hidden="true"
                 class="sb-spin"
               />
               <FolderOpen v-else :size="14" aria-hidden="true" />
-              选择工作区
+              {{ activeNamedWorkspace ? "添加根目录" : "创建工作区" }}
             </button>
           </div>
         </div>
@@ -2191,8 +2245,8 @@ function bulkOperationDescription(operation: BulkOperation) {
         <div>
           <div class="overview-title">
             <h1>项目总览</h1>
-            <span v-if="workspace.workspaceRoot.value" :title="workspace.workspaceRoot.value">
-              {{ workspace.workspaceRoot.value }}
+            <span v-if="activeNamedWorkspace" :title="activeNamedWorkspace.roots.map((root) => root.path).join('\n')">
+              {{ activeNamedWorkspace.name }} · {{ activeNamedWorkspace.roots.length }} 个 root
             </span>
           </div>
         </div>
@@ -2282,7 +2336,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             data-agent-id="home.overview.discover"
             title="发现仓库"
             aria-label="发现仓库"
-            :disabled="!workspace.workspaceRoot.value || discovering"
+            :disabled="!hasAvailableWorkspaceRoot || discovering"
             @click="discoverRepos"
           >
             <LoaderCircle v-if="discovering" :size="17" aria-hidden="true" class="sb-spin" />
@@ -2922,7 +2976,7 @@ function bulkOperationDescription(operation: BulkOperation) {
     <RepoCreateCard
       :open="createRepoCardOpen"
       :mode="createRepoCardMode"
-      :workspace-ready="Boolean(workspace.workspaceRoot.value)"
+      :workspace-ready="hasAvailableWorkspaceRoot"
       :github-ready="workspace.isAuthorized.value"
       :repo-groups="repoGroups"
       @close="closeCreateRepoCard"
@@ -2935,6 +2989,37 @@ function bulkOperationDescription(operation: BulkOperation) {
       :repo-groups="repoGroups"
       v-on="cloneDialog.events"
     />
+    <UiDialog
+      :open="workspaceCreateOpen"
+      title="新建工作区"
+      :close-disabled="workspaceCreateBusy"
+      @close="workspaceCreateOpen = false"
+    >
+      <form class="workspace-create-dialog" @submit.prevent="createInitialWorkspace">
+        <label>
+          <span>名称</span>
+          <input
+            v-model="workspaceCreateName"
+            maxlength="64"
+            autofocus
+            data-agent-id="setup.workspace.name"
+          />
+        </label>
+        <label>
+          <span>首个根目录</span>
+          <input :value="workspaceCreateRoot" readonly />
+        </label>
+        <div class="workspace-create-dialog__actions">
+          <button type="button" class="ghost" :disabled="workspaceCreateBusy" @click="workspaceCreateOpen = false">取消</button>
+          <button
+            type="submit"
+            class="primary"
+            data-agent-id="setup.workspace.create"
+            :disabled="workspaceCreateBusy || !workspaceCreateName.trim()"
+          >创建</button>
+        </div>
+      </form>
+    </UiDialog>
   </section>
 </template>
 
@@ -2965,6 +3050,24 @@ function bulkOperationDescription(operation: BulkOperation) {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.workspace-create-dialog {
+  display: grid;
+  gap: 14px;
+}
+
+.workspace-create-dialog label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.workspace-create-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .setup-page {

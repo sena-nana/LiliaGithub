@@ -246,8 +246,7 @@
         },
         {
           "id": "multiple-workspaces",
-          "complete": false,
-          "milestone": "P1",
+          "complete": true,
           "text": {
             "en": "Multiple named workspaces with multiple roots and workspace-specific preferences.",
             "zh-CN": "支持多个根目录和工作区独立偏好的多个命名工作区。"

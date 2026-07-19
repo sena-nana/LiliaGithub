@@ -848,7 +848,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local-new");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Flocal-new");
       expect(sidebarRowForText(view.container, "local-new")).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "未分组仓库", 3)).toBeInTheDocument();
     });
@@ -875,7 +875,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/lilia-user%2Ftemplate-made");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Flilia-user%2Ftemplate-made");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     await toggleSidebarRepoGroup(view, "前端");
@@ -1131,6 +1131,8 @@ describe("AppShell sidebar", () => {
     });
 
     state.launchStatuses.LiliaGithub = {
+      workspaceId: state.settings?.activeWorkspaceId ?? null,
+      contextRevision: state.contextRevision,
       repoId: "LiliaGithub",
       state: "running",
       pid: 1,
@@ -1148,6 +1150,8 @@ describe("AppShell sidebar", () => {
       window.dispatchEvent(
         new CustomEvent(REPO_LAUNCH_STATUS_EVENT, {
           detail: {
+            workspaceId: state.settings?.activeWorkspaceId ?? null,
+            contextRevision: state.contextRevision,
             repoId: "LiliaGithub",
             state: "exited",
             pid: null,
@@ -1564,7 +1568,7 @@ describe("AppShell sidebar", () => {
           defaultBranch: "main",
         }),
       }));
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FLilia");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Fsena-nana%2FLilia");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     cloneRepo.mockRestore();
@@ -1662,7 +1666,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FHomeClone");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Fsena-nana%2FHomeClone");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     await toggleSidebarRepoGroup(view, "前端");
@@ -1696,7 +1700,7 @@ describe("AppShell sidebar", () => {
           defaultBranch: null,
         }),
       }));
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FNewRepo");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Fsena-nana%2FNewRepo");
       const row = sidebarRowForText(view.container, "NewRepo");
       expect(row).toBeInTheDocument();
       expect(row.closest(".sb-section")?.querySelector(".sb-group-toggle")).toHaveTextContent("sena-nana");
@@ -1728,7 +1732,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/meijustory123%2FTapdClient");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local%3Aroot-default%2Fmeijustory123%2FTapdClient");
       expect(sidebarRowForText(view.container, "TapdClient")).toBeInTheDocument();
     });
   });
@@ -1873,7 +1877,7 @@ describe("AppShell sidebar", () => {
     expect(view.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: /外观/ })).toHaveAttribute("aria-current", "page");
-    expect(view.getByRole("button", { name: /仓库/ })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: /工作区/ })).toBeInTheDocument();
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
 
     await fireEvent.click(view.getByRole("button", { name: /关于/ }));
@@ -1883,11 +1887,11 @@ describe("AppShell sidebar", () => {
     });
     expect(view.getByRole("button", { name: /关于/ })).toHaveAttribute("aria-current", "page");
 
-    await fireEvent.click(view.getByRole("button", { name: /仓库/ }));
+    await fireEvent.click(view.getByRole("button", { name: /工作区/ }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=repositories");
     });
-    expect(view.getByRole("button", { name: /仓库/ })).toHaveAttribute("aria-current", "page");
+    expect(view.getByRole("button", { name: /工作区/ })).toHaveAttribute("aria-current", "page");
 
     await view.router.push("/repos/LiliaGithub");
     expect(view.getByRole("button", { name: "展开左侧栏" })).toHaveAttribute("aria-pressed", "true");

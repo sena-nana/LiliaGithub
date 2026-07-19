@@ -8,6 +8,7 @@ import type {
   GitHubRepoSummary,
   GitHubRepositoryScope,
   WorkspaceRepoPlacement,
+  WorkspaceRoot,
 } from "../../services/workspace";
 import GitHubRepositoryScopeControl from "../github/GitHubRepositoryScopeControl.vue";
 import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";
@@ -58,6 +59,8 @@ const props = defineProps<{
   repoGroups: readonly RepoCloneGroup[];
   placement: WorkspaceRepoPlacement;
   defaultOrganizationLogin: string | null;
+  workspaceRoots: readonly WorkspaceRoot[];
+  selectedRootId: string;
 }>();
 
 const emit = defineEmits<{
@@ -72,6 +75,7 @@ const emit = defineEmits<{
   updateRemoteUrl: [value: string];
   updateDirectoryName: [value: string];
   updatePlacement: [placement: WorkspaceRepoPlacement];
+  updateRootId: [rootId: string];
   markDirectoryTouched: [];
   clearSelectedRepo: [];
   updateRepositoryScope: [scope: GitHubRepositoryScope];
@@ -109,6 +113,17 @@ const selectedGroupValue = computed({
   set: (value: string) => {
     emit("updatePlacement", repoPlacementFromValue(value));
   },
+});
+const rootOptions = computed(() => props.workspaceRoots
+  .filter((root) => root.available)
+  .map((root) => ({
+    value: root.id,
+    label: root.path,
+    agentId: `clone-repo.root.option.${root.id}`,
+  })));
+const selectedRootValue = computed({
+  get: () => props.selectedRootId,
+  set: (value: string) => emit("updateRootId", value),
 });
 const localRepoIdentityKeys = computed(() => new Set(props.localRepoFullNames.map(githubRepositoryIdentityKey)));
 
@@ -283,6 +298,20 @@ watch(() => props.gitHubBound, focusCloneInput);
           agent-id="clone-repo.group.trigger"
           menu-label="选择仓库分组"
           menu-width="240px"
+          :disabled="busy"
+        />
+      </div>
+      <div v-if="rootOptions.length > 1" class="clone-field">
+        <span>目标根目录</span>
+        <Dropdown
+          v-model="selectedRootValue"
+          :options="rootOptions"
+          :icon="FolderInput"
+          placement="bottom"
+          button-class="clone-group-picker"
+          agent-id="clone-repo.root.trigger"
+          menu-label="选择目标根目录"
+          menu-width="100%"
           :disabled="busy"
         />
       </div>

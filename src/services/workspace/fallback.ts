@@ -109,6 +109,9 @@ import type {
   RemoteRepoShortcut,
   SystemOpenTarget,
   WorkspaceTask,
+  WorkspaceBootstrap,
+  WorkspaceRoot,
+  WorkspaceViewPreferences,
   WorkspaceRepoRefreshRequest,
   WorkspaceRepoRefreshedEvent,
   WorkspaceSettings,
@@ -619,6 +622,8 @@ function cloneContributionDay(day: GitHubContributionDay): GitHubContributionDay
 
 function cloneStartupCache(cache: WorkspaceStartupCache): WorkspaceStartupCache {
   return {
+    workspaceId: cache.workspaceId,
+    rootsFingerprint: cache.rootsFingerprint,
     workspaceRoot: cache.workspaceRoot,
     bindingLogin: cache.bindingLogin,
     reposById: Object.fromEntries(
@@ -2464,14 +2469,62 @@ type FallbackGitHubRepoFilePreviewCall = {
   refName: string | null;
 };
 
-function createDefaultAccountPreferences(workspaceRoot: string | null): AccountPreferences {
+function createDefaultAccountPreferences(_workspaceRoot: string | null): AccountPreferences {
   return {
-    defaultWorkspaceRoot: workspaceRoot,
     repositoryScope: { kind: "all" },
     repositorySort: { key: "updated", direction: "desc" },
     issues: { state: "open", sort: "created", direction: "desc" },
     pullRequests: { state: "open", sort: "updated", direction: "desc" },
     actions: { state: "all", sort: "updated", direction: "desc" },
+  };
+}
+
+function defaultWorkspaceViewPreferences(): WorkspaceViewPreferences {
+  return {
+    sidebarRepositorySort: "default",
+    collapsedGroupIds: [],
+    homeRepositoryStatusSort: "default",
+  };
+}
+
+function fallbackRoot(workspaceRoot: string | null, id = "root-default"): WorkspaceRoot[] {
+  return workspaceRoot
+    ? [{ id, path: workspaceRoot, available: true, unavailableReason: null }]
+    : [];
+}
+
+function withFallbackWorkspaceMetadata(
+  settings: Omit<WorkspaceSettings, "workspaceCatalog" | "activeWorkspaceId" | "activeWorkspace">,
+  id = "workspace-default",
+  name = "默认工作区",
+): WorkspaceSettings {
+  const roots = fallbackRoot(settings.workspaceRoot);
+  const primaryRootId = roots[0]?.id ?? null;
+  return {
+    ...settings,
+    workspaceCatalog: [{ id, name, roots, primaryRootId }],
+    activeWorkspaceId: id,
+    activeWorkspace: {
+      id,
+      name,
+      roots,
+      primaryRootId,
+      viewPreferences: defaultWorkspaceViewPreferences(),
+      projectLaunchConfigs: settings.projectLaunchConfigs,
+      repoSyncPreferences: settings.repoSyncPreferences,
+      repoRemoteSyncPolicies: settings.repoRemoteSyncPolicies,
+      hiddenRepoIds: settings.hiddenRepoIds,
+      managedRepoIds: settings.managedRepoIds,
+      systemGitRepoIds: settings.systemGitRepoIds,
+      repoBindings: settings.repoBindings,
+      favoriteRepoIds: settings.favoriteRepoIds,
+      repoGroups: settings.repoGroups,
+      organizationGroupingResolvedRepoIds: settings.organizationGroupingResolvedRepoIds,
+      remoteRepoShortcuts: settings.remoteRepoShortcuts,
+      recentLocalRepos: settings.recentLocalRepos,
+      localContributionCache: settings.localContributionCache,
+      contributionIdentities: settings.contributionIdentities,
+    },
   };
 }
 
@@ -2483,7 +2536,7 @@ function createFallbackSettings(
     ? (useDefaultFallback ? "C:\\Files\\workspace" : "D:\\PROJECT\\workspace")
     : null;
   if (useDefaultFallback) {
-    return {
+    return withFallbackWorkspaceMetadata({
       workspaceRoot,
       githubBinding,
       accountPreferences: createDefaultAccountPreferences(workspaceRoot),
@@ -2501,9 +2554,9 @@ function createFallbackSettings(
       recentLocalRepos: [],
       localContributionCache: {},
       contributionIdentities: [],
-    };
+    });
   }
-  return {
+  return withFallbackWorkspaceMetadata({
     workspaceRoot,
     githubBinding,
     accountPreferences: createDefaultAccountPreferences(workspaceRoot),
@@ -2541,12 +2594,31 @@ function createFallbackSettings(
     recentLocalRepos: [],
     localContributionCache: {},
     contributionIdentities: [],
-  };
+  });
 }
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 const FALLBACK_ANONYMOUS_ACCOUNT_KEY = "__anonymous__";
 let fallbackSettingsByAccount = new Map<string, WorkspaceSettings>();
+type FallbackWorkspaceSlot = {
+  id: string;
+  name: string;
+  roots: WorkspaceRoot[];
+  primaryRootId: string | null;
+  viewPreferences: WorkspaceViewPreferences;
+  settings: WorkspaceSettings;
+  startupCache: WorkspaceStartupCache | null;
+  repos: RepoSummary[];
+};
+type FallbackWorkspaceProfile = {
+  accountPreferences: AccountPreferences;
+  activeWorkspaceId: string | null;
+  workspaces: FallbackWorkspaceSlot[];
+};
+let fallbackWorkspaceProfilesByAccount = new Map<string, FallbackWorkspaceProfile>();
+let fallbackWorkspaceIndex = 1;
+let fallbackRootIndex = 1;
+let fallbackContextRevision = 0;
 let fallbackAccountProfiles = new Map<string, GitHubAccountProfile>();
 let fallbackBulkExecuteOverride:
   | ((
@@ -2689,6 +2761,10 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackOperationResources.clear();
   fallbackSettings = createFallbackSettings();
   fallbackSettingsByAccount = new Map();
+  fallbackWorkspaceProfilesByAccount = new Map();
+  fallbackWorkspaceIndex = 1;
+  fallbackRootIndex = 1;
+  fallbackContextRevision = 0;
   fallbackAccountProfiles = new Map();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
@@ -3251,6 +3327,42 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
       ? { ...settings.githubBinding, scopes: [...settings.githubBinding.scopes] }
       : null,
     accountPreferences: cloneAccountPreferences(settings.accountPreferences),
+    workspaceCatalog: (settings.workspaceCatalog ?? []).map((workspace) => ({
+      ...workspace,
+      roots: workspace.roots.map((root) => ({ ...root })),
+    })),
+    activeWorkspace: settings.activeWorkspace
+      ? {
+          ...settings.activeWorkspace,
+          roots: settings.activeWorkspace.roots.map((root) => ({ ...root })),
+          viewPreferences: {
+            ...settings.activeWorkspace.viewPreferences,
+            collapsedGroupIds: [...settings.activeWorkspace.viewPreferences.collapsedGroupIds],
+          },
+          projectLaunchConfigs: { ...settings.activeWorkspace.projectLaunchConfigs },
+          repoSyncPreferences: Object.fromEntries(Object.entries(settings.activeWorkspace.repoSyncPreferences).map(
+            ([repoId, preference]) => [repoId, { ...preference }],
+          )),
+          repoRemoteSyncPolicies: Object.fromEntries(Object.entries(settings.activeWorkspace.repoRemoteSyncPolicies).map(
+            ([repoId, policy]) => [repoId, cloneRepoRemoteSyncPolicy(policy)],
+          )),
+          hiddenRepoIds: [...settings.activeWorkspace.hiddenRepoIds],
+          managedRepoIds: [...settings.activeWorkspace.managedRepoIds],
+          systemGitRepoIds: [...settings.activeWorkspace.systemGitRepoIds],
+          repoBindings: Object.fromEntries(Object.entries(settings.activeWorkspace.repoBindings).map(
+            ([repoId, binding]) => [repoId, { ...binding }],
+          )),
+          favoriteRepoIds: [...settings.activeWorkspace.favoriteRepoIds],
+          repoGroups: settings.activeWorkspace.repoGroups.map(cloneWorkspaceRepoGroup),
+          organizationGroupingResolvedRepoIds: [...settings.activeWorkspace.organizationGroupingResolvedRepoIds],
+          remoteRepoShortcuts: settings.activeWorkspace.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+          recentLocalRepos: settings.activeWorkspace.recentLocalRepos.map((visit) => ({ ...visit })),
+          localContributionCache: Object.fromEntries(Object.entries(settings.activeWorkspace.localContributionCache).map(
+            ([repoId, days]) => [repoId, Object.fromEntries(Object.entries(days).map(([date, entry]) => [date, { ...entry }]))],
+          )),
+          contributionIdentities: settings.activeWorkspace.contributionIdentities.map((identity) => ({ ...identity })),
+        }
+      : null,
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
     repoSyncPreferences: Object.fromEntries(
       Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
@@ -3302,7 +3414,164 @@ function fallbackAccountKey(login: string | null | undefined): string {
   return login?.trim().toLocaleLowerCase() || FALLBACK_ANONYMOUS_ACCOUNT_KEY;
 }
 
+function cloneWorkspaceRoot(root: WorkspaceRoot): WorkspaceRoot {
+  return { ...root };
+}
+
+function cloneWorkspaceViewPreferences(preferences: WorkspaceViewPreferences): WorkspaceViewPreferences {
+  return { ...preferences, collapsedGroupIds: [...preferences.collapsedGroupIds] };
+}
+
+function namedWorkspaceFromSlot(slot: FallbackWorkspaceSlot) {
+  const settings = slot.settings;
+  return {
+    id: slot.id,
+    name: slot.name,
+    roots: slot.roots.map(cloneWorkspaceRoot),
+    primaryRootId: slot.primaryRootId,
+    viewPreferences: cloneWorkspaceViewPreferences(slot.viewPreferences),
+    projectLaunchConfigs: { ...settings.projectLaunchConfigs },
+    repoSyncPreferences: Object.fromEntries(Object.entries(settings.repoSyncPreferences).map(
+      ([repoId, preference]) => [repoId, { ...preference }],
+    )),
+    repoRemoteSyncPolicies: Object.fromEntries(Object.entries(settings.repoRemoteSyncPolicies).map(
+      ([repoId, policy]) => [repoId, cloneRepoRemoteSyncPolicy(policy)],
+    )),
+    hiddenRepoIds: [...settings.hiddenRepoIds],
+    managedRepoIds: [...settings.managedRepoIds],
+    systemGitRepoIds: [...settings.systemGitRepoIds],
+    repoBindings: Object.fromEntries(Object.entries(settings.repoBindings).map(
+      ([repoId, binding]) => [repoId, { ...binding }],
+    )),
+    favoriteRepoIds: [...settings.favoriteRepoIds],
+    repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
+    organizationGroupingResolvedRepoIds: [...settings.organizationGroupingResolvedRepoIds],
+    remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+    recentLocalRepos: settings.recentLocalRepos.map((visit) => ({ ...visit })),
+    localContributionCache: Object.fromEntries(Object.entries(settings.localContributionCache).map(
+      ([repoId, days]) => [repoId, Object.fromEntries(Object.entries(days).map(([date, entry]) => [date, { ...entry }]))],
+    )),
+    contributionIdentities: settings.contributionIdentities.map((identity) => ({ ...identity })),
+  };
+}
+
+function fallbackPrimaryRoot(slot: FallbackWorkspaceSlot | undefined): string | null {
+  if (!slot) return null;
+  return slot.roots.find((root) => root.id === slot.primaryRootId)?.path ?? slot.roots[0]?.path ?? null;
+}
+
+function fallbackSettingsForProfile(profile: FallbackWorkspaceProfile): WorkspaceSettings {
+  const active = profile.workspaces.find((workspace) => workspace.id === profile.activeWorkspaceId) ?? null;
+  const base = active?.settings ?? createFallbackSettings(fallbackBinding.binding, false);
+  return {
+    ...cloneWorkspaceSettings(base),
+    workspaceRoot: fallbackPrimaryRoot(active ?? undefined),
+    githubBinding: fallbackBinding.binding,
+    accountPreferences: cloneAccountPreferences(profile.accountPreferences),
+    workspaceCatalog: profile.workspaces.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      roots: workspace.roots.map(cloneWorkspaceRoot),
+      primaryRootId: workspace.primaryRootId,
+    })),
+    activeWorkspaceId: active?.id ?? null,
+    activeWorkspace: active ? namedWorkspaceFromSlot(active) : null,
+  };
+}
+
+function createFallbackWorkspaceProfile(settings: WorkspaceSettings): FallbackWorkspaceProfile {
+  const active = settings.activeWorkspace;
+  const roots = active?.roots.map(cloneWorkspaceRoot) ?? fallbackRoot(settings.workspaceRoot);
+  const slot: FallbackWorkspaceSlot = {
+    id: active?.id ?? settings.activeWorkspaceId ?? "workspace-default",
+    name: active?.name ?? "默认工作区",
+    roots,
+    primaryRootId: active?.primaryRootId ?? roots[0]?.id ?? null,
+    viewPreferences: active
+      ? cloneWorkspaceViewPreferences(active.viewPreferences)
+      : defaultWorkspaceViewPreferences(),
+    settings: cloneWorkspaceSettings(settings),
+    startupCache: fallbackStartupCache ? cloneStartupCache(fallbackStartupCache) : null,
+    repos: fallbackRepos.map(cloneRepoSummary),
+  };
+  return {
+    accountPreferences: cloneAccountPreferences(settings.accountPreferences),
+    activeWorkspaceId: slot.id,
+    workspaces: [slot],
+  };
+}
+
+function currentFallbackWorkspaceProfile(): FallbackWorkspaceProfile {
+  const key = fallbackAccountKey(fallbackSettings.githubBinding?.login);
+  let profile = fallbackWorkspaceProfilesByAccount.get(key);
+  if (!profile) {
+    profile = createFallbackWorkspaceProfile(fallbackSettings);
+    fallbackWorkspaceProfilesByAccount.set(key, profile);
+  }
+  return profile;
+}
+
+function persistCurrentFallbackWorkspace(): void {
+  const profile = currentFallbackWorkspaceProfile();
+  profile.accountPreferences = cloneAccountPreferences(fallbackSettings.accountPreferences);
+  const active = profile.workspaces.find((workspace) => workspace.id === profile.activeWorkspaceId);
+  if (!active) return;
+  active.settings = cloneWorkspaceSettings(fallbackSettings);
+  active.startupCache = fallbackStartupCache ? cloneStartupCache(fallbackStartupCache) : null;
+  active.repos = fallbackRepos.map(cloneRepoSummary);
+}
+
+function activateFallbackWorkspace(profile: FallbackWorkspaceProfile, workspaceId: string | null): void {
+  profile.activeWorkspaceId = workspaceId;
+  const active = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+  fallbackSettings = fallbackSettingsForProfile(profile);
+  fallbackStartupCache = active?.startupCache ? cloneStartupCache(active.startupCache) : null;
+  fallbackRepos = active?.repos.map(cloneRepoSummary) ?? [];
+  fallbackActiveRepoId = null;
+  fallbackRemoteFailureCounts.clear();
+  fallbackRemoteRetryAt.clear();
+  fallbackBaselineRepoKeys.clear();
+}
+
+function normalizeWorkspaceName(name: string, profile: FallbackWorkspaceProfile, excludeId?: string) {
+  const normalized = name.trim();
+  if (!normalized || normalized.length > 64) throw new Error("工作区名称必须为 1–64 个字符");
+  if (profile.workspaces.some((workspace) =>
+    workspace.id !== excludeId && workspace.name.toLocaleLowerCase() === normalized.toLocaleLowerCase()
+  )) throw new Error("工作区名称已存在");
+  return normalized;
+}
+
+function normalizedFallbackRootPath(path: string) {
+  return path.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLocaleLowerCase();
+}
+
+function validateFallbackRootPath(slot: FallbackWorkspaceSlot | null, rootPath: string) {
+  const path = rootPath.trim();
+  if (!path) throw new Error("工作区路径不能为空");
+  const normalized = normalizedFallbackRootPath(path);
+  if (slot?.roots.some((root) => {
+    const existing = normalizedFallbackRootPath(root.path);
+    return normalized === existing || normalized.startsWith(`${existing}/`) || existing.startsWith(`${normalized}/`);
+  })) throw new Error("工作区根目录不能重复或互相包含");
+  return path;
+}
+
+function rootsFingerprint(roots: readonly WorkspaceRoot[]) {
+  return roots.map((root) => `${root.id}:${normalizedFallbackRootPath(root.path)}`).join("|");
+}
+
+function fallbackBootstrap(): WorkspaceBootstrap {
+  const settings = visibleFallbackSettings();
+  return {
+    settings,
+    startupCache: startupCacheMatchesSettings(fallbackStartupCache) ? cloneStartupCache(fallbackStartupCache!) : null,
+    contextRevision: fallbackContextRevision,
+  };
+}
+
 function switchFallbackAccount(binding: GitHubBindingStatus): void {
+  persistCurrentFallbackWorkspace();
   const previousKey = fallbackAccountKey(fallbackSettings.githubBinding?.login);
   fallbackSettingsByAccount.set(previousKey, cloneWorkspaceSettings(fallbackSettings));
 
@@ -3313,17 +3582,17 @@ function switchFallbackAccount(binding: GitHubBindingStatus): void {
       : null,
   };
   const nextKey = fallbackAccountKey(fallbackBinding.binding?.login);
-  const nextSettings = fallbackSettingsByAccount.get(nextKey)
-    ?? createFallbackSettings(fallbackBinding.binding, false);
-  fallbackSettings = {
-    ...cloneWorkspaceSettings(nextSettings),
-    githubBinding: fallbackBinding.binding,
-  };
-  fallbackStartupCache = null;
-  fallbackActiveRepoId = null;
-  fallbackRemoteFailureCounts.clear();
-  fallbackRemoteRetryAt.clear();
-  fallbackBaselineRepoKeys.clear();
+  let profile = fallbackWorkspaceProfilesByAccount.get(nextKey);
+  if (!profile) {
+    const nextSettings = fallbackSettingsByAccount.get(nextKey)
+      ?? createFallbackSettings(fallbackBinding.binding, false);
+    fallbackSettings = { ...cloneWorkspaceSettings(nextSettings), githubBinding: fallbackBinding.binding };
+    fallbackStartupCache = null;
+    profile = createFallbackWorkspaceProfile(fallbackSettings);
+    fallbackWorkspaceProfilesByAccount.set(nextKey, profile);
+  }
+  fallbackContextRevision += 1;
+  activateFallbackWorkspace(profile, profile.activeWorkspaceId);
 }
 
 function currentFallbackGitHubAccountLogin(): string | null {
@@ -3347,6 +3616,8 @@ function migrateFallbackRemoteRepoShortcuts(): void {
 }
 
 function visibleFallbackSettings(): WorkspaceSettings {
+  persistCurrentFallbackWorkspace();
+  fallbackSettings = fallbackSettingsForProfile(currentFallbackWorkspaceProfile());
   migrateFallbackRemoteRepoShortcuts();
   const settings = cloneWorkspaceSettings(fallbackSettings);
   const accountLogin = currentFallbackGitHubAccountLogin();
@@ -3861,6 +4132,8 @@ function recordFallbackTask(
     createdAt,
     updatedAt: createdAt,
     cancellable,
+    workspaceId: fallbackSettings.activeWorkspaceId,
+    contextRevision: fallbackContextRevision,
   };
   fallbackTasks = normalizeWorkspaceTasks([task, ...fallbackTasks]);
   return task;
@@ -3870,8 +4143,180 @@ export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, visibleFallbackSettings);
 }
 
+export function getWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
+  return call("workspace_get_bootstrap", undefined, fallbackBootstrap);
+}
+
+function hasFallbackWorkspaceWriteInFlight() {
+  return fallbackOperationRunningByKind.localWrite > 0 ||
+    fallbackOperationRunningByKind.githubWrite > 0 ||
+    fallbackOperationRunningByKind.githubTransfer > 0 ||
+    fallbackOperationRunningByKind.bulk > 0 ||
+    fallbackTasks.some((task) =>
+      (task.status === "pending" || task.status === "running") &&
+      (task.kind === "git" || task.kind === "sync")
+    );
+}
+
+function assertFallbackWorkspaceCanChange() {
+  if (hasFallbackWorkspaceWriteInFlight()) throw new Error("有写入任务正在运行，暂时无法切换工作区");
+}
+
+export function createWorkspace(name: string, rootPath: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_create", { name, rootPath }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const normalizedName = normalizeWorkspaceName(name, profile);
+    const path = validateFallbackRootPath(null, rootPath);
+    const workspaceId = `workspace-${fallbackWorkspaceIndex++}`;
+    const root: WorkspaceRoot = {
+      id: `root-${fallbackRootIndex++}`,
+      path,
+      available: true,
+      unavailableReason: null,
+    };
+    const settings = createFallbackSettings(fallbackBinding.binding, false);
+    const slot: FallbackWorkspaceSlot = {
+      id: workspaceId,
+      name: normalizedName,
+      roots: [root],
+      primaryRootId: root.id,
+      viewPreferences: defaultWorkspaceViewPreferences(),
+      settings,
+      startupCache: null,
+      repos: [],
+    };
+    profile.workspaces.push(slot);
+    fallbackContextRevision += 1;
+    activateFallbackWorkspace(profile, workspaceId);
+    return fallbackBootstrap();
+  });
+}
+
+export function renameWorkspace(workspaceId: string, name: string): Promise<WorkspaceSettings> {
+  return call("workspace_rename", { workspaceId, name }, () => {
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!slot) throw new Error("工作区不存在");
+    slot.name = normalizeWorkspaceName(name, profile, workspaceId);
+    fallbackSettings = fallbackSettingsForProfile(profile);
+    return visibleFallbackSettings();
+  });
+}
+
+export function switchWorkspace(workspaceId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_switch", { workspaceId }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    if (!profile.workspaces.some((workspace) => workspace.id === workspaceId)) {
+      throw new Error("工作区不存在");
+    }
+    if (profile.activeWorkspaceId !== workspaceId) fallbackContextRevision += 1;
+    activateFallbackWorkspace(profile, workspaceId);
+    return fallbackBootstrap();
+  });
+}
+
+export function deleteWorkspace(workspaceId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_delete", { workspaceId }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const index = profile.workspaces.findIndex((workspace) => workspace.id === workspaceId);
+    if (index < 0) throw new Error("工作区不存在");
+    profile.workspaces.splice(index, 1);
+    const next = profile.workspaces[index] ?? profile.workspaces[index - 1] ?? null;
+    if (profile.activeWorkspaceId === workspaceId) {
+      fallbackContextRevision += 1;
+      activateFallbackWorkspace(profile, next?.id ?? null);
+    } else {
+      fallbackSettings = fallbackSettingsForProfile(profile);
+    }
+    return fallbackBootstrap();
+  });
+}
+
+export function addWorkspaceRoot(workspaceId: string, rootPath: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_add_root", { workspaceId, rootPath }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!slot) throw new Error("工作区不存在");
+    const path = validateFallbackRootPath(slot, rootPath);
+    const root: WorkspaceRoot = {
+      id: `root-${fallbackRootIndex++}`,
+      path,
+      available: true,
+      unavailableReason: null,
+    };
+    slot.roots.push(root);
+    slot.primaryRootId ??= root.id;
+    slot.startupCache = null;
+    if (profile.activeWorkspaceId === workspaceId) {
+      fallbackContextRevision += 1;
+      activateFallbackWorkspace(profile, workspaceId);
+    }
+    return fallbackBootstrap();
+  });
+}
+
+export function removeWorkspaceRoot(workspaceId: string, rootId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_remove_root", { workspaceId, rootId }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!slot) throw new Error("工作区不存在");
+    if (!slot.roots.some((root) => root.id === rootId)) throw new Error("工作区根目录不存在");
+    slot.roots = slot.roots.filter((root) => root.id !== rootId);
+    if (slot.primaryRootId === rootId) slot.primaryRootId = slot.roots[0]?.id ?? null;
+    slot.startupCache = null;
+    if (profile.activeWorkspaceId === workspaceId) {
+      fallbackContextRevision += 1;
+      activateFallbackWorkspace(profile, workspaceId);
+    }
+    return fallbackBootstrap();
+  });
+}
+
+export function setPrimaryWorkspaceRoot(workspaceId: string, rootId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_set_primary_root", { workspaceId, rootId }, () => {
+    assertFallbackWorkspaceCanChange();
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!slot?.roots.some((root) => root.id === rootId)) throw new Error("工作区根目录不存在");
+    slot.primaryRootId = rootId;
+    slot.startupCache = null;
+    if (profile.activeWorkspaceId === workspaceId) {
+      fallbackContextRevision += 1;
+      activateFallbackWorkspace(profile, workspaceId);
+    }
+    return fallbackBootstrap();
+  });
+}
+
+export function updateWorkspaceViewPreferences(
+  preferences: WorkspaceViewPreferences,
+): Promise<WorkspaceSettings> {
+  return call("workspace_update_view_preferences", { preferences }, () => {
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === profile.activeWorkspaceId);
+    if (!slot) throw new Error("当前没有可用工作区");
+    slot.viewPreferences = cloneWorkspaceViewPreferences(preferences);
+    fallbackSettings = fallbackSettingsForProfile(profile);
+    return visibleFallbackSettings();
+  });
+}
+
 function startupCacheMatchesSettings(cache: WorkspaceStartupCache | null) {
   return Boolean(cache) &&
+    cache?.workspaceId === fallbackSettings.activeWorkspaceId &&
+    cache?.rootsFingerprint === rootsFingerprint(fallbackSettings.activeWorkspace?.roots ?? []) &&
     cache?.workspaceRoot === fallbackSettings.workspaceRoot &&
     cache?.bindingLogin === (fallbackSettings.githubBinding?.login ?? null);
 }
@@ -3881,6 +4326,8 @@ function currentStartupCache(): WorkspaceStartupCache {
     return cloneStartupCache(fallbackStartupCache!);
   }
   return {
+    workspaceId: fallbackSettings.activeWorkspaceId,
+    rootsFingerprint: rootsFingerprint(fallbackSettings.activeWorkspace?.roots ?? []),
     workspaceRoot: fallbackSettings.workspaceRoot,
     bindingLogin: fallbackSettings.githubBinding?.login ?? null,
     reposById: {},
@@ -3928,31 +4375,6 @@ export function writeStartupContributions(
   });
 }
 
-export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
-  return call("workspace_set_root", { workspaceRoot }, () => {
-    const normalizedRoot = workspaceRoot.trim();
-    if (!normalizedRoot) throw new Error("工作区路径不能为空");
-    const pendingTaskIds = fallbackTasks
-      .filter((task) => task.status === "pending" && task.cancellable)
-      .map((task) => task.id);
-    for (const taskId of pendingTaskIds) cancelPendingFallbackTask(taskId, "工作区已切换");
-    fallbackActiveRepoId = null;
-    fallbackRemoteFailureCounts.clear();
-    fallbackRemoteRetryAt.clear();
-    fallbackBaselineRepoKeys.clear();
-    fallbackSettings = {
-      ...fallbackSettings,
-      workspaceRoot: normalizedRoot,
-      accountPreferences: {
-        ...fallbackSettings.accountPreferences,
-        defaultWorkspaceRoot: normalizedRoot,
-      },
-    };
-    fallbackStartupCache = null;
-    return visibleFallbackSettings();
-  });
-}
-
 function normalizeAccountPreferences(preferences: AccountPreferences): AccountPreferences {
   const oneOf = <T extends string>(value: T, allowed: readonly T[]) => {
     if (!allowed.includes(value)) throw new Error("账号偏好值无效");
@@ -3971,7 +4393,6 @@ function normalizeAccountPreferences(preferences: AccountPreferences): AccountPr
     throw new Error("仓库范围账号不能为空");
   }
   return {
-    defaultWorkspaceRoot: preferences.defaultWorkspaceRoot?.trim() || null,
     repositoryScope,
     repositorySort: {
       key: oneOf(preferences.repositorySort.key, ["name", "created", "updated"] as const),
@@ -3998,22 +4419,7 @@ function normalizeAccountPreferences(preferences: AccountPreferences): AccountPr
 export function updateAccountPreferences(preferences: AccountPreferences): Promise<WorkspaceSettings> {
   return call("workspace_update_account_preferences", { preferences }, () => {
     const normalized = normalizeAccountPreferences(preferences);
-    const rootChanged = normalized.defaultWorkspaceRoot !== fallbackSettings.workspaceRoot;
-    fallbackSettings = {
-      ...fallbackSettings,
-      workspaceRoot: normalized.defaultWorkspaceRoot,
-      accountPreferences: normalized,
-    };
-    if (rootChanged) {
-      for (const task of fallbackTasks.filter((item) => item.status === "pending" && item.cancellable)) {
-        cancelPendingFallbackTask(task.id, "工作区已切换");
-      }
-      fallbackActiveRepoId = null;
-      fallbackRemoteFailureCounts.clear();
-      fallbackRemoteRetryAt.clear();
-      fallbackBaselineRepoKeys.clear();
-      fallbackStartupCache = null;
-    }
+    fallbackSettings = { ...fallbackSettings, accountPreferences: normalized };
     return visibleFallbackSettings();
   });
 }
@@ -4178,14 +4584,20 @@ export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promi
     if (name.includes("/") || name.includes("\\") || name === "..") {
       throw new Error("仓库名只能是单层目录名");
     }
-    if (allFallbackRepos().some((repo) => repo.id === name || repo.name === name)) {
-      throw new Error(`目标目录已存在：C:\\Files\\workspace\\${name}`);
+    const roots = fallbackSettings.activeWorkspace?.roots ?? [];
+    const root = roots.find((candidate) => candidate.id === request.rootId) ??
+      roots.find((candidate) => candidate.id === fallbackSettings.activeWorkspace?.primaryRootId);
+    if (!root) throw new Error("当前工作区没有可用根目录");
+    const repoId = `local:${root.id}/${name}`;
+    const repoPath = `${root.path.replace(/[\\/]+$/, "")}\\${name}`;
+    if (allFallbackRepos().some((repo) => repo.id === repoId || repo.path.toLocaleLowerCase() === repoPath.toLocaleLowerCase())) {
+      throw new Error(`目标目录已存在：${repoPath}`);
     }
     const now = Date.now();
     const repo: RepoSummary = {
-      id: name,
+      id: repoId,
       name,
-      path: `C:\\Files\\workspace\\${name}`,
+      path: repoPath,
       relativePath: name,
       currentBranch: "main",
       remoteUrl: null,
@@ -4236,13 +4648,21 @@ export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<Workspace
       ?? remoteUrl.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i)?.slice(1, 3).join("/")
       ?? null;
     const defaultRelativePath = fullName ?? inferredName;
+    const roots = fallbackSettings.activeWorkspace?.roots ?? [];
+    const targetRootId = request.target.kind === "root" ? request.target.rootId : null;
+    const targetRoot = targetRootId
+      ? roots.find((root) => root.id === targetRootId)
+      : roots.find((root) => root.id === fallbackSettings.activeWorkspace?.primaryRootId);
     const targetPath = request.target.kind === "custom"
       ? request.target.path.trim()
-      : `C:\\Files\\workspace\\${defaultRelativePath.split("/").join("\\")}`;
+      : `${targetRoot?.path.replace(/[\\/]+$/, "") ?? "C:\\Files\\workspace"}\\${defaultRelativePath.split("/").join("\\")}`;
     const name = inferRepoDirectoryName(targetPath || inferredName);
-    const relativePath = request.target.kind === "default" ? defaultRelativePath : name;
+    const relativePath = request.target.kind === "custom" ? name : defaultRelativePath;
+    const repoId = request.target.kind === "custom" || !targetRoot
+      ? relativePath
+      : `local:${targetRoot.id}/${relativePath.replace(/\\/g, "/")}`;
     const repo: RepoSummary = {
-      id: relativePath,
+      id: repoId,
       name,
       path: targetPath,
       relativePath,
@@ -5022,6 +5442,8 @@ async function runFallbackRepoRefresh(entry: FallbackRefreshEntry) {
         }
         writeFallbackStartupRepoSummary(summary, remoteCheckedAt);
         const event: WorkspaceRepoRefreshedEvent = {
+          workspaceId: fallbackSettings.activeWorkspaceId,
+          contextRevision: fallbackContextRevision,
           repoId: request.repoId,
           mode: request.mode,
           summary,
@@ -7316,6 +7738,8 @@ function fallbackLaunchCandidates(repoId: string): ProjectLaunchCandidate[] {
 
 function fallbackIdleStatus(repoId: string): ProjectLaunchStatus {
   return {
+    workspaceId: fallbackSettings.activeWorkspaceId,
+    contextRevision: fallbackContextRevision,
     repoId,
     state: "idle",
     pid: null,
@@ -7629,6 +8053,8 @@ export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
       throw new Error("未配置快速启动脚本");
     }
     const status: ProjectLaunchStatus = {
+      workspaceId: fallbackSettings.activeWorkspaceId,
+      contextRevision: fallbackContextRevision,
       repoId,
       state: "running",
       pid: 4321,

@@ -10,10 +10,10 @@ use notify::{recommended_watcher, Event, EventKind, RecommendedWatcher, Recursiv
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::refresh::{enqueue_uncertain_repo_refreshes, enqueue_watcher_repo_refresh};
-use crate::workspace::repos::{
-    canonical_repo_path, git_command_lossy, git_common_dir, managed_repo_paths, repo_id,
+use crate::workspace::repos::{canonical_repo_path, git_command_lossy, git_common_dir, repo_id};
+use crate::workspace::settings::{
+    load_settings, repo_path_by_id, workspace_root, workspace_root_by_id,
 };
-use crate::workspace::settings::{load_settings, workspace_root};
 use crate::workspace::shared::configure_background_command;
 
 const REPO_WATCH_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -145,15 +145,25 @@ fn watcher_manager() -> &'static Mutex<RepoWatcherManager> {
 }
 
 pub(super) fn sync_repo_watchers(app: &AppHandle) {
-    let Ok(root) = workspace_root(app) else {
+    let settings = load_settings(app);
+    let repos = settings
+        .managed_repo_ids
+        .iter()
+        .filter(|id| !settings.hidden_repo_ids.contains(id))
+        .filter_map(|id| {
+            let path = repo_path_by_id(app, &id).ok()?;
+            let root = id
+                .strip_prefix("local:")
+                .and_then(|value| value.split_once('/'))
+                .and_then(|(root_id, _)| workspace_root_by_id(app, root_id).ok())
+                .or_else(|| workspace_root(app).ok())?;
+            Some(repo_watch_spec(&root, path))
+        })
+        .collect::<Vec<_>>();
+    if repos.is_empty() {
         clear_repo_watchers();
         return;
-    };
-    let settings = load_settings(app);
-    let repos = managed_repo_paths(&root, &settings)
-        .into_iter()
-        .map(|path| repo_watch_spec(&root, path))
-        .collect::<Vec<_>>();
+    }
     let watch_roots = watch_roots(&repos).into_iter().collect::<HashSet<_>>();
 
     let mut failed_repo_ids = HashSet::new();

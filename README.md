@@ -106,7 +106,7 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Local repository favorites and repository groups.
 - [x] Home pending Attention for review requests, assigned pull requests, failed workflows, local blockers, and existing collaboration signals, with direct repository routes.
 - [x] Structured LiliaCode fix-task handoff from full pull request reviews, with source context, acceptance criteria, and result return path.
-- [ ] Multiple named workspaces with multiple roots and workspace-specific preferences. `P1`
+- [x] Multiple named workspaces with multiple roots and workspace-specific preferences.
 - [ ] In-app account activity timeline with type, repository, and owner-scope filters. `P1`
 
 ### Quick Launch

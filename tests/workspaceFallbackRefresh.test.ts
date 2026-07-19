@@ -3,17 +3,19 @@ import {
   bulkSyncExecute,
   bulkSyncPreview,
   cancelWorkspaceTask,
+  createWorkspace,
   deleteGitHubRepo,
   enqueueRepoRefresh,
   getRepoDetail,
+  getWorkspaceSettings,
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepoSummary,
   refreshRepos,
   setActiveWorkspaceRepo,
-  setWorkspaceRoot,
   setWorkspaceRefreshPaused,
   stopRepoLaunch,
+  switchWorkspace,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
 
@@ -315,7 +317,10 @@ describe("workspace fallback refresh", () => {
     });
   });
 
-  it("切换工作区会取消所有尚未开始的 fallback 任务", async () => {
+  it("写入任务未开始时也会阻止 fallback 切换工作区", async () => {
+    const currentWorkspaceId = (await getWorkspaceSettings()).activeWorkspaceId!;
+    const nextWorkspaceId = (await createWorkspace("Next", "D:\\NextWorkspace")).settings.activeWorkspaceId!;
+    await switchWorkspace(currentWorkspaceId);
     await setWorkspaceRefreshPaused(true);
     const execute = vi.fn(() => []);
     workspaceFallback.setFallbackBulkExecuteOverrideForTests(execute);
@@ -329,22 +334,19 @@ describe("workspace fallback refresh", () => {
       detailScope: "summary",
       trigger: "manual",
     });
-    const rejected = expect(operation).rejects.toThrow("工作区已切换");
-
-    await setWorkspaceRoot("D:\\NextWorkspace");
+    await expect(switchWorkspace(nextWorkspaceId)).rejects.toThrow("有写入任务正在运行");
+    const pending = (await listWorkspaceTasks()).find((task) => task.kind === "sync")!;
+    const rejected = expect(operation).rejects.toThrow("任务已取消");
+    await cancelWorkspaceTask(pending.id);
     await rejected;
     await setWorkspaceRefreshPaused(false);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const tasks = await listWorkspaceTasks();
-    expect(tasks.find((task) => task.id === refreshTaskId)).toMatchObject({
+    expect(tasks.find((task) => task.id === pending.id)).toMatchObject({
       status: "cancelled",
-      message: "工作区已切换",
     });
-    expect(tasks.find((task) => task.kind === "sync")).toMatchObject({
-      status: "cancelled",
-      message: "工作区已切换",
-    });
+    expect(tasks.find((task) => task.id === refreshTaskId)?.status).not.toBe("cancelled");
     expect(execute).not.toHaveBeenCalled();
   });
 

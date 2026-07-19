@@ -93,6 +93,8 @@ import type {
   RepoSyncPreference,
   SystemOpenTarget,
   WorkspaceSettings,
+  WorkspaceBootstrap,
+  WorkspaceViewPreferences,
   WorkspaceRepoRefreshRequest,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
@@ -142,6 +144,7 @@ type CommandContract<TArgs, TResult> = {
 };
 
 export interface WorkspaceCommandContracts {
+  workspace_get_bootstrap: CommandContract<NoArgs, WorkspaceBootstrap>;
   workspace_get_settings: CommandContract<NoArgs, WorkspaceSettings>;
   workspace_read_startup_cache: CommandContract<NoArgs, Maybe<WorkspaceStartupCache>>;
   workspace_clear_startup_cache: CommandContract<NoArgs, void>;
@@ -149,7 +152,17 @@ export interface WorkspaceCommandContracts {
     { contributions: WorkspaceStartupContributions },
     WorkspaceStartupCache
   >;
-  workspace_set_root: CommandContract<{ workspaceRoot: string }, WorkspaceSettings>;
+  workspace_create: CommandContract<{ name: string; rootPath: string }, WorkspaceBootstrap>;
+  workspace_rename: CommandContract<{ workspaceId: string; name: string }, WorkspaceSettings>;
+  workspace_delete: CommandContract<{ workspaceId: string }, WorkspaceBootstrap>;
+  workspace_switch: CommandContract<{ workspaceId: string }, WorkspaceBootstrap>;
+  workspace_add_root: CommandContract<{ workspaceId: string; rootPath: string }, WorkspaceBootstrap>;
+  workspace_remove_root: CommandContract<{ workspaceId: string; rootId: string }, WorkspaceBootstrap>;
+  workspace_set_primary_root: CommandContract<{ workspaceId: string; rootId: string }, WorkspaceBootstrap>;
+  workspace_update_view_preferences: CommandContract<
+    { preferences: WorkspaceViewPreferences },
+    WorkspaceSettings
+  >;
   workspace_update_account_preferences: CommandContract<
     { preferences: AccountPreferences },
     WorkspaceSettings

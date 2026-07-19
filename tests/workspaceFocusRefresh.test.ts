@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FOCUS_REFRESH_THRESHOLD_MS,
-  chooseWorkspaceRoot,
-  choosingWorkspaceRoot,
+  createWorkspace,
   initialize,
   installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
@@ -19,17 +18,18 @@ import {
 import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { resetLowPrioritySchedulerForTests } from "../src/utils/lowPriorityScheduler";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import { repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
+import { repoDetailPatch, repoSummary, workspaceBootstrap, workspaceSettings } from "./fixtures/workspace";
 
 const service = vi.hoisted(() => ({
   listManagedRepos: vi.fn(),
+  getWorkspaceBootstrap: vi.fn(),
   getWorkspaceSettings: vi.fn(),
   readStartupCache: vi.fn(),
   clearStartupCache: vi.fn(),
   writeStartupContributions: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
   pickWorkspaceRoot: vi.fn(),
-  setWorkspaceRoot: vi.fn(),
+  createWorkspace: vi.fn(),
   pickRepo: vi.fn(),
   addRepo: vi.fn(),
   refreshRepoSummary: vi.fn(),
@@ -60,6 +60,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function currentWorkspaceContext() {
+  return { workspaceId: state.settings?.activeWorkspaceId ?? null, contextRevision: state.contextRevision };
+}
+
 function blurWindow() {
   window.dispatchEvent(new Event("blur"));
 }
@@ -81,10 +85,13 @@ describe("workspace focus refresh", () => {
     vi.clearAllMocks();
     const settings = workspaceSettings();
     state.settings = settings;
+    service.getWorkspaceBootstrap.mockResolvedValue(workspaceBootstrap(settings));
     service.getWorkspaceSettings.mockResolvedValue(settings);
     service.readStartupCache.mockResolvedValue(null);
     service.clearStartupCache.mockResolvedValue(undefined);
     service.writeStartupContributions.mockResolvedValue({
+      workspaceId: settings.activeWorkspaceId,
+      rootsFingerprint: "root-default:C:\\Files\\workspace",
       workspaceRoot: settings.workspaceRoot,
       bindingLogin: settings.githubBinding?.login ?? null,
       reposById: {},
@@ -103,9 +110,17 @@ describe("workspace focus refresh", () => {
       },
     });
     service.pickWorkspaceRoot.mockResolvedValue("D:\\NewWorkspace");
-    service.setWorkspaceRoot.mockResolvedValue({
-      ...workspaceSettings(),
-      workspaceRoot: "D:\\NewWorkspace",
+    service.createWorkspace.mockImplementation(async (name: string, rootPath: string) => {
+      const created = workspaceSettings();
+      const root = { id: "root-new", path: rootPath, available: true, unavailableReason: null };
+      const activeWorkspace = { ...created.activeWorkspace!, id: "workspace-new", name, roots: [root], primaryRootId: root.id };
+      return workspaceBootstrap({
+        ...created,
+        workspaceRoot: rootPath,
+        workspaceCatalog: [{ id: activeWorkspace.id, name, roots: [root], primaryRootId: root.id }],
+        activeWorkspaceId: activeWorkspace.id,
+        activeWorkspace,
+      }, null, 2);
     });
     service.pickRepo.mockResolvedValue(null);
     service.addRepo.mockResolvedValue(repoSummary("LocalRepo"));
@@ -146,6 +161,7 @@ describe("workspace focus refresh", () => {
           })
         : null;
       applyWorkspaceRepoRefreshed({
+        ...currentWorkspaceContext(),
         taskId,
         repoId: request.repoId,
         mode: request.mode,
@@ -155,6 +171,7 @@ describe("workspace focus refresh", () => {
         trigger: request.trigger,
       });
       applyWorkspaceTaskChanged({
+        ...currentWorkspaceContext(),
         id: taskId,
         kind,
         title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
@@ -273,72 +290,27 @@ describe("workspace focus refresh", () => {
     expect(recentSyncErrorForRepo("LiliaGithub")).toBeNull();
   });
 
-  it("选择工作区会阻止旧初始化结果覆盖当前设置", async () => {
-    const initialSettings = deferred<ReturnType<typeof workspaceSettings>>();
-    service.getWorkspaceSettings.mockReturnValueOnce(initialSettings.promise);
+  it("创建工作区会阻止旧初始化结果覆盖当前设置", async () => {
+    const initialBootstrap = deferred<ReturnType<typeof workspaceBootstrap>>();
+    service.getWorkspaceBootstrap.mockReturnValueOnce(initialBootstrap.promise);
     service.listManagedRepos.mockResolvedValue([]);
 
     const initializing = initialize();
     await flushPromises();
     expect(state.loading).toBe(true);
 
-    await expect(chooseWorkspaceRoot()).resolves.toBe("D:\\NewWorkspace");
+    await createWorkspace("NewWorkspace", "D:\\NewWorkspace");
     expect(state.settings?.workspaceRoot).toBe("D:\\NewWorkspace");
     expect(state.loading).toBe(false);
 
-    initialSettings.resolve({
+    initialBootstrap.resolve(workspaceBootstrap({
       ...workspaceSettings(),
       workspaceRoot: "C:\\OldWorkspace",
-    });
+    }));
     await initializing;
 
     expect(state.settings?.workspaceRoot).toBe("D:\\NewWorkspace");
     expect(state.loading).toBe(false);
-  });
-
-  it("并发选择工作区复用同一任务并共享 pending 状态", async () => {
-    const picker = deferred<string | null>();
-    service.pickWorkspaceRoot.mockReturnValue(picker.promise);
-    service.listManagedRepos.mockResolvedValue([repoSummary("LocalRepo")]);
-
-    const first = chooseWorkspaceRoot();
-    const second = chooseWorkspaceRoot();
-
-    expect(choosingWorkspaceRoot.value).toBe(true);
-    await flushPromises();
-    expect(service.pickWorkspaceRoot).toHaveBeenCalledTimes(1);
-
-    picker.resolve("D:\\NewWorkspace");
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      "D:\\NewWorkspace",
-      "D:\\NewWorkspace",
-    ]);
-
-    expect(service.setWorkspaceRoot).toHaveBeenCalledTimes(1);
-    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
-    expect(choosingWorkspaceRoot.value).toBe(false);
-  });
-
-  it("取消工作区选择不写入设置且释放 pending 状态", async () => {
-    service.pickWorkspaceRoot.mockResolvedValue(null);
-
-    await expect(chooseWorkspaceRoot()).resolves.toBeNull();
-
-    expect(service.setWorkspaceRoot).not.toHaveBeenCalled();
-    expect(service.listManagedRepos).not.toHaveBeenCalled();
-    expect(choosingWorkspaceRoot.value).toBe(false);
-  });
-
-  it("工作区选择失败后释放 pending 状态并允许重试", async () => {
-    service.pickWorkspaceRoot
-      .mockRejectedValueOnce(new Error("选择器失败"))
-      .mockResolvedValueOnce(null);
-
-    await expect(chooseWorkspaceRoot()).rejects.toThrow("选择器失败");
-    expect(state.error).toBe("Error: 选择器失败");
-    expect(choosingWorkspaceRoot.value).toBe(false);
-    await expect(chooseWorkspaceRoot()).resolves.toBeNull();
-    expect(service.pickWorkspaceRoot).toHaveBeenCalledTimes(2);
   });
 
   it("添加本地仓库对选择、添加和刷新整段操作 single-flight", async () => {

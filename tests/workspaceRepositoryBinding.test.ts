@@ -30,7 +30,7 @@ describe("workspace repository binding fallback", () => {
     });
 
     expect(summary).toMatchObject({
-      id: "binding-org/canonical-repo",
+      id: "local:root-default/binding-org/canonical-repo",
       githubFullName: "binding-org/canonical-repo",
       githubRepositoryId: 90210,
       canonicalRemoteUrl: "https://github.com/binding-org/canonical-repo.git",

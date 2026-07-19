@@ -79,7 +79,7 @@ use super::settings::{
     migrate_remote_repo_shortcuts, move_repo_to_group, prune_deleted_repo_settings,
     reconcile_organization_repo_groups, remove_managed_repo_path, remove_system_git_repo_id,
     rename_repo_group, repo_path_from_id, save_settings,
-    scan_contribution_identity_recommendations, visible_workspace_settings, workspace_set_root,
+    scan_contribution_identity_recommendations, visible_workspace_settings,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
@@ -616,7 +616,9 @@ fn pull_bootstraps_unborn_branch_and_preserves_untracked_files() {
     assert!(repo_has_head(&repo));
     assert_eq!(result.summary.current_branch.as_deref(), Some("main"));
     assert_eq!(
-        fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+        fs::read_to_string(repo.join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "remote content\n"
     );
     assert_eq!(
@@ -770,19 +772,6 @@ fn multi_remote_push_continues_after_non_fast_forward_failure() {
         ),
         "mirror/main"
     );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[cfg(not(target_os = "windows"))]
-#[test]
-fn workspace_set_root_accepts_native_non_windows_file_system() {
-    let root = temp_dir("native-workspace-root");
-    let root_text = root.to_string_lossy().to_string();
-    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
-
-    let settings = workspace_set_root(app, root_text.clone()).unwrap();
-
-    assert_eq!(settings.workspace_root.as_deref(), Some(root_text.as_str()));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2981,7 +2970,9 @@ fn clone_checkout_recovers_remote_branch_when_remote_head_is_unusable() {
         "origin/trunk"
     );
     assert_eq!(
-        fs::read_to_string(target.join("tracked.txt")).unwrap(),
+        fs::read_to_string(target.join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "remote content\n"
     );
     fs::remove_dir_all(root).unwrap();
@@ -3696,16 +3687,18 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
     assert!(!standalone_worktree.summary.shared_repo_key.is_empty());
 
     assert_eq!(main_worktree.summary.role, "main");
-    assert_eq!(
-        main_worktree.summary.main_repo_id.as_deref(),
-        Some("main-repo")
-    );
+    assert!(main_worktree
+        .summary
+        .main_repo_id
+        .as_deref()
+        .is_some_and(|id| id.ends_with("/main-repo")));
 
     assert_eq!(linked_worktree.summary.role, "linked");
-    assert_eq!(
-        linked_worktree.summary.main_repo_id.as_deref(),
-        Some("main-repo")
-    );
+    assert!(linked_worktree
+        .summary
+        .main_repo_id
+        .as_deref()
+        .is_some_and(|id| id.ends_with("/main-repo")));
     assert_eq!(
         linked_worktree.summary.shared_repo_key,
         main_worktree.summary.shared_repo_key
@@ -3723,7 +3716,8 @@ fn repo_id_uses_canonical_root_and_repo_paths() {
         &root.join("nested").join("..").join("nested").join("repo"),
     );
 
-    assert_eq!(id, "nested/repo");
+    assert!(id.starts_with("local:root-"));
+    assert!(id.ends_with("/nested/repo"));
 }
 
 #[test]
@@ -3773,7 +3767,8 @@ fn repo_path_expansion_includes_root_worktrees_only_once() {
         .map(|path| repo_id(&root, path))
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["main-repo", "linked-worktree"]);
+    assert!(ids[0].ends_with("/main-repo"));
+    assert!(ids[1].ends_with("/linked-worktree"));
     assert_eq!(
         paths,
         vec![canonical_repo_path(&main), canonical_repo_path(&linked)]
@@ -3818,7 +3813,7 @@ fn linked_worktree_detail_reads_own_history_and_changes() {
 
     let linked_path = repo_path_from_id(&root, "linked-worktree").unwrap();
     let summary = summarize_repo(&root, &linked_path);
-    assert_eq!(summary.id, "linked-worktree");
+    assert!(summary.id.ends_with("/linked-worktree"));
     assert_eq!(summary.worktree.role, "linked");
 
     let history = repo_history(&linked_path);
@@ -5617,7 +5612,7 @@ fn lightweight_managed_repos_returns_visible_repo_list_without_git_metadata() {
     let repos = lightweight_managed_repos(&root, &settings);
 
     assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].id, "visible");
+    assert!(repos[0].id.ends_with("/visible"));
     assert_eq!(repos[0].name, "visible");
     assert_eq!(repos[0].current_branch, None);
     assert_eq!(repos[0].remote_url, None);
@@ -5663,10 +5658,11 @@ fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
         shared_repo_key: "old".to_string(),
         main_repo_id: Some("old-main".to_string()),
     };
+    let visible_id = repo_id(&root, &visible);
     let cache = WorkspaceStartupCache {
         workspace_root: settings.workspace_root.clone(),
         repos_by_id: HashMap::from([(
-            "visible".to_string(),
+            visible_id.clone(),
             CachedRepoSummary {
                 summary: cached,
                 cached_at: 1,
@@ -5679,7 +5675,7 @@ fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
     let repos = cached_managed_repos(&root, &settings, &cache);
 
     assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].id, "visible");
+    assert_eq!(repos[0].id, visible_id);
     assert_eq!(repos[0].name, "visible");
     assert_eq!(
         repos[0].path,

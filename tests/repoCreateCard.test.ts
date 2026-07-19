@@ -65,6 +65,12 @@ function githubTemplate(
 }
 
 const workspace = vi.hoisted(() => ({
+  activeWorkspace: {
+    value: {
+      primaryRootId: "root-default",
+      roots: [{ id: "root-default", path: "C:\\Files\\workspace", available: true, unavailableReason: null }],
+    },
+  },
   createLocalRepo: vi.fn(),
   cloneRepo: vi.fn(),
   refreshRepos: vi.fn(),
@@ -273,7 +279,7 @@ describe("RepoCreateCard", () => {
           owner: null,
         },
         placement: { kind: "automatic" },
-        target: { kind: "default" },
+        target: { kind: "root", rootId: "root-default" },
       });
       expect(workspace.refreshRepos).toHaveBeenCalledTimes(1);
     });
@@ -327,7 +333,7 @@ describe("RepoCreateCard", () => {
           owner: remote.owner,
         },
         placement,
-        target: { kind: "default" },
+        target: { kind: "root", rootId: "root-default" },
       });
     });
   });

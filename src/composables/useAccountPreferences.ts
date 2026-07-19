@@ -3,7 +3,6 @@ import type { AccountPreferences, GitHubRepositoryScope } from "../services/work
 import { useWorkspace } from "./useWorkspace";
 
 export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
-  defaultWorkspaceRoot: null,
   repositoryScope: { kind: "all" },
   repositorySort: { key: "updated", direction: "desc" },
   issues: { state: "open", sort: "created", direction: "desc" },
@@ -13,7 +12,6 @@ export const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
 
 export function cloneAccountPreferences(value: AccountPreferences): AccountPreferences {
   return {
-    defaultWorkspaceRoot: value.defaultWorkspaceRoot,
     repositoryScope: { ...value.repositoryScope } as GitHubRepositoryScope,
     repositorySort: { ...value.repositorySort },
     issues: { ...value.issues },

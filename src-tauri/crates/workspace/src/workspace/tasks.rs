@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::workspace::settings::workspace_context_identity;
 use crate::workspace::shared::now_millis;
 use lilia_github_contracts::workspace::WorkspaceTask;
 
@@ -85,6 +86,8 @@ fn normalize_workspace_tasks(tasks: &mut Vec<WorkspaceTask>) {
 }
 
 fn record_workspace_task_with_cancellable(
+    workspace_id: Option<String>,
+    context_revision: u64,
     kind: &str,
     title: &str,
     priority: &str,
@@ -95,6 +98,8 @@ fn record_workspace_task_with_cancellable(
 ) -> WorkspaceTask {
     let timestamp = now_millis();
     let task = WorkspaceTask {
+        workspace_id,
+        context_revision,
         id: next_workspace_task_id(),
         kind: kind.to_string(),
         title: title.to_string(),
@@ -123,7 +128,10 @@ pub(super) fn record_workspace_task_and_emit(
     message: Option<String>,
     cancellable: bool,
 ) -> WorkspaceTask {
+    let (workspace_id, context_revision) = workspace_context_identity(app);
     let task = record_workspace_task_with_cancellable(
+        workspace_id,
+        context_revision,
         kind,
         workspace_task_title(kind),
         priority,
@@ -144,8 +152,17 @@ pub(crate) fn record_pending_operation_task(
     repo_id: Option<String>,
     message: Option<String>,
 ) -> WorkspaceTask {
+    let (workspace_id, context_revision) = workspace_context_identity(app);
     let task = record_workspace_task_with_cancellable(
-        kind, title, priority, repo_id, "pending", message, false,
+        workspace_id,
+        context_revision,
+        kind,
+        title,
+        priority,
+        repo_id,
+        "pending",
+        message,
+        false,
     );
     let _ = app.emit(TASK_CHANGED_EVENT, &task);
     task
@@ -255,6 +272,37 @@ pub fn workspace_list_tasks() -> Vec<WorkspaceTask> {
         .clone()
 }
 
+pub(super) fn has_active_workspace_mutation(workspace_id: &str) -> bool {
+    workspace_task_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .tasks
+        .iter()
+        .any(|task| {
+            task.workspace_id.as_deref() == Some(workspace_id)
+                && matches!(task.status.as_str(), "pending" | "running")
+                && matches!(task.kind.as_str(), "git" | "sync" | "workspace")
+        })
+}
+
+pub(super) fn has_active_root_mutation(workspace_id: &str, root_id: &str) -> bool {
+    let prefix = format!("local:{root_id}/");
+    workspace_task_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .tasks
+        .iter()
+        .any(|task| {
+            task.workspace_id.as_deref() == Some(workspace_id)
+                && matches!(task.status.as_str(), "pending" | "running")
+                && matches!(task.kind.as_str(), "git" | "sync" | "workspace")
+                && task
+                    .repo_id
+                    .as_deref()
+                    .is_some_and(|repo_id| repo_id.starts_with(&prefix))
+        })
+}
+
 fn reject_pending_cancellation_in(
     tasks: &mut Vec<WorkspaceTask>,
     task_id: &str,
@@ -328,6 +376,8 @@ mod tests {
 
     fn task(id: impl Into<String>, priority: &str, status: &str, updated_at: i64) -> WorkspaceTask {
         WorkspaceTask {
+            workspace_id: None,
+            context_revision: 0,
             id: id.into(),
             kind: "test".to_string(),
             title: "测试任务".to_string(),

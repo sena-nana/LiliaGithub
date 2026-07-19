@@ -71,7 +71,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   },
   {
     key: "repositories",
-    label: "仓库",
+    label: "工作区",
     icon: FolderGit2,
     to: { path: "/settings", query: { tab: "repositories" } },
   },
@@ -102,7 +102,7 @@ export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
 export const LILIA_SETTINGS_MODEL = createLiliaSettingsModel({
   path: "/settings",
   defaultTab: DEFAULT_SETTINGS_TAB,
-  description: "管理外观、账户、仓库和应用信息。",
+  description: "管理外观、账户、工作区和应用信息。",
   tabs: SETTINGS_TABS,
   sections: SETTINGS_SECTIONS,
 });

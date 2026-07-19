@@ -17,11 +17,15 @@ import type {
   RepoSyncOperationResult,
   WorkspaceTask,
   WorkspaceSettings,
+  WorkspaceBootstrap,
+  NamedWorkspace,
 } from "../../services/workspace";
 import { normalizeWorkspaceTasks } from "../../services/workspace/taskRetention";
 
 export interface WorkspaceState {
   settings: WorkspaceSettings | null;
+  contextRevision: number;
+  switchingWorkspace: boolean;
   bindingStatus: GitHubBindingStatus | null;
   repos: RepoSummary[];
   repoListChange: RepoListChangeState;
@@ -87,6 +91,8 @@ export interface GitHubContributionsState {
 
 export const state = reactive<WorkspaceState>({
   settings: null,
+  contextRevision: 0,
+  switchingWorkspace: false,
   bindingStatus: null,
   repos: [],
   repoListChange: {
@@ -129,9 +135,59 @@ export const state = reactive<WorkspaceState>({
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
 
 export const workspaceRoot = computed(() => state.settings?.workspaceRoot ?? null);
+export const activeWorkspace = computed<NamedWorkspace | null>(() => state.settings?.activeWorkspace ?? null);
+export const workspaceCatalog = computed(() => state.settings?.workspaceCatalog ?? []);
+export const switchingWorkspace = computed(() => state.switchingWorkspace);
+export const contextRevision = computed(() => state.contextRevision);
+export const hasAvailableWorkspaceRoot = computed(() =>
+  activeWorkspace.value?.roots.some((root) => root.available) ?? false
+);
 export const githubBinding = computed(() => state.bindingStatus?.binding ?? state.settings?.githubBinding ?? null);
 export const isAuthorized = computed(() => state.bindingStatus?.state === "bound" && Boolean(githubBinding.value));
-export const isReady = computed(() => Boolean(workspaceRoot.value) && isAuthorized.value);
+export const isReady = computed(() => hasAvailableWorkspaceRoot.value && isAuthorized.value);
+
+export function isCurrentWorkspaceContext(value: {
+  workspaceId: string | null;
+  contextRevision: number;
+}) {
+  return value.contextRevision === state.contextRevision &&
+    value.workspaceId === (state.settings?.activeWorkspaceId ?? null);
+}
+
+export function resetWorkspaceScopedState() {
+  state.repos = [];
+  state.repoListChange = {
+    revision: state.repoListChange.revision + 1,
+    changedRepoIds: [],
+    structural: true,
+  };
+  state.repoDetails = {};
+  state.repoRemoteCheckedAt = {};
+  state.launchConfigs = {};
+  state.launchCandidates = {};
+  state.launchStatuses = {};
+  state.launchLogs = {};
+  state.launchHistory = {};
+  state.scanning = false;
+  state.launchLoading = false;
+  state.error = null;
+  state.bulkPreview = null;
+  state.bulkResults = [];
+  state.bulkRunning = false;
+  state.recentSync = null;
+  state.repoActionErrors = {};
+  state.repoSyncResults = {};
+  state.githubContributions = { days: [], meta: null, loading: false, error: null };
+  state.tasks = [];
+  state.languageStatsLoadingRepoIds = [];
+  state.syncingRepoIds = [];
+}
+
+export function applyWorkspaceBootstrap(bootstrap: WorkspaceBootstrap) {
+  resetWorkspaceScopedState();
+  state.settings = bootstrap.settings;
+  state.contextRevision = bootstrap.contextRevision;
+}
 export const authRemainingText = computed(() => {
   const seconds = state.authRemainingSeconds;
   if (seconds == null) return null;
@@ -625,6 +681,8 @@ function recentSyncErrorsByRepoId() {
 
 export function resetWorkspaceStateForTests() {
   state.settings = null;
+  state.contextRevision = 0;
+  state.switchingWorkspace = false;
   state.bindingStatus = null;
   state.repos = [];
   state.repoListChange = {

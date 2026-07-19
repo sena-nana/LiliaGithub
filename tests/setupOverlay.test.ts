@@ -4,7 +4,11 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const workspaceRoot = ref<string | null>(null);
-const choosingWorkspaceRoot = ref(false);
+const activeWorkspace = ref(null);
+const workspaceCatalog = ref([]);
+const switchingWorkspace = ref(false);
+const contextRevision = ref(0);
+const hasAvailableWorkspaceRoot = ref(false);
 const githubBinding = ref<null>(null);
 const deviceFlow = ref<null>(null);
 const isReady = ref(false);
@@ -23,7 +27,7 @@ const state = reactive({
   languageStatsLoadingRepoIds: [],
   tasks: [],
 });
-const chooseWorkspaceRoot = vi.fn(async () => null as string | null);
+const pickWorkspaceRoot = vi.fn(async () => null as string | null);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -48,12 +52,18 @@ vi.mock("../src/composables/useWorkspace", () => ({
     state,
     deviceFlow,
     workspaceRoot,
-    choosingWorkspaceRoot,
+    activeWorkspace,
+    workspaceCatalog,
+    switchingWorkspace,
+    contextRevision,
+    hasAvailableWorkspaceRoot,
     githubBinding,
     isAuthorized,
     isReady,
     initialize: vi.fn(async () => undefined),
-    chooseWorkspaceRoot,
+    pickWorkspaceRoot,
+    createWorkspace: vi.fn(async () => undefined),
+    addWorkspaceRoot: vi.fn(async () => undefined),
     addLocalRepo: vi.fn(async () => null),
     discoverRepos: vi.fn(async () => []),
     refreshRepos: vi.fn(async () => undefined),
@@ -92,9 +102,8 @@ async function renderSetupHome() {
 describe("初始化覆盖界面", () => {
   beforeEach(() => {
     workspaceRoot.value = null;
-    choosingWorkspaceRoot.value = false;
-    chooseWorkspaceRoot.mockReset();
-    chooseWorkspaceRoot.mockResolvedValue(null);
+    pickWorkspaceRoot.mockReset();
+    pickWorkspaceRoot.mockResolvedValue(null);
   });
 
   it("初始化加载期间覆盖标题栏下方整窗并隐藏侧栏", async () => {
@@ -104,23 +113,16 @@ describe("初始化覆盖界面", () => {
     expect(view.getByRole("button", { name: "展开左侧栏" })).toBeDisabled();
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "工作区文件夹" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "命名工作区" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "GitHub 授权" })).toBeInTheDocument();
   });
 
   it("工作区选择期间禁用入口并保持图标占位", async () => {
     const picker = deferred<string | null>();
-    chooseWorkspaceRoot.mockImplementation(async () => {
-      choosingWorkspaceRoot.value = true;
-      try {
-        return await picker.promise;
-      } finally {
-        choosingWorkspaceRoot.value = false;
-      }
-    });
+    pickWorkspaceRoot.mockImplementation(() => picker.promise);
     await renderSetupHome();
 
-    const button = screen.getByRole("button", { name: "选择工作区" });
+    const button = screen.getByRole("button", { name: "创建工作区" });
     await fireEvent.click(button);
 
     await waitFor(() => expect(button).toBeDisabled());
