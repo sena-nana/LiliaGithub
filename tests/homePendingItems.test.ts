@@ -140,7 +140,7 @@ function source(overrides: Partial<HomePendingRepoSource> = {}): HomePendingRepo
     pullRequestChecksByPull: {},
     actionNotifications: [],
     attentionPullRequests: [],
-    failedWorkflows: [],
+    workflowRuns: [],
     ...overrides,
   };
 }
@@ -276,18 +276,58 @@ describe("buildHomePendingItems", () => {
     expect(items.filter((item) => item.target.kind === "pull")).toHaveLength(3);
   });
 
-  it("surfaces failed workflows without notifications and deduplicates notifications for the same run", () => {
+  it("surfaces actionable workflows with their real run and deduplicates notifications for the same run", () => {
     const run = workflowRun(91, "2026-06-25T13:00:00Z");
+    const active = workflowRun(92, "2026-06-25T14:00:00Z", {
+      status: "in_progress",
+      conclusion: null,
+    });
     const items = buildHomePendingItems([source({
-      failedWorkflows: [{ repoFullName, run }],
+      githubRepo: githubRepo({ permissions: { pull: true, push: true, admin: false } }),
+      workflowRuns: [{ repoFullName, run }, { repoFullName, run: active }],
       actionNotifications: [actionNotification("91", "CI failed", "2026-06-25T13:00:00Z")],
     })]);
 
-    expect(items).toHaveLength(1);
+    expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
       id: `workflow-run:${repoFullName}:91`,
-      title: "Workflow 失败",
-      target: { kind: "workflow", runId: 91 },
+      title: "Actions 失败",
+      tone: "error",
+      target: {
+        kind: "workflow",
+        runId: 91,
+        run,
+        permissions: { push: true, admin: false },
+      },
+    });
+    expect(items[1]).toMatchObject({
+      id: `workflow-run:${repoFullName}:92`,
+      title: "Actions 运行中",
+      tone: "warn",
+      target: { kind: "workflow", runId: 92, run: active },
+    });
+  });
+
+  it("keeps notification workflow targets read-only without a synthetic run", () => {
+    const [item] = buildHomePendingItems([source({
+      actionNotifications: [actionNotification("91", "CI failed", "2026-06-25T13:00:00Z")],
+    })]);
+
+    expect(item).toMatchObject({
+      id: "workflow-notification:91",
+      target: { kind: "workflow", runId: 91, run: null },
+    });
+  });
+
+  it("keeps a failed workflow visible when rerun is no longer available", () => {
+    const run = workflowRun(93, "2026-06-25T13:00:00Z", { runAttempt: 50 });
+    const [item] = buildHomePendingItems([source({
+      workflowRuns: [{ repoFullName, run }],
+    })]);
+
+    expect(item).toMatchObject({
+      id: `workflow-run:${repoFullName}:93`,
+      target: { kind: "workflow", run },
     });
   });
 
@@ -336,7 +376,11 @@ describe("buildHomePendingItems", () => {
   });
 });
 
-function workflowRun(id: number, updatedAt: string): GitHubWorkflowRun {
+function workflowRun(
+  id: number,
+  updatedAt: string,
+  overrides: Partial<GitHubWorkflowRun> = {},
+): GitHubWorkflowRun {
   return {
     id,
     name: "CI",
@@ -348,5 +392,6 @@ function workflowRun(id: number, updatedAt: string): GitHubWorkflowRun {
     htmlUrl: `https://github.com/${repoFullName}/actions/runs/${id}`,
     createdAt: updatedAt,
     updatedAt,
+    ...overrides,
   };
 }

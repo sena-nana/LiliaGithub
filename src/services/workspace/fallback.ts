@@ -3626,7 +3626,7 @@ function fallbackOperationDescriptor(
   if (command.startsWith("github_") && isFallbackGitHubWrite(command)) {
     return {
       kind: "github",
-      title: "更新 GitHub 仓库",
+      title: command === "github_cancel_workflow_run" ? "取消 GitHub Actions 运行" : "更新 GitHub 仓库",
       priority: "normal",
       repoId,
       operationKind: "githubWrite",
@@ -3673,6 +3673,7 @@ function isFallbackGitHubWrite(command: string) {
     command.startsWith("github_update_") ||
     command.startsWith("github_delete_") ||
     command.startsWith("github_merge_") ||
+    command.startsWith("github_cancel_") ||
     command.startsWith("github_rerun_");
 }
 
@@ -6888,24 +6889,51 @@ export function getGitHubWorkflowJobLog(repoFullName: string, jobId: number): Pr
   });
 }
 
-function markFallbackWorkflowRerun(repoFullName: string, detail: GitHubWorkflowRunDetail) {
+function replaceFallbackWorkflowRun(repoFullName: string, run: GitHubWorkflowRun) {
+  const detail = fallbackGitHubWorkflowRunDetails[repoFullName]?.[run.id];
+  if (detail) detail.run = { ...run };
+  fallbackGitHubWorkflowRuns[repoFullName] = (fallbackGitHubWorkflowRuns[repoFullName] ?? [])
+    .map((item) => item.id === run.id ? { ...run } : item);
+}
+
+function findFallbackWorkflowRun(repoFullName: string, runId: number) {
+  return fallbackGitHubWorkflowRunDetails[repoFullName]?.[runId]?.run
+    ?? fallbackGitHubWorkflowRuns[repoFullName]?.find((run) => run.id === runId);
+}
+
+function markFallbackWorkflowRerun(repoFullName: string, run: GitHubWorkflowRun) {
   const rerun = {
-    ...detail.run,
+    ...run,
     status: "queued",
     conclusion: null,
-    runAttempt: (detail.run.runAttempt ?? 1) + 1,
+    runAttempt: (run.runAttempt ?? 1) + 1,
     updatedAt: new Date().toISOString(),
   };
-  detail.run = rerun;
-  const runs = fallbackGitHubWorkflowRuns[repoFullName] ?? [];
-  fallbackGitHubWorkflowRuns[repoFullName] = runs.map((run) => run.id === rerun.id ? { ...rerun } : run);
+  replaceFallbackWorkflowRun(repoFullName, rerun);
+}
+
+export function cancelGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  return call("github_cancel_workflow_run", { repoFullName, runId }, () => {
+    const run = findFallbackWorkflowRun(repoFullName, runId);
+    if (!run) throw new Error("GitHub Actions run 不存在");
+    if (run.status !== "queued" && run.status !== "in_progress") {
+      throw new Error("GitHub Actions run 当前状态不可取消");
+    }
+    const cancelled = {
+      ...run,
+      status: "completed",
+      conclusion: "cancelled",
+      updatedAt: new Date().toISOString(),
+    };
+    replaceFallbackWorkflowRun(repoFullName, cancelled);
+  });
 }
 
 export function rerunFailedGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
   return call("github_rerun_failed_workflow_run", { repoFullName, runId }, () => {
-    const detail = fallbackGitHubWorkflowRunDetails[repoFullName]?.[runId];
-    if (!detail) throw new Error("GitHub Actions run 不存在");
-    markFallbackWorkflowRerun(repoFullName, detail);
+    const run = findFallbackWorkflowRun(repoFullName, runId);
+    if (!run) throw new Error("GitHub Actions run 不存在");
+    markFallbackWorkflowRerun(repoFullName, run);
   });
 }
 
@@ -6914,7 +6942,7 @@ export function rerunGitHubWorkflowJob(repoFullName: string, jobId: number): Pro
     const details = Object.values(fallbackGitHubWorkflowRunDetails[repoFullName] ?? {});
     const detail = details.find((item) => item.jobs.some((job) => job.id === jobId));
     if (!detail) throw new Error("GitHub Actions job 不存在");
-    markFallbackWorkflowRerun(repoFullName, detail);
+    markFallbackWorkflowRerun(repoFullName, detail.run);
   });
 }
 

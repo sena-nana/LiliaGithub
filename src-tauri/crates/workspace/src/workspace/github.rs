@@ -7969,20 +7969,25 @@ pub async fn github_get_workflow_job_log(
     .await
 }
 
-fn github_rerun_workflow(app: &AppHandle, repo_full_name: &str, path: &str) -> Result<(), String> {
+fn github_post_workflow_action(
+    app: &AppHandle,
+    repo_full_name: &str,
+    path: &str,
+    error_context: &str,
+) -> Result<(), String> {
     let (binding, token) = github_require_token(app)?;
     github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
     let client = build_client()?;
     let response = github_send(
         app,
-        "重跑 GitHub Actions 失败",
+        error_context,
         github_headers(
             client.post(format!("{}/{}", github_repo_api_url(repo_full_name)?, path)),
             Some(&token),
         ),
     )?;
     if !response.status().is_success() {
-        return Err(github_http_error("重跑 GitHub Actions 失败", response));
+        return Err(github_http_error(error_context, response));
     }
     clear_github_project_repo_cache(app, repo_full_name)?;
     Ok(())
@@ -7998,10 +8003,32 @@ pub async fn github_rerun_failed_workflow_run(
         OperationKind::GitHubWrite,
         "重跑 GitHub Actions 失败任务",
         move || {
-            github_rerun_workflow(
+            github_post_workflow_action(
                 &app,
                 &repo_full_name,
                 &format!("actions/runs/{run_id}/rerun-failed-jobs"),
+                "重跑 GitHub Actions 失败",
+            )
+        },
+    )
+    .await
+}
+
+pub async fn github_cancel_workflow_run(
+    app: AppHandle,
+    repo_full_name: String,
+    run_id: u64,
+) -> Result<(), String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "取消 GitHub Actions 运行",
+        move || {
+            github_post_workflow_action(
+                &app,
+                &repo_full_name,
+                &format!("actions/runs/{run_id}/cancel"),
+                "取消 GitHub Actions 运行失败",
             )
         },
     )
@@ -8018,10 +8045,11 @@ pub async fn github_rerun_workflow_job(
         OperationKind::GitHubWrite,
         "重跑 GitHub Actions job",
         move || {
-            github_rerun_workflow(
+            github_post_workflow_action(
                 &app,
                 &repo_full_name,
                 &format!("actions/jobs/{job_id}/rerun"),
+                "重跑 GitHub Actions 失败",
             )
         },
     )

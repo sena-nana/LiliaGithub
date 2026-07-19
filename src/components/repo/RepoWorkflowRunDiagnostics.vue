@@ -24,7 +24,7 @@ import {
   workflowJobRerunAvailability,
   workflowRerunErrorMessage,
   workflowRunRerunAvailability,
-} from "./workflowRerun";
+} from "../../utils/workflowActions";
 
 const props = defineProps<{
   repoFullName: string;

@@ -9,7 +9,7 @@ use lilia_github_contracts::home_attention::GitHubHomeAttentionResult;
 
 use self::aggregate::normalize_repository_batch;
 use self::pull_requests::scan_pending_pull_requests;
-use self::workflows::scan_failed_workflows;
+use self::workflows::scan_workflow_runs;
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::operations::{
     OperationTaskCompletion, VisibleOperation, VisibleOperationGroup,
@@ -30,13 +30,13 @@ pub async fn github_list_home_attention(
     group
         .run(
             move || async move {
-                let (pending_pull_requests, failed_workflows) = tokio::join!(
+                let (pending_pull_requests, workflow_runs) = tokio::join!(
                     scan_pending_pull_requests(app.clone(), repositories.clone(), force_refresh),
-                    scan_failed_workflows(app, repositories, force_refresh),
+                    scan_workflow_runs(app, repositories, force_refresh),
                 );
                 Ok(GitHubHomeAttentionResult {
                     pending_pull_requests,
-                    failed_workflows,
+                    workflow_runs,
                 })
             },
             scan_completion,
@@ -57,7 +57,7 @@ fn scan_completion(result: &GitHubHomeAttentionResult) -> OperationTaskCompletio
 fn scan_failure_repositories(result: &GitHubHomeAttentionResult) -> BTreeSet<&str> {
     [
         &result.pending_pull_requests.failures,
-        &result.failed_workflows.failures,
+        &result.workflow_runs.failures,
     ]
     .into_iter()
     .flat_map(|failures| failures.iter())

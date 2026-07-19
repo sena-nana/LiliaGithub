@@ -1,7 +1,7 @@
 import { listGitHubPullRequests, listGitHubWorkflowRuns } from "../workspace/client";
 import type { GitHubPullRequest, GitHubWorkflowRun } from "../workspace/types";
 import type {
-  HomeAttentionFailedWorkflowRun,
+  HomeAttentionWorkflowRun,
   HomeAttentionLoadOptions,
   HomeAttentionPendingPullRequest,
   HomeAttentionPullRequestReason,
@@ -16,6 +16,7 @@ const ACTIONABLE_WORKFLOW_CONCLUSIONS = new Set([
   "action_required",
   "startup_failure",
 ]);
+const ACTIVE_WORKFLOW_STATUSES = new Set(["queued", "in_progress"]);
 const SOURCE_PAGE_SIZE = 100;
 const RECENT_DAYS = 30;
 
@@ -27,11 +28,11 @@ export async function listHomeAttentionFallback(
   repoFullNames: readonly string[],
   options: HomeAttentionFallbackOptions = {},
 ): Promise<HomeAttentionResult> {
-  const [pendingPullRequests, failedWorkflows] = await Promise.all([
+  const [pendingPullRequests, workflowRuns] = await Promise.all([
     loadPendingPullRequests(repoFullNames, options),
-    loadFailedWorkflows(repoFullNames, options),
+    loadWorkflowRuns(repoFullNames, options),
   ]);
-  return { pendingPullRequests, failedWorkflows };
+  return { pendingPullRequests, workflowRuns };
 }
 
 async function loadPendingPullRequests(
@@ -74,12 +75,12 @@ async function loadPendingPullRequests(
   return result;
 }
 
-async function loadFailedWorkflows(
+async function loadWorkflowRuns(
   repoFullNames: readonly string[],
   options: HomeAttentionFallbackOptions,
 ) {
   const now = options.now ?? new Date();
-  const result = await aggregateHomeAttentionRepositories<HomeAttentionFailedWorkflowRun>(
+  const result = await aggregateHomeAttentionRepositories<HomeAttentionWorkflowRun>(
     repoFullNames,
     async (repoFullName) => {
       const runs = await listGitHubWorkflowRuns(
@@ -89,13 +90,19 @@ async function loadFailedWorkflows(
       );
       return {
         items: runs
-          .filter((run) => isRecentHomeAttentionWorkflowRun(run, now))
+          .filter((run) => isHomeAttentionWorkflowRun(run, now))
           .map((run) => ({ repoFullName, run })),
         truncated: runs.length >= SOURCE_PAGE_SIZE,
       };
     },
   );
-  result.items.sort((left, right) => compareHomeAttentionDates(left.run.updatedAt, right.run.updatedAt));
+  result.items.sort((left, right) =>
+    workflowRunAttentionRank(left.run) - workflowRunAttentionRank(right.run) ||
+    compareHomeAttentionDates(
+      left.run.updatedAt || left.run.createdAt,
+      right.run.updatedAt || right.run.createdAt,
+    )
+  );
   return result;
 }
 
@@ -114,9 +121,15 @@ export function mergeHomeAttentionPullRequestCandidates(
     .sort((left, right) => compareHomeAttentionDates(left.pullRequest.updatedAt, right.pullRequest.updatedAt));
 }
 
-export function isRecentHomeAttentionWorkflowRun(run: GitHubWorkflowRun, now: Date) {
-  return ACTIONABLE_WORKFLOW_CONCLUSIONS.has(run.conclusion ?? "")
+export function isHomeAttentionWorkflowRun(run: GitHubWorkflowRun, now: Date) {
+  if (ACTIVE_WORKFLOW_STATUSES.has(run.status)) return true;
+  return run.status === "completed"
+    && ACTIONABLE_WORKFLOW_CONCLUSIONS.has(run.conclusion ?? "")
     && isWithinRecentWindow(run.updatedAt || run.createdAt, now);
+}
+
+function workflowRunAttentionRank(run: GitHubWorkflowRun) {
+  return run.status === "completed" ? 0 : 1;
 }
 
 async function aggregateHomeAttentionRepositories<T>(

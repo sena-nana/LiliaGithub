@@ -36,7 +36,7 @@ pub struct GitHubHomeAttentionPendingPullRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct GitHubHomeAttentionFailedWorkflowRun {
+pub struct GitHubHomeAttentionWorkflowRun {
     pub repo_full_name: String,
     pub run: GitHubWorkflowRun,
 }
@@ -45,7 +45,7 @@ pub struct GitHubHomeAttentionFailedWorkflowRun {
 #[serde(rename_all = "camelCase")]
 pub struct GitHubHomeAttentionResult {
     pub pending_pull_requests: GitHubHomeAttentionSection<GitHubHomeAttentionPendingPullRequest>,
-    pub failed_workflows: GitHubHomeAttentionSection<GitHubHomeAttentionFailedWorkflowRun>,
+    pub workflow_runs: GitHubHomeAttentionSection<GitHubHomeAttentionWorkflowRun>,
 }
 
 #[cfg(test)]

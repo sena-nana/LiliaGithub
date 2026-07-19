@@ -4,15 +4,22 @@ import type {
   GitHubIssue,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubRepositoryPermissions,
   GitHubRepoSummary,
+  GitHubWorkflowRun,
   RepoSummary,
 } from "../services/workspace";
 import type { RepoSyncIssueDisplay } from "../composables/workspace/state";
 import type {
-  HomeAttentionFailedWorkflowRun,
   HomeAttentionPendingPullRequest,
+  HomeAttentionWorkflowRun,
 } from "../services/homeAttention/types";
-import { type WorkflowRunTone } from "./repoDisplay";
+import {
+  type WorkflowRunTone,
+  workflowRunStatusText,
+  workflowRunStatusTone,
+} from "./repoDisplay";
+import { workflowRunCancelAvailability } from "./workflowActions";
 
 export type HomePendingItemKind = "operation" | "issue" | "pull" | "review" | "workflow";
 
@@ -38,6 +45,8 @@ export type HomePendingItemTarget = {
   repoFullName: string;
   localRepoId: string | null;
   runId: number | null;
+  run: GitHubWorkflowRun | null;
+  permissions: Pick<GitHubRepositoryPermissions, "push" | "admin"> | null | undefined;
 };
 
 export type HomePendingItem = {
@@ -53,7 +62,7 @@ export type HomePendingItem = {
 };
 
 export type HomePendingRepoSource = {
-  githubRepo: Pick<GitHubRepoSummary, "fullName" | "updatedAt">;
+  githubRepo: Pick<GitHubRepoSummary, "fullName" | "updatedAt" | "permissions">;
   localRepo: RepoSummary | null;
   syncIssue: RepoSyncIssueDisplay | null;
   issues: readonly GitHubIssue[];
@@ -61,11 +70,12 @@ export type HomePendingRepoSource = {
   pullRequestChecksByPull: Record<number, readonly GitHubPullRequestCheck[] | undefined> | undefined;
   actionNotifications: readonly GitHubActionNotification[];
   attentionPullRequests: readonly HomeAttentionPendingPullRequest[];
-  failedWorkflows: readonly HomeAttentionFailedWorkflowRun[];
+  workflowRuns: readonly HomeAttentionWorkflowRun[];
 };
 
 const PRIORITY_OPERATION_ERROR = 500;
 const PRIORITY_WORKFLOW_ERROR = 480;
+const PRIORITY_WORKFLOW_ACTIVE = 475;
 const PRIORITY_REVIEW_REQUEST = 470;
 const PRIORITY_PULL_CHECK_ERROR = 460;
 const PRIORITY_CONFLICT = 440;
@@ -145,25 +155,35 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     });
   }
 
-  const failedWorkflowRunIds = new Set(source.failedWorkflows.map(({ run }) => run.id));
-  for (const { run } of source.failedWorkflows) {
+  const workflowRunIds = new Set(source.workflowRuns.map(({ run }) => run.id));
+  for (const { run } of source.workflowRuns) {
+    const priority = workflowPendingPriority(run);
+    if (priority == null) continue;
+    const statusText = workflowRunStatusText(run);
     items.push({
       id: `workflow-run:${githubRepo.fullName}:${run.id}`,
       kind: "workflow",
-      title: "Workflow 失败",
+      title: statusText,
       detail: run.displayTitle || run.name,
-      summary: `${githubRepo.fullName} · ${run.branch || "默认分支"} · ${run.conclusion ?? "失败"}`,
+      summary: `${githubRepo.fullName} · ${run.branch || "默认分支"} · ${statusText}`,
       timestamp: parseGitHubTime(run.updatedAt || run.createdAt),
-      priority: PRIORITY_WORKFLOW_ERROR,
-      target: { kind: "workflow", repoFullName: githubRepo.fullName, localRepoId, runId: run.id },
-      tone: "error",
+      priority,
+      target: {
+        kind: "workflow",
+        repoFullName: githubRepo.fullName,
+        localRepoId,
+        runId: run.id,
+        run,
+        permissions: githubRepo.permissions,
+      },
+      tone: workflowRunStatusTone(run),
     });
   }
 
   for (const notification of source.actionNotifications) {
     const tone = actionNotificationTone(notification);
     const runId = actionNotificationRunId(notification);
-    if (runId != null && failedWorkflowRunIds.has(runId)) continue;
+    if (runId != null && workflowRunIds.has(runId)) continue;
     items.push({
       id: `workflow-notification:${notification.id}`,
       kind: "workflow",
@@ -172,7 +192,14 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       summary: `${githubRepo.fullName} · ${notification.reason}`,
       timestamp: parseGitHubTime(notification.updatedAt),
       priority: PRIORITY_WORKFLOW_ERROR,
-      target: { kind: "workflow", repoFullName: githubRepo.fullName, localRepoId, runId },
+      target: {
+        kind: "workflow",
+        repoFullName: githubRepo.fullName,
+        localRepoId,
+        runId,
+        run: null,
+        permissions: githubRepo.permissions,
+      },
       tone,
     });
   }
@@ -308,6 +335,12 @@ function pullRequestPriority(tone: WorkflowRunTone | undefined) {
   if (tone === "error") return PRIORITY_PULL_CHECK_ERROR;
   if (tone === "warn") return PRIORITY_PULL_CHECK_PENDING;
   return PRIORITY_PULL_OPEN;
+}
+
+function workflowPendingPriority(run: GitHubWorkflowRun) {
+  if (run.status === "completed") return PRIORITY_WORKFLOW_ERROR;
+  if (workflowRunCancelAvailability(run).available) return PRIORITY_WORKFLOW_ACTIVE;
+  return null;
 }
 
 function actionNotificationTone(notification: GitHubActionNotification): WorkflowRunTone {
