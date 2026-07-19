@@ -412,15 +412,15 @@ describe("AppShell sidebar", () => {
 
     const mainNavigation = view.getByRole("navigation", { name: "主导航" });
     expect(within(mainNavigation).getByRole("link", { name: "项目总览" })).toHaveAttribute("href", "/");
+    expect(within(mainNavigation).queryByRole("link", { name: "通知" })).toBeNull();
     expect(within(mainNavigation).queryByRole("link", { name: "跨仓库" })).toBeNull();
     expect(within(mainNavigation).queryByRole("link", { name: "首页" })).toBeNull();
     const profileRow = sidebarRowForText(view.container, "lilia-user");
     expect(profileRow).toHaveAttribute("href", "/profile");
     const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
     expect(organizationRow).toHaveAttribute("href", "/organizations/sena-nana");
-    const mainNav = view.getByRole("navigation", { name: "主导航" });
-    expect(mainNav).toContainElement(profileRow);
-    expect(mainNav).toContainElement(organizationRow);
+    expect(mainNavigation).toContainElement(profileRow);
+    expect(mainNavigation).toContainElement(organizationRow);
     expect(view.container.querySelector(".sb-section--favorites")).toBeInstanceOf(HTMLElement);
     expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();

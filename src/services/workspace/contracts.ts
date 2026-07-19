@@ -115,10 +115,6 @@ import type {
 } from "../liliaCodeHandoff/types";
 import type { HomeAttentionResult } from "../homeAttention/types";
 import type {
-  GitHubNotificationMutationResult,
-  GitHubNotificationPage,
-} from "../notifications/types";
-import type {
   GitHubCreateRepositoryDiscussionRequest,
   GitHubRepositoryDiscussion,
   GitHubRepositoryDiscussionMetadata,
@@ -237,18 +233,6 @@ export interface WorkspaceCommandContracts {
     repoFullNames: string[];
     forceRefresh: Maybe<boolean>;
   }, HomeAttentionResult>;
-  github_list_notifications: CommandContract<{
-    all: boolean;
-    page: number;
-    perPage: number;
-    forceRefresh: Maybe<boolean>;
-  }, GitHubNotificationPage>;
-  github_mark_notifications_read: CommandContract<{
-    notificationIds: string[];
-  }, GitHubNotificationMutationResult>;
-  github_unsubscribe_notification: CommandContract<{
-    notificationId: string;
-  }, void>;
   github_list_action_notifications: CommandContract<{
     perPage: Maybe<number>;
     forceRefresh: Maybe<boolean>;
