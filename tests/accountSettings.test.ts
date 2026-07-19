@@ -5,7 +5,6 @@ import { REQUIRED_GITHUB_AUTH_SCOPES } from "../src/services/workspace/authScope
 
 const { preferences, workspace } = vi.hoisted(() => {
   const preferences = {
-    defaultWorkspaceRoot: "C:\\Files\\workspace",
     repositoryScope: { kind: "all" as const },
     repositorySort: { key: "updated" as const, direction: "desc" as const },
     issues: { state: "open" as const, sort: "created" as const, direction: "desc" as const },
@@ -59,21 +58,22 @@ describe("账户设置", () => {
     });
   });
 
-  it("选择默认工作区后原子保存整组账户偏好", async () => {
+  it("账户设置只保存账号级仓库偏好", async () => {
     workspace.state.settings.workspaceRoot = null;
     const { container } = render(AccountSection);
     expect(container.querySelector('[data-agent-id="profile.editor"]')).toBeNull();
-    expect(screen.getByText("默认工作区当前不可用，可重新选择。")).toBeInTheDocument();
+    expect(screen.queryByText("默认工作区当前不可用，可重新选择。")).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "选择" }));
     await fireEvent.click(screen.getByRole("button", { name: "保存偏好" }));
 
     await waitFor(() => {
-      expect(workspace.updateAccountPreferences).toHaveBeenCalledWith(expect.objectContaining({
-        defaultWorkspaceRoot: "D:\\Projects",
+      expect(workspace.updateAccountPreferences).toHaveBeenCalledWith({
+        repositoryScope: { kind: "all" },
         repositorySort: { key: "updated", direction: "desc" },
+        issues: { state: "open", sort: "created", direction: "desc" },
+        pullRequests: { state: "open", sort: "updated", direction: "desc" },
         actions: { state: "all", sort: "updated", direction: "desc" },
-      }));
+      });
     });
   });
 

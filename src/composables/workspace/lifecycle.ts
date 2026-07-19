@@ -1,6 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ref } from "vue";
-import { replaceRepos, state } from "./state";
+import { applyWorkspaceBootstrap, replaceRepos, state } from "./state";
 import {
   refreshRepoContributions,
   refreshRepoSummaries,
@@ -10,17 +9,21 @@ import {
 import {
   hydrateRepoRemoteCheckedAt,
   ensureRepoRefreshEventsReady,
+  resetRepoRefreshRuntime,
   setRepoRefreshLifecycleFocused,
 } from "./repoRefreshEvents";
 import { loadWorkspaceService } from "./serviceLoader";
 import { hasRecentInput } from "../../utils/lowPriorityScheduler";
+import type { WorkspaceBootstrap, WorkspaceViewPreferences } from "../../services/workspace";
+import { resetRepositoryRuntime } from "./repositories";
+import { resetLaunchRuntime } from "./launch";
+import { resetBulkRuntime } from "./bulk";
 
 export const FOCUS_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 
 let lastFocusEventAt = Date.now();
 let lifecycleGeneration = 0;
-let chooseWorkspaceRootPromise: Promise<string | null> | null = null;
-export const choosingWorkspaceRoot = ref(false);
+let workspaceSwitchPromise: Promise<WorkspaceBootstrap> | null = null;
 
 export async function initialize() {
   if (state.loading) return;
@@ -33,11 +36,10 @@ export async function initialize() {
       if (generation === lifecycleGeneration) state.error = String(err);
       return null;
     });
-    const settingsPromise = service.getWorkspaceSettings();
-    const startupCachePromise = service.readStartupCache().catch(() => null);
-    const settings = await settingsPromise;
+    const bootstrap = await service.getWorkspaceBootstrap();
     if (generation !== lifecycleGeneration) return;
-    state.settings = settings;
+    const settings = bootstrap.settings;
+    applyWorkspaceBootstrap(bootstrap);
     const provisionalBindingStatus = settings.githubBinding
       ? {
           state: "bound" as const,
@@ -61,29 +63,12 @@ export async function initialize() {
       if (!bindingStatus) return;
       state.bindingStatus = bindingStatus;
     }
-    const startupCache = await startupCachePromise;
-    if (generation !== lifecycleGeneration) return;
-    if (startupCache?.contributions) {
-      state.githubContributions = {
-        days: startupCache.contributions.days,
-        meta: startupCache.contributions.meta,
-        loading: false,
-        error: null,
-      };
-    }
-    if (startupCache) {
-      const hiddenRepoIds = new Set(settings.hiddenRepoIds);
-      replaceRepos(settings.managedRepoIds.flatMap((repoId) => {
-        const cached = startupCache.reposById[repoId];
-        return cached && !hiddenRepoIds.has(repoId) ? [{ ...cached.summary, id: repoId }] : [];
-      }));
-    }
-    hydrateRepoRemoteCheckedAt(startupCache?.reposById);
+    hydrateWorkspaceBootstrapCache(bootstrap);
     await ensureRepoRefreshEventsReady();
     if (generation !== lifecycleGeneration) return;
-    const repos = settings.workspaceRoot ? await refreshRepos() : null;
+    const repos = hasAvailableWorkspaceRoot(settings) ? await refreshRepos() : null;
     if (generation !== lifecycleGeneration) return;
-    if (repos && !startupCache?.contributions) void refreshRepoContributions();
+    if (repos && !bootstrap.startupCache?.contributions) void refreshRepoContributions();
     if (provisionalBindingStatus && !state.bindingStatus) state.bindingStatus = provisionalBindingStatus;
   } catch (err) {
     if (generation !== lifecycleGeneration) return;
@@ -95,33 +80,122 @@ export async function initialize() {
   }
 }
 
-export function chooseWorkspaceRoot() {
-  if (chooseWorkspaceRootPromise) return chooseWorkspaceRootPromise;
+export async function pickWorkspaceRoot() {
+  const service = await loadWorkspaceService();
+  return service.pickWorkspaceRoot();
+}
 
-  choosingWorkspaceRoot.value = true;
+function hydrateWorkspaceBootstrapCache(bootstrap: WorkspaceBootstrap) {
+  const { settings, startupCache } = bootstrap;
+  if (startupCache?.contributions) {
+    state.githubContributions = {
+      days: startupCache.contributions.days,
+      meta: startupCache.contributions.meta,
+      loading: false,
+      error: null,
+    };
+  }
+  if (startupCache) {
+    const hiddenRepoIds = new Set(settings.hiddenRepoIds);
+    replaceRepos(settings.managedRepoIds.flatMap((repoId) => {
+      const cached = startupCache.reposById[repoId];
+      return cached && !hiddenRepoIds.has(repoId) ? [{ ...cached.summary, id: repoId }] : [];
+    }));
+  }
+  hydrateRepoRemoteCheckedAt(startupCache?.reposById);
+}
+
+function hasAvailableWorkspaceRoot(settings: WorkspaceBootstrap["settings"]) {
+  return settings.activeWorkspace?.roots.some((root) => root.available) ?? Boolean(settings.workspaceRoot);
+}
+
+function resetWorkspaceRuntimeForContextChange() {
+  resetRepoRefreshRuntime();
+  resetRepositoryRuntime();
+  resetLaunchRuntime();
+  resetBulkRuntime();
+}
+
+async function transitionToWorkspaceBootstrap(bootstrap: WorkspaceBootstrap) {
+  lifecycleGeneration += 1;
+  resetWorkspaceRuntimeForContextChange();
+  state.loading = false;
+  applyWorkspaceBootstrap(bootstrap);
+  hydrateWorkspaceBootstrapCache(bootstrap);
+  await ensureRepoRefreshEventsReady();
+  if (hasAvailableWorkspaceRoot(bootstrap.settings)) await refreshRepos();
+  return bootstrap;
+}
+
+export function switchWorkspace(workspaceId: string) {
+  if (workspaceSwitchPromise) return workspaceSwitchPromise;
+  state.switchingWorkspace = true;
   const pending = (async () => {
-    try {
-      lifecycleGeneration += 1;
-      state.loading = false;
-      state.error = null;
-      const service = await loadWorkspaceService();
-      const picked = await service.pickWorkspaceRoot();
-      if (!picked) return null;
-      state.settings = await service.setWorkspaceRoot(picked);
-      await refreshRepos();
-      return picked;
-    } catch (err) {
-      state.error = String(err);
-      throw err;
-    }
+    const service = await loadWorkspaceService();
+    const bootstrap = await service.switchWorkspace(workspaceId);
+    return transitionToWorkspaceBootstrap(bootstrap);
   })().finally(() => {
-    if (chooseWorkspaceRootPromise === pending) {
-      chooseWorkspaceRootPromise = null;
-      choosingWorkspaceRoot.value = false;
+    if (workspaceSwitchPromise === pending) {
+      workspaceSwitchPromise = null;
+      state.switchingWorkspace = false;
     }
   });
-  chooseWorkspaceRootPromise = pending;
+  workspaceSwitchPromise = pending;
   return pending;
+}
+
+export async function createWorkspace(name: string, rootPath: string) {
+  const service = await loadWorkspaceService();
+  const bootstrap = await service.createWorkspace(name, rootPath);
+  await transitionToWorkspaceBootstrap(bootstrap);
+  return bootstrap.settings;
+}
+
+export async function renameWorkspace(workspaceId: string, name: string) {
+  const service = await loadWorkspaceService();
+  const settings = await service.renameWorkspace(workspaceId, name);
+  state.settings = settings;
+  return settings;
+}
+
+export async function deleteWorkspace(workspaceId: string) {
+  const service = await loadWorkspaceService();
+  const bootstrap = await service.deleteWorkspace(workspaceId);
+  await transitionToWorkspaceBootstrap(bootstrap);
+  return bootstrap.settings;
+}
+
+async function applyRootsMutation(request: () => Promise<WorkspaceBootstrap>) {
+  const previousRevision = state.contextRevision;
+  const bootstrap = await request();
+  if (bootstrap.contextRevision !== previousRevision) {
+    await transitionToWorkspaceBootstrap(bootstrap);
+  } else {
+    state.settings = bootstrap.settings;
+  }
+  return bootstrap.settings;
+}
+
+export async function addWorkspaceRoot(workspaceId: string, rootPath: string) {
+  const service = await loadWorkspaceService();
+  return applyRootsMutation(() => service.addWorkspaceRoot(workspaceId, rootPath));
+}
+
+export async function removeWorkspaceRoot(workspaceId: string, rootId: string) {
+  const service = await loadWorkspaceService();
+  return applyRootsMutation(() => service.removeWorkspaceRoot(workspaceId, rootId));
+}
+
+export async function setPrimaryWorkspaceRoot(workspaceId: string, rootId: string) {
+  const service = await loadWorkspaceService();
+  return applyRootsMutation(() => service.setPrimaryWorkspaceRoot(workspaceId, rootId));
+}
+
+export async function updateWorkspaceViewPreferences(preferences: WorkspaceViewPreferences) {
+  const service = await loadWorkspaceService();
+  const settings = await service.updateWorkspaceViewPreferences(preferences);
+  state.settings = settings;
+  return settings;
 }
 
 export async function installWorkspaceFocusRefresh(): Promise<() => void> {

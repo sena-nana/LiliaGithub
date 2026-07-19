@@ -6,8 +6,8 @@ use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
 use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler, repo_common_dir_by_id};
 use crate::workspace::settings::{
-    load_settings, load_startup_cache, repo_path_by_id, write_startup_repo_summary,
-    write_startup_repo_summary_after_fetch,
+    load_settings, load_startup_cache, repo_path_by_id, workspace_context_identity,
+    write_startup_repo_summary, write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
@@ -389,9 +389,12 @@ fn finish_run(
     task_id: String,
     result: RefreshResult,
 ) {
+    let (workspace_id, context_revision) = workspace_context_identity(&app);
     let mut event =
         result.as_ref().ok().map(
             |(summary, detail_patch, remote_checked_at)| RepoRefreshedEvent {
+                workspace_id: workspace_id.clone(),
+                context_revision,
                 repo_id: request.repo_id.clone(),
                 mode: request.mode.clone(),
                 summary: summary.clone(),

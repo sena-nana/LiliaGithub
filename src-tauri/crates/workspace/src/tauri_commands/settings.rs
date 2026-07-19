@@ -1,10 +1,18 @@
 use lilia_github_contracts::workspace::*;
 
 delegate_command!(settings; fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings);
+delegate_command!(settings; fn workspace_get_bootstrap(app: AppHandle) -> WorkspaceBootstrap);
+delegate_command!(settings; fn workspace_create(app: AppHandle, name: String, root_path: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_rename(app: AppHandle, workspace_id: String, name: String,) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn workspace_delete(app: AppHandle, workspace_id: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_switch(app: AppHandle, workspace_id: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_add_root(app: AppHandle, workspace_id: String, root_path: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_remove_root(app: AppHandle, workspace_id: String, root_id: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_set_primary_root(app: AppHandle, workspace_id: String, root_id: String,) -> Result<WorkspaceBootstrap, String>);
+delegate_command!(settings; fn workspace_update_view_preferences(app: AppHandle, preferences: WorkspaceViewPreferences,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache>);
 delegate_command!(settings; fn workspace_clear_startup_cache(app: AppHandle) -> Result<(), String>);
 delegate_command!(settings; fn workspace_write_startup_contributions(app: AppHandle, contributions: WorkspaceStartupContributions,) -> Result<WorkspaceStartupCache, String>);
-delegate_command!(settings; fn workspace_set_root(app: AppHandle, workspace_root: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_update_account_preferences(app: AppHandle, preferences: AccountPreferences,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_set_contribution_identities(app: AppHandle, identities: Vec<ContributionIdentity>,) -> Result<WorkspaceSettings, String>);
 delegate_command!(async settings; fn workspace_scan_contribution_identities(app: AppHandle) -> Result<ContributionIdentityRecommendationResult, String>);

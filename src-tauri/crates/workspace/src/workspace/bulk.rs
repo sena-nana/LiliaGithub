@@ -11,7 +11,7 @@ use crate::workspace::repos::{
     git_common_dir, require_valid_remote_sync_config, run_configured_pull,
     run_configured_pull_with_config, run_multi_remote_push, summarize_repo, sync_result,
 };
-use crate::workspace::settings::{repo_path_by_id, workspace_root};
+use crate::workspace::settings::{repo_path_by_id, repo_root_and_path_by_id};
 use lilia_github_contracts::workspace::{
     BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoRemoteSyncPolicy,
     RepoSummary,
@@ -250,12 +250,11 @@ fn build_live_bulk_preview(
     if !matches!(operation.as_str(), "pull" | "push" | "sync") {
         return Err("无效的批量同步操作".to_string());
     }
-    let root = workspace_root(app)?;
     let mut eligible = Vec::new();
     let mut blocked = Vec::new();
     let mut warnings = Vec::new();
     for repo_id in repo_ids {
-        let path = repo_path_by_id(app, &repo_id)?;
+        let (root, path) = repo_root_and_path_by_id(app, &repo_id)?;
         let repo = summarize_repo(&root, &path);
         let config = match require_valid_remote_sync_config(app, &repo_id, &path) {
             Ok(config) => config,
@@ -386,19 +385,12 @@ pub async fn bulk_sync_execute(
         VisibleOperation::new("sync", trigger.title(&operation)).priority(trigger.priority()),
         Some(format!("等待同步 {} 个仓库", repo_ids.len())),
     );
-    let root = match workspace_root(&app) {
-        Ok(root) => root,
-        Err(error) => {
-            parent.finish(OperationTaskCompletion::Error(error.clone()));
-            return Err(error);
-        }
-    };
     let local_changes_mode = local_changes_mode.unwrap_or_default();
     let mut submitted = Vec::with_capacity(repo_ids.len());
     let mut cancel_targets = Vec::with_capacity(repo_ids.len());
     for repo_id in repo_ids {
-        let path = match repo_path_by_id(&app, &repo_id) {
-            Ok(path) => path,
+        let (root, path) = match repo_root_and_path_by_id(&app, &repo_id) {
+            Ok(value) => value,
             Err(error) => {
                 submitted.push(SubmittedBulkRepo::Result(bulk_error_result(repo_id, error)));
                 continue;
@@ -407,7 +399,7 @@ pub async fn bulk_sync_execute(
         let common_dir = git_common_dir(&path).unwrap_or(path);
         let resource = repo_resource_id(&common_dir);
         let run_app = app.clone();
-        let run_root = root.clone();
+        let run_root = root;
         let run_operation_name = operation.clone();
         let run_repo_id = repo_id.clone();
         let spec = OperationSpec::new(OperationKind::Bulk)

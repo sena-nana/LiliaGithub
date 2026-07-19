@@ -97,6 +97,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneNextRepoPage = ref<number | null>(null);
   const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
   const clonePlacement = ref<WorkspaceRepoPlacement>({ kind: "automatic" });
+  const cloneRootId = ref("");
   const cloneScopePages = new Map<string, {
     items: GitHubRepoSummary[];
     nextPage: number | null;
@@ -334,6 +335,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneNextRepoPage.value = null;
     cloneSelectedRepo.value = null;
     clonePlacement.value = placement;
+    cloneRootId.value = workspace.activeWorkspace.value?.primaryRootId
+      ?? workspace.activeWorkspace.value?.roots.find((root) => root.available)?.id
+      ?? "";
     await cloneBindingLoader.run("clone-binding", async (runId) => {
       try {
         const status = await workspace.getGitHubBindingStatus();
@@ -410,7 +414,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
         placement: clonePlacement.value,
         target: cloneTouchedDirectory.value && customPath
           ? { kind: "custom", path: customPath }
-          : { kind: "default" },
+          : cloneRootId.value
+            ? { kind: "root", rootId: cloneRootId.value }
+            : { kind: "default" },
       });
       cloneBindingLoader.invalidate();
       cloneRepoPageLoader.invalidate();
@@ -538,6 +544,8 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     localRepoFullNames: localCloneRepoFullNames.value,
     repoLoaded: cloneRepoLoaded.value,
     placement: clonePlacement.value,
+    workspaceRoots: workspace.activeWorkspace.value?.roots ?? [],
+    selectedRootId: cloneRootId.value,
     defaultOrganizationLogin: cloneDefaultOrganizationLogin.value,
   }));
 
@@ -562,6 +570,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     clearSelectedRepo: useDirectCloneTarget,
     updatePlacement: (placement: WorkspaceRepoPlacement) => {
       clonePlacement.value = placement;
+    },
+    updateRootId: (rootId: string) => {
+      cloneRootId.value = rootId;
     },
     updateRepositoryScope: selectCloneRepositoryScope,
     retryOwners: loadCloneRepoOwners,

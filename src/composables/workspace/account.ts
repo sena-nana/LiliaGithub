@@ -24,7 +24,7 @@ import { replaceRepos, state } from "./state";
 export async function reloadAccountWorkspace() {
   const service = await loadWorkspaceService();
   state.settings = await service.getWorkspaceSettings();
-  if (state.settings.workspaceRoot) {
+  if (state.settings.activeWorkspace?.roots.some((root) => root.available)) {
     await refreshRepos();
   } else {
     replaceRepos([]);
@@ -32,23 +32,10 @@ export async function reloadAccountWorkspace() {
   return state.settings;
 }
 
-export async function pickAccountWorkspaceRoot() {
-  const service = await loadWorkspaceService();
-  return service.pickWorkspaceRoot();
-}
-
 export async function updateAccountPreferences(preferences: AccountPreferences) {
-  const previousRoot = state.settings?.workspaceRoot ?? null;
   const service = await loadWorkspaceService();
   const settings = await service.updateAccountPreferences(preferences);
   state.settings = settings;
-  if (settings.workspaceRoot !== previousRoot) {
-    if (settings.workspaceRoot) {
-      await refreshRepos();
-    } else {
-      replaceRepos([]);
-    }
-  }
   return settings;
 }
 

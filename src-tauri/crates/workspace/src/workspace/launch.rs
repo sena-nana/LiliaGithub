@@ -12,7 +12,9 @@ use std::thread;
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
-use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
+use crate::workspace::settings::{
+    load_settings, repo_path_by_id, save_settings, workspace_context_identity, STORE_FILE,
+};
 #[cfg(target_os = "windows")]
 use crate::workspace::shared::configure_background_command;
 use crate::workspace::shared::now_millis;
@@ -38,6 +40,30 @@ pub(super) fn launch_runtime() -> &'static Mutex<HashMap<String, LaunchEntry>> {
     RUNTIME.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(super) fn has_running_launch_for_workspace(workspace_id: &str) -> bool {
+    launch_runtime()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .values()
+        .any(|entry| {
+            entry.status.workspace_id.as_deref() == Some(workspace_id)
+                && entry.status.state == "running"
+        })
+}
+
+pub(super) fn has_running_launch_for_root(workspace_id: &str, root_id: &str) -> bool {
+    let prefix = format!("local:{root_id}/");
+    launch_runtime()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .values()
+        .any(|entry| {
+            entry.status.workspace_id.as_deref() == Some(workspace_id)
+                && entry.status.state == "running"
+                && entry.status.repo_id.starts_with(&prefix)
+        })
+}
+
 pub(super) fn launch_logs() -> &'static Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>> {
     static LOGS: OnceLock<Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>>> = OnceLock::new();
     LOGS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -50,6 +76,8 @@ pub(super) fn next_launch_log_index() -> u64 {
 
 pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
     ProjectLaunchStatus {
+        workspace_id: None,
+        context_revision: 0,
         repo_id: repo_id.to_string(),
         state: "idle".to_string(),
         pid: None,
@@ -861,7 +889,10 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
         pipe_launch_output(repo_id.clone(), "stderr", stderr);
     }
 
+    let (workspace_id, context_revision) = workspace_context_identity(&app);
     let status = ProjectLaunchStatus {
+        workspace_id,
+        context_revision,
         repo_id: repo_id.clone(),
         state: "running".to_string(),
         pid: Some(pid),

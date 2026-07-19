@@ -52,7 +52,9 @@ const workspace = vi.hoisted(() => ({
     tasks: [],
   },
   workspaceRoot: { value: "C:\\\\Files\\\\workspace" },
-  choosingWorkspaceRoot: { value: false },
+  activeWorkspace: { value: null },
+  workspaceCatalog: { value: [] },
+  switchingWorkspace: { value: false },
   githubBinding: { value: null },
   authBindingStatusText: { value: "尚未绑定 GitHub" },
   deviceFlow: { value: null },
@@ -62,7 +64,14 @@ const workspace = vi.hoisted(() => ({
     workspace.githubBinding.value = null;
     workspace.state.settings.githubBinding = null;
   }),
-  chooseWorkspaceRoot: vi.fn(async () => "D:\\NewWorkspace"),
+  pickWorkspaceRoot: vi.fn(async () => "D:\\NewWorkspace"),
+  createWorkspace: vi.fn(),
+  renameWorkspace: vi.fn(),
+  deleteWorkspace: vi.fn(),
+  switchWorkspace: vi.fn(),
+  addWorkspaceRoot: vi.fn(),
+  removeWorkspaceRoot: vi.fn(),
+  setPrimaryWorkspaceRoot: vi.fn(),
   listHiddenRepos: vi.fn(async () => []),
   unhideRepo: vi.fn(),
   addLocalRepo: vi.fn(),
@@ -85,7 +94,9 @@ const workspace = vi.hoisted(() => ({
 vi.mock("../src/composables/useWorkspace", async () => {
   const { reactive, ref } = await vi.importActual<typeof import("vue")>("vue");
   workspace.state = reactive(workspace.state);
-  workspace.choosingWorkspaceRoot = ref(false);
+  workspace.activeWorkspace = ref(null);
+  workspace.workspaceCatalog = ref([]);
+  workspace.switchingWorkspace = ref(false);
   return {
     useWorkspace: () => workspace,
   };
@@ -98,6 +109,8 @@ describe("RepositoriesSection", () => {
       ...workspaceSettings(),
       systemGitRepoIds: ["LiliaGithub"],
     };
+    workspace.activeWorkspace.value = workspace.state.settings.activeWorkspace;
+    workspace.workspaceCatalog.value = workspace.state.settings.workspaceCatalog;
     workspace.state.repos = [repoSummary("LiliaGithub")];
     workspace.state.tasks = [];
     workspace.state.authLoading = false;
@@ -106,10 +119,9 @@ describe("RepositoriesSection", () => {
     workspace.deviceFlow.value = null;
     workspace.authBindingStatusText.value = "尚未绑定 GitHub";
     workspace.workspaceRoot.value = "C:\\\\Files\\\\workspace";
-    workspace.choosingWorkspaceRoot.value = false;
     workspace.unbindGitHub.mockClear();
-    workspace.chooseWorkspaceRoot.mockReset();
-    workspace.chooseWorkspaceRoot.mockResolvedValue("D:\\NewWorkspace");
+    workspace.pickWorkspaceRoot.mockReset();
+    workspace.pickWorkspaceRoot.mockResolvedValue("D:\\NewWorkspace");
     workspace.setContributionIdentities.mockClear();
     workspace.scanContributionIdentities.mockResolvedValue({
       scannedRepoCount: 1,

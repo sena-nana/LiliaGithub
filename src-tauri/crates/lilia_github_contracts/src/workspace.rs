@@ -10,6 +10,7 @@ pub use github_discussions::*;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSettings {
+    #[serde(default)]
     pub workspace_root: Option<String>,
     pub github_binding: Option<GitHubBindingMetadata>,
     #[serde(default)]
@@ -42,13 +43,112 @@ pub struct WorkspaceSettings {
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
     #[serde(default)]
     pub contribution_identities: Vec<ContributionIdentity>,
+    #[serde(default)]
+    pub workspace_catalog: Vec<WorkspaceCatalogEntry>,
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
+    #[serde(default)]
+    pub active_workspace: Option<NamedWorkspace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRoot {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceViewPreferences {
+    #[serde(default)]
+    pub sidebar_repository_sort: String,
+    #[serde(default)]
+    pub collapsed_group_ids: Vec<String>,
+    #[serde(default)]
+    pub home_repository_status_sort: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedWorkspace {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub roots: Vec<WorkspaceRoot>,
+    #[serde(default)]
+    pub primary_root_id: Option<String>,
+    #[serde(default)]
+    pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
+    #[serde(default)]
+    pub repo_sync_preferences: HashMap<String, RepoSyncPreference>,
+    #[serde(default)]
+    pub repo_remote_sync_policies: HashMap<String, RepoRemoteSyncPolicy>,
+    #[serde(default)]
+    pub hidden_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub managed_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub system_git_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub repo_bindings: HashMap<String, WorkspaceRepositoryBinding>,
+    #[serde(default)]
+    pub favorite_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub repo_groups: Vec<WorkspaceRepoGroup>,
+    #[serde(default)]
+    pub organization_grouping_resolved_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
+    #[serde(default)]
+    pub recent_local_repos: Vec<RecentLocalRepoVisit>,
+    #[serde(default)]
+    pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
+    #[serde(default)]
+    pub contribution_identities: Vec<ContributionIdentity>,
+    #[serde(default)]
+    pub view_preferences: WorkspaceViewPreferences,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCatalogEntry {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub roots: Vec<WorkspaceRoot>,
+    #[serde(default)]
+    pub primary_root_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProfile {
+    #[serde(default)]
+    pub account_preferences: AccountPreferences,
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
+    #[serde(default)]
+    pub workspaces: Vec<NamedWorkspace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBootstrap {
+    pub settings: WorkspaceSettings,
+    #[serde(default)]
+    pub startup_cache: Option<WorkspaceStartupCache>,
+    #[serde(default)]
+    pub context_revision: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountPreferences {
-    #[serde(default)]
-    pub default_workspace_root: Option<String>,
     #[serde(default)]
     pub repository_scope: GitHubRepositoryScope,
     #[serde(default)]
@@ -64,7 +164,6 @@ pub struct AccountPreferences {
 impl Default for AccountPreferences {
     fn default() -> Self {
         Self {
-            default_workspace_root: None,
             repository_scope: GitHubRepositoryScope::default(),
             repository_sort: RepositorySortPreferences::default(),
             issues: IssueListPreferences::default(),
@@ -228,6 +327,10 @@ pub struct WorkspaceRepositoryBinding {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceStartupCache {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub roots_fingerprint: String,
     #[serde(default)]
     pub workspace_root: Option<String>,
     #[serde(default)]
@@ -398,6 +501,10 @@ pub struct ProjectLaunchCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectLaunchStatus {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub context_revision: u64,
     pub repo_id: String,
     pub state: String,
     #[serde(default)]
@@ -973,6 +1080,10 @@ fn default_repo_refresh_detail_scope() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoRefreshedEvent {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub context_revision: u64,
     pub repo_id: String,
     pub mode: String,
     pub summary: RepoSummary,
@@ -1330,6 +1441,10 @@ pub struct HiddenRepo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceTask {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub context_revision: u64,
     pub id: String,
     pub kind: String,
     #[serde(default)]
@@ -1402,6 +1517,10 @@ pub enum WorkspaceCloneTarget {
     Custom {
         path: String,
     },
+    Root {
+        #[serde(rename = "rootId")]
+        root_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1427,6 +1546,8 @@ pub struct WorkspaceCloneResult {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceCreateLocalRepoRequest {
     pub name: String,
+    #[serde(default)]
+    pub root_id: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -2140,7 +2261,9 @@ pub struct GitHubUpdateIssueRequest {
     pub milestone: Option<Option<u64>>,
 }
 
-fn deserialize_optional_issue_milestone<'de, D>(deserializer: D) -> Result<Option<Option<u64>>, D::Error>
+fn deserialize_optional_issue_milestone<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<u64>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

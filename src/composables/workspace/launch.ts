@@ -168,3 +168,12 @@ export async function stopLaunch(repoId: string) {
   }
   return status;
 }
+
+export function resetLaunchRuntime() {
+  launchLoadCount = 0;
+  state.launchLoading = false;
+  for (const repoId of new Set([...launchStateGenerations.keys(), ...pendingLaunchLoads.keys()])) {
+    bumpLaunchGeneration(repoId);
+  }
+  pendingLaunchLoads = new Map();
+}

@@ -127,6 +127,8 @@ import type {
   RemoteRepoShortcut,
   SystemOpenTarget,
   WorkspaceTask,
+  WorkspaceBootstrap,
+  WorkspaceViewPreferences,
   WorkspaceCloneResult,
   WorkspaceRepoRefreshRequest,
   WorkspaceSettings,
@@ -220,6 +222,10 @@ export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, () => workspaceFallback().getWorkspaceSettings());
 }
 
+export function getWorkspaceBootstrap(): Promise<WorkspaceBootstrap> {
+  return call("workspace_get_bootstrap", undefined, () => workspaceFallback().getWorkspaceBootstrap());
+}
+
 export function readStartupCache(): Promise<WorkspaceStartupCache | null> {
   return call("workspace_read_startup_cache", undefined, () => workspaceFallback().readStartupCache());
 }
@@ -234,8 +240,46 @@ export function writeStartupContributions(contributions: WorkspaceStartupContrib
   );
 }
 
-export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
-  return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
+export function createWorkspace(name: string, rootPath: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_create", { name, rootPath }, () => workspaceFallback().createWorkspace(name, rootPath));
+}
+
+export function renameWorkspace(workspaceId: string, name: string): Promise<WorkspaceSettings> {
+  return call("workspace_rename", { workspaceId, name }, () =>
+    workspaceFallback().renameWorkspace(workspaceId, name)
+  );
+}
+
+export function deleteWorkspace(workspaceId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_delete", { workspaceId }, () => workspaceFallback().deleteWorkspace(workspaceId));
+}
+
+export function switchWorkspace(workspaceId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_switch", { workspaceId }, () => workspaceFallback().switchWorkspace(workspaceId));
+}
+
+export function addWorkspaceRoot(workspaceId: string, rootPath: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_add_root", { workspaceId, rootPath }, () =>
+    workspaceFallback().addWorkspaceRoot(workspaceId, rootPath)
+  );
+}
+
+export function removeWorkspaceRoot(workspaceId: string, rootId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_remove_root", { workspaceId, rootId }, () =>
+    workspaceFallback().removeWorkspaceRoot(workspaceId, rootId)
+  );
+}
+
+export function setPrimaryWorkspaceRoot(workspaceId: string, rootId: string): Promise<WorkspaceBootstrap> {
+  return call("workspace_set_primary_root", { workspaceId, rootId }, () =>
+    workspaceFallback().setPrimaryWorkspaceRoot(workspaceId, rootId)
+  );
+}
+
+export function updateWorkspaceViewPreferences(preferences: WorkspaceViewPreferences): Promise<WorkspaceSettings> {
+  return call("workspace_update_view_preferences", { preferences }, () =>
+    workspaceFallback().updateWorkspaceViewPreferences(preferences)
+  );
 }
 
 export function updateAccountPreferences(preferences: AccountPreferences): Promise<WorkspaceSettings> {

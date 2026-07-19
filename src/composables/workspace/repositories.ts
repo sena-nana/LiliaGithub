@@ -821,7 +821,7 @@ async function loadRepoLanguageStatsSummary(
   }
 }
 
-export function resetRepositoryRuntimeForTests() {
+export function resetRepositoryRuntime() {
   repositoryRuntimeGeneration += 1;
   contributionRefreshGeneration += 1;
   languageStatsLoadingGenerations = new Map();
@@ -837,6 +837,10 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshError = null;
   addLocalRepoPromise = null;
   workspaceSettingsMutationQueue = Promise.resolve();
+}
+
+export function resetRepositoryRuntimeForTests() {
+  resetRepositoryRuntime();
 }
 
 export async function cloneRepo(request: WorkspaceCloneRepoRequest) {

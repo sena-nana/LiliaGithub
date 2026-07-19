@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  addWorkspaceRoot,
+  createLocalRepo,
+  createWorkspace,
   getGitHubAccountProfile,
   getGitHubAccountReadme,
   getGitHubBindingStatus,
   getWorkspaceSettings,
   pollGitHubDeviceFlow,
+  resetWorkspaceFallbacksForTests,
   setContributionIdentities,
-  setWorkspaceRoot,
   startGitHubDeviceFlow,
+  switchWorkspace,
   unbindGitHub,
   updateAccountPreferences,
+  updateWorkspaceViewPreferences,
   updateGitHubAccountProfile,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
@@ -34,9 +39,8 @@ function binding(login: string, scopes: string[] = ["repo"]): GitHubBindingStatu
   };
 }
 
-function preferences(defaultWorkspaceRoot: string): AccountPreferences {
+function preferences(): AccountPreferences {
   return {
-    defaultWorkspaceRoot,
     repositoryScope: { kind: "organization", login: "lilia-org" },
     repositorySort: { key: "name", direction: "asc" },
     issues: { state: "all", sort: "comments", direction: "asc" },
@@ -47,33 +51,74 @@ function preferences(defaultWorkspaceRoot: string): AccountPreferences {
 
 describe("workspace account preferences fallback", () => {
   beforeEach(async () => {
+    await resetWorkspaceFallbacksForTests();
     fallback = await workspaceFallbackForTests();
+  });
+
+  it("isolates named workspace roots, repositories, and view preferences across switches", async () => {
+    const alpha = await createWorkspace("Alpha", "C:\\Workspaces\\Alpha");
+    const alphaId = alpha.settings.activeWorkspaceId!;
+    const expanded = await addWorkspaceRoot(alphaId, "D:\\Workspaces\\Shared");
+    const secondaryRoot = expanded.settings.activeWorkspace!.roots.find(
+      (root) => root.path === "D:\\Workspaces\\Shared",
+    )!;
+
+    await expect(addWorkspaceRoot(alphaId, "C:\\Workspaces\\Alpha\\nested"))
+      .rejects.toThrow("互相包含");
+    await updateWorkspaceViewPreferences({
+      sidebarRepositorySort: "name:asc",
+      collapsedGroupIds: ["group-alpha"],
+      homeRepositoryStatusSort: "created:desc",
+    });
+    const alphaRepo = await createLocalRepo({
+      name: "same-name",
+      rootId: secondaryRoot.id,
+      addReadme: true,
+      gitignoreTemplate: null,
+      licenseTemplate: null,
+    });
+    expect(alphaRepo.id).toBe(`local:${secondaryRoot.id}/same-name`);
+
+    const beta = await createWorkspace("Beta", "C:\\Workspaces\\Beta");
+    expect(beta.settings.activeWorkspace?.name).toBe("Beta");
+    expect(beta.settings.activeWorkspace?.viewPreferences.collapsedGroupIds).toEqual([]);
+    await expect(createWorkspace("alpha", "E:\\Another"))
+      .rejects.toThrow("已存在");
+
+    const restored = await switchWorkspace(alphaId);
+    expect(restored.settings.activeWorkspace?.roots).toHaveLength(2);
+    expect(restored.settings.activeWorkspace?.viewPreferences).toEqual({
+      sidebarRepositorySort: "name:asc",
+      collapsedGroupIds: ["group-alpha"],
+      homeRepositoryStatusSort: "created:desc",
+    });
+    expect(restored.settings.managedRepoIds).toContain(alphaRepo.id);
   });
 
   it("keeps the complete workspace profile isolated across bound and anonymous accounts", async () => {
     const accountA = (await getGitHubBindingStatus()).binding!.login;
-    await updateAccountPreferences(preferences("C:\\Accounts\\A"));
+    await createWorkspace("Account A", "C:\\Accounts\\A");
+    await updateAccountPreferences(preferences());
     await setContributionIdentities([{ name: "Account A", email: "a@example.com" }]);
 
     fallback.setFallbackGitHubBindingStatusForTests(binding("account-b"));
     const newAccount = await getWorkspaceSettings();
     expect(newAccount.workspaceRoot).toBeNull();
     expect(newAccount.accountPreferences).toMatchObject({
-      defaultWorkspaceRoot: null,
       pullRequests: { state: "open", sort: "updated", direction: "desc" },
     });
     expect(newAccount.contributionIdentities).toEqual([]);
-    await setWorkspaceRoot("C:\\Accounts\\B");
+    await createWorkspace("Account B", "C:\\Accounts\\B");
 
     fallback.setFallbackGitHubBindingStatusForTests(binding(accountA));
     const restoredA = await getWorkspaceSettings();
     expect(restoredA.workspaceRoot).toBe("C:\\Accounts\\A");
-    expect(restoredA.accountPreferences).toEqual(preferences("C:\\Accounts\\A"));
+    expect(restoredA.accountPreferences).toEqual(preferences());
     expect(restoredA.contributionIdentities).toEqual([{ name: "Account A", email: "a@example.com" }]);
 
     await unbindGitHub();
     expect((await getWorkspaceSettings()).workspaceRoot).toBeNull();
-    await setWorkspaceRoot("C:\\Accounts\\Anonymous");
+    await createWorkspace("Anonymous", "C:\\Accounts\\Anonymous");
 
     fallback.setFallbackGitHubBindingStatusForTests(binding("account-b"));
     expect((await getWorkspaceSettings()).workspaceRoot).toBe("C:\\Accounts\\B");

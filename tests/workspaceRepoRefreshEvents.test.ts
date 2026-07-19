@@ -28,6 +28,10 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
   loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
 }));
 
+function currentWorkspaceContext() {
+  return { workspaceId: state.settings?.activeWorkspaceId ?? null, contextRevision: state.contextRevision };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-10T00:00:00Z"));
@@ -105,6 +109,7 @@ describe("workspace repo refresh events", () => {
     const firstTaskId = await service.enqueueRepoRefresh.mock.results[0].value;
 
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: firstTaskId,
       kind: "repoRemote",
       title: "检查远端更新",
@@ -139,6 +144,7 @@ describe("workspace repo refresh events", () => {
 
     const summary = repoSummary("A", { behind: 2 });
     applyWorkspaceRepoRefreshed({
+      ...currentWorkspaceContext(),
       taskId: "remote-1",
       repoId: "A",
       mode: "remote",
@@ -148,6 +154,7 @@ describe("workspace repo refresh events", () => {
       trigger: "manual",
     });
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: "remote-1",
       kind: "repoRemote",
       title: "检查远端更新",
@@ -166,6 +173,7 @@ describe("workspace repo refresh events", () => {
 
   it("超过历史上限后仍保留运行任务并在终态到达时结束等待", async () => {
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: "long-running",
       kind: "repoStatus",
       title: "刷新仓库状态",
@@ -181,6 +189,7 @@ describe("workspace repo refresh events", () => {
 
     for (let index = 0; index < 200; index += 1) {
       applyWorkspaceTaskChanged({
+        ...currentWorkspaceContext(),
         id: `completed-${index}`,
         kind: "repoStatus",
         title: "刷新仓库状态",
@@ -198,6 +207,7 @@ describe("workspace repo refresh events", () => {
     expect(state.tasks.find((task) => task.id === "long-running")?.status).toBe("running");
 
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: "long-running",
       kind: "repoStatus",
       title: "刷新仓库状态",
@@ -244,6 +254,7 @@ describe("workspace repo refresh events", () => {
     hydrateRepoRemoteCheckedAt({ A: { remoteCheckedAt: Date.now() } });
 
     applyWorkspaceRepoRefreshed({
+      ...currentWorkspaceContext(),
       taskId: "local-1",
       repoId: "A",
       mode: "local",

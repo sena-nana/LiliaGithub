@@ -59,6 +59,9 @@ const mainTranslucent = computed(() => (
 ));
 const workspaceTranslucent = computed(() => sidebarTranslucent.value || mainTranslucent.value);
 const shouldMountContextMenuHost = computed(() => contextMenuState.openSeq > 0);
+const workspaceContextKey = computed(() =>
+  `${workspace.activeWorkspace.value?.id ?? "none"}:${workspace.contextRevision.value}`,
+);
 const sidebarToggleLabel = computed(() => (
   effectiveSidebarCollapsed.value ? "展开左侧栏" : "折叠左侧栏"
 ));
@@ -136,6 +139,7 @@ function toggleSidebar() {
         />
         <SecondaryPanel
           v-else
+          :key="workspaceContextKey"
           :surface-mode="sidebarTranslucent ? 'translucent' : 'solid'"
           backdrop-effect="none"
           surface-level="base"
@@ -150,7 +154,9 @@ function toggleSidebar() {
         surface-level="base"
         surface-boundary
       >
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <component :is="Component" :key="workspaceContextKey" />
+        </RouterView>
       </LiliaPrimaryContent>
     </LiliaWorkspace>
 

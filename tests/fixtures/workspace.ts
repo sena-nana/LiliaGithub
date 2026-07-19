@@ -5,7 +5,9 @@ import type {
   RepoDetailPatch,
   RepoSummary,
   RepoSyncOperationResult,
+  WorkspaceBootstrap,
   WorkspaceSettings,
+  WorkspaceStartupCache,
 } from "../../src/services/workspace";
 
 export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): RepoSummary {
@@ -93,11 +95,16 @@ export function repoDetailPatch(
 }
 
 export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettings {
-  return {
+  const root = {
+    id: "root-default",
+    path: "C:\\Files\\workspace",
+    available: true,
+    unavailableReason: null,
+  };
+  const settings: WorkspaceSettings = {
     workspaceRoot: "C:\\Files\\workspace",
     githubBinding: null,
     accountPreferences: {
-      defaultWorkspaceRoot: "C:\\Files\\workspace",
       repositoryScope: { kind: "all" },
       repositorySort: { key: "updated", direction: "desc" },
       issues: { state: "open", sort: "created", direction: "desc" },
@@ -118,5 +125,46 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     recentLocalRepos: [],
     localContributionCache: {},
     contributionIdentities: [],
+    workspaceCatalog: [{
+      id: "workspace-default",
+      name: "workspace",
+      roots: [root],
+      primaryRootId: root.id,
+    }],
+    activeWorkspaceId: "workspace-default",
+    activeWorkspace: {
+      id: "workspace-default",
+      name: "workspace",
+      roots: [root],
+      primaryRootId: root.id,
+      projectLaunchConfigs: {},
+      repoSyncPreferences: {},
+      repoRemoteSyncPolicies: {},
+      hiddenRepoIds,
+      managedRepoIds: [],
+      systemGitRepoIds: [],
+      repoBindings: {},
+      favoriteRepoIds: [],
+      repoGroups: [],
+      organizationGroupingResolvedRepoIds: [],
+      remoteRepoShortcuts: [],
+      recentLocalRepos: [],
+      localContributionCache: {},
+      contributionIdentities: [],
+      viewPreferences: {
+        sidebarRepositorySort: "updated:desc",
+        collapsedGroupIds: [],
+        homeRepositoryStatusSort: "updated:desc",
+      },
+    },
   };
+  return settings;
+}
+
+export function workspaceBootstrap(
+  settings: WorkspaceSettings = workspaceSettings(),
+  startupCache: WorkspaceStartupCache | null = null,
+  contextRevision = 1,
+): WorkspaceBootstrap {
+  return { settings, startupCache, contextRevision };
 }

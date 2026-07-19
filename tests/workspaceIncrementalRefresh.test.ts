@@ -65,6 +65,7 @@ import {
   repoDetailPatch,
   repoSummary,
   repoSyncResult,
+  workspaceBootstrap,
   workspaceSettings,
 } from "./fixtures/workspace";
 
@@ -76,6 +77,10 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+
+function currentWorkspaceContext() {
+  return { workspaceId: state.settings?.activeWorkspaceId ?? null, contextRevision: state.contextRevision };
 }
 
 function startupCache(
@@ -113,6 +118,7 @@ function repoChangePaths(repoId: string) {
 }
 
 const service = {
+  getWorkspaceBootstrap: vi.fn(),
   getWorkspaceSettings: vi.fn(),
   readStartupCache: vi.fn(),
   clearStartupCache: vi.fn(),
@@ -183,6 +189,12 @@ beforeEach(() => {
   const settings = workspaceSettings();
   service.getWorkspaceSettings.mockResolvedValue(settings);
   service.readStartupCache.mockResolvedValue(null);
+  service.getWorkspaceBootstrap.mockImplementation(async () =>
+    workspaceBootstrap(
+      await service.getWorkspaceSettings(),
+      await service.readStartupCache(),
+    )
+  );
   service.clearStartupCache.mockResolvedValue(undefined);
   service.writeStartupContributions.mockImplementation(async (contributions) => ({
     workspaceRoot: settings.workspaceRoot,
@@ -233,6 +245,7 @@ beforeEach(() => {
     const taskId = `test-refresh-${++taskIndex}`;
     const kind = request.mode === "remote" ? "repoRemote" : "repoStatus";
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: taskId,
       kind,
       title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
@@ -255,6 +268,7 @@ beforeEach(() => {
           })
         : null;
       applyWorkspaceRepoRefreshed({
+        ...currentWorkspaceContext(),
         taskId,
         repoId: request.repoId,
         mode: request.mode,
@@ -264,6 +278,7 @@ beforeEach(() => {
         trigger: request.trigger,
       });
       applyWorkspaceTaskChanged({
+        ...currentWorkspaceContext(),
         id: taskId,
         kind,
         title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
@@ -277,6 +292,7 @@ beforeEach(() => {
       });
     } catch (err) {
       applyWorkspaceTaskChanged({
+        ...currentWorkspaceContext(),
         id: taskId,
         kind,
         title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
@@ -607,6 +623,7 @@ describe("workspace incremental refresh", () => {
     ]);
 
     applyWorkspaceRepoRefreshed({
+      ...currentWorkspaceContext(),
       taskId: "remote-1",
       repoId: "Repo1",
       mode: "remote",
@@ -723,6 +740,7 @@ describe("workspace incremental refresh", () => {
     const loading = refreshWorkspaceTasks();
     await waitFor(() => expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1));
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: "existing-task",
       kind: "repoStatus",
       title: "刷新仓库状态",
@@ -735,6 +753,7 @@ describe("workspace incremental refresh", () => {
       cancellable: false,
     });
     applyWorkspaceTaskChanged({
+      ...currentWorkspaceContext(),
       id: "new-active-task",
       kind: "repoRemote",
       title: "检查远端更新",

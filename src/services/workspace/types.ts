@@ -1,6 +1,52 @@
 export type SystemOpenTarget = "folder" | "terminal" | "vscode" | "liliacode";
 
+export interface WorkspaceRoot {
+  id: string;
+  path: string;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface WorkspaceViewPreferences {
+  sidebarRepositorySort: string;
+  collapsedGroupIds: string[];
+  homeRepositoryStatusSort: string;
+}
+
+export interface WorkspaceScopedSettings {
+  roots: WorkspaceRoot[];
+  primaryRootId: string | null;
+  viewPreferences: WorkspaceViewPreferences;
+  projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+  repoSyncPreferences: Record<string, RepoSyncPreference>;
+  repoRemoteSyncPolicies: Record<string, RepoRemoteSyncPolicy>;
+  hiddenRepoIds: string[];
+  managedRepoIds: string[];
+  systemGitRepoIds: string[];
+  repoBindings: Record<string, WorkspaceRepositoryBinding>;
+  favoriteRepoIds: string[];
+  repoGroups: WorkspaceRepoGroup[];
+  organizationGroupingResolvedRepoIds: string[];
+  remoteRepoShortcuts: RemoteRepoShortcut[];
+  recentLocalRepos: RecentLocalRepoVisit[];
+  localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+  contributionIdentities: ContributionIdentity[];
+}
+
+export interface NamedWorkspace extends WorkspaceScopedSettings {
+  id: string;
+  name: string;
+}
+
+export interface WorkspaceCatalogEntry {
+  id: string;
+  name: string;
+  roots: WorkspaceRoot[];
+  primaryRootId: string | null;
+}
+
 export interface WorkspaceSettings {
+  /** Compatibility alias for the active workspace's primary root path. */
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
   accountPreferences: AccountPreferences;
@@ -18,6 +64,9 @@ export interface WorkspaceSettings {
   recentLocalRepos: RecentLocalRepoVisit[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
   contributionIdentities: ContributionIdentity[];
+  workspaceCatalog: WorkspaceCatalogEntry[];
+  activeWorkspaceId: string | null;
+  activeWorkspace: NamedWorkspace | null;
 }
 
 export interface RecentLocalRepoVisit {
@@ -28,7 +77,6 @@ export interface RecentLocalRepoVisit {
 export type AccountPreferenceDirection = "asc" | "desc";
 
 export interface AccountPreferences {
-  defaultWorkspaceRoot: string | null;
   repositoryScope: GitHubRepositoryScope;
   repositorySort: {
     key: "name" | "created" | "updated";
@@ -83,10 +131,18 @@ export interface WorkspaceRepositoryBinding {
 }
 
 export interface WorkspaceStartupCache {
+  workspaceId: string | null;
+  rootsFingerprint: string;
   workspaceRoot: string | null;
   bindingLogin: string | null;
   reposById: Record<string, CachedRepoSummary>;
   contributions: CachedContributionResult | null;
+}
+
+export interface WorkspaceBootstrap {
+  settings: WorkspaceSettings;
+  startupCache: WorkspaceStartupCache | null;
+  contextRevision: number;
 }
 
 export interface CachedRepoSummary {
@@ -188,6 +244,8 @@ export interface ProjectLaunchStatus {
   startedAt: number | null;
   exitCode: number | null;
   error: string | null;
+  workspaceId: string | null;
+  contextRevision: number;
 }
 
 export interface ProjectLaunchLog {
@@ -450,6 +508,7 @@ export interface GitHubRepoTemplate {
 
 export interface WorkspaceCreateLocalRepoRequest {
   name: string;
+  rootId?: string | null;
   description?: string | null;
   addReadme: boolean;
   gitignoreTemplate?: string | null;
@@ -466,6 +525,7 @@ export interface WorkspaceCloneRepositoryRef {
 
 export type WorkspaceCloneTarget =
   | { kind: "default" }
+  | { kind: "root"; rootId: string }
   | { kind: "custom"; path: string };
 
 export type WorkspaceRepoPlacement =
@@ -1288,6 +1348,8 @@ export interface WorkspaceRepoRefreshRequest {
 }
 
 export interface WorkspaceRepoRefreshedEvent {
+  workspaceId: string | null;
+  contextRevision: number;
   repoId: string;
   mode: RepoRefreshMode;
   summary: RepoSummary;
@@ -1306,4 +1368,6 @@ export interface WorkspaceTask {
   createdAt: number;
   updatedAt: number;
   cancellable: boolean;
+  workspaceId: string | null;
+  contextRevision: number;
 }

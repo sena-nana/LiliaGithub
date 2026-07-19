@@ -80,6 +80,14 @@ export function closeBulkPreview() {
   state.bulkPreview = null;
 }
 
+export function resetBulkRuntime() {
+  bulkPreviewGeneration += 1;
+  bulkExecutionGeneration += 1;
+  state.bulkPreview = null;
+  state.bulkResults = [];
+  state.bulkRunning = false;
+}
+
 function applyBulkPreview(preview: NonNullable<typeof state.bulkPreview>) {
   state.bulkPreview = preview;
   state.bulkResults = [];

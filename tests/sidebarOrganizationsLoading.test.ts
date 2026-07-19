@@ -27,6 +27,11 @@ const { workspace } = vi.hoisted(() => ({
     githubBinding: { value: null as null | typeof binding },
     isAuthorized: { value: true },
     workspaceRoot: { value: "/tmp/workspace" as string | null },
+    activeWorkspace: { value: null as null | Record<string, unknown> },
+    workspaceCatalog: { value: [] as Record<string, unknown>[] },
+    switchingWorkspace: { value: false },
+    contextRevision: { value: 1 },
+    hasAvailableWorkspaceRoot: { value: true },
     forgetRemoteRepo: vi.fn(async () => undefined),
     setLocalRepoFavorite: vi.fn(async () => undefined),
     setRemoteRepoFavorite: vi.fn(async () => undefined),
@@ -47,7 +52,6 @@ vi.mock("../src/composables/useWorkspace", async () => {
       workspaceRoot: "/tmp/workspace",
       githubBinding: binding,
       accountPreferences: {
-        defaultWorkspaceRoot: null,
         repositoryScope: { kind: "all" },
         repositorySort: { key: "updated", direction: "desc" },
         issues: { state: "open", sort: "updated", direction: "desc" },
@@ -82,6 +86,26 @@ vi.mock("../src/composables/useWorkspace", async () => {
   workspace.githubBinding = ref(binding);
   workspace.isAuthorized = ref(true);
   workspace.workspaceRoot = ref("/tmp/workspace");
+  workspace.activeWorkspace = ref({
+    id: "workspace-default",
+    name: "workspace",
+    roots: [{ id: "root-default", path: "/tmp/workspace", available: true, unavailableReason: null }],
+    primaryRootId: "root-default",
+    viewPreferences: {
+      sidebarRepositorySort: "updated:desc",
+      collapsedGroupIds: [],
+      homeRepositoryStatusSort: "updated:desc",
+    },
+  });
+  workspace.workspaceCatalog = ref([{
+    id: "workspace-default",
+    name: "workspace",
+    roots: [{ id: "root-default", path: "/tmp/workspace", available: true, unavailableReason: null }],
+    primaryRootId: "root-default",
+  }]);
+  workspace.switchingWorkspace = ref(false);
+  workspace.contextRevision = ref(1);
+  workspace.hasAvailableWorkspaceRoot = ref(true);
   return { useWorkspace: () => workspace };
 });
 

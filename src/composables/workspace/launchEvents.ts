@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { state } from "./state";
+import { isCurrentWorkspaceContext, state } from "./state";
 import type { ProjectLaunchStatus } from "../../services/workspace";
 
 export const REPO_LAUNCH_STATUS_EVENT = "repo-launch-status";
@@ -9,12 +9,15 @@ function isLaunchStatus(value: unknown): value is ProjectLaunchStatus {
   const status = value as Partial<ProjectLaunchStatus>;
   return (
     typeof status.repoId === "string" &&
+    (typeof status.workspaceId === "string" || status.workspaceId === null) &&
+    typeof status.contextRevision === "number" &&
     (status.state === "idle" || status.state === "running" || status.state === "exited" || status.state === "error")
   );
 }
 
 export function applyLaunchStatusEvent(payload: unknown) {
   if (!isLaunchStatus(payload)) return;
+  if (!isCurrentWorkspaceContext(payload)) return;
   state.launchStatuses[payload.repoId] = payload;
 }
 

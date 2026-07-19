@@ -9,11 +9,19 @@ export type WorkspaceCommandManifestEntry<TCommand extends WorkspaceCommandName 
 
 export const WORKSPACE_COMMAND_GROUPS = {
   workspace: [
+    "workspace_get_bootstrap",
     "workspace_get_settings",
     "workspace_read_startup_cache",
     "workspace_clear_startup_cache",
     "workspace_write_startup_contributions",
-    "workspace_set_root",
+    "workspace_create",
+    "workspace_rename",
+    "workspace_delete",
+    "workspace_switch",
+    "workspace_add_root",
+    "workspace_remove_root",
+    "workspace_set_primary_root",
+    "workspace_update_view_preferences",
     "workspace_update_account_preferences",
     "workspace_set_contribution_identities",
     "workspace_scan_contribution_identities",

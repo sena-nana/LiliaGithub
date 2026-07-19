@@ -65,6 +65,7 @@ const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
 const createError = ref<string | null>(null);
 const selectedPlacement = ref<WorkspaceRepoPlacement>({ kind: "automatic" });
+const selectedRootId = ref("");
 
 const form = ref({
   owner: "",
@@ -112,6 +113,14 @@ const repoGroupOptions = computed(() => [
       agentId: `repo-create.group.option.${group.id}`,
     })),
 ]);
+const workspaceRootOptions = computed(() => (workspace.activeWorkspace.value?.roots ?? [])
+  .filter((root) => root.available)
+  .map((root) => ({
+    value: root.id,
+    label: root.path,
+    hint: root.id === workspace.activeWorkspace.value?.primaryRootId ? "主 root" : undefined,
+    agentId: `repo-create.root.option.${root.id}`,
+  })));
 const repoOwnerOptions = computed(() =>
   repoOwners.value.map((owner) => ({
     value: owner.login,
@@ -204,6 +213,9 @@ function resetForm() {
   createError.value = null;
   repoOwnersError.value = null;
   selectedPlacement.value = { kind: "automatic" };
+  selectedRootId.value = workspace.activeWorkspace.value?.primaryRootId
+    ?? workspaceRootOptions.value[0]?.value
+    ?? "";
 }
 
 function cancelTemplateLoading() {
@@ -300,6 +312,7 @@ async function submitLocalRepo() {
           addReadme: form.value.addReadme,
           gitignoreTemplate: form.value.gitignoreTemplate || null,
           licenseTemplate: form.value.licenseTemplate || null,
+          rootId: selectedRootId.value || null,
         }));
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       emit("localCreated", repo, selectedPlacement.value.kind === "group" ? selectedPlacement.value.groupId : null);
@@ -330,7 +343,9 @@ async function cloneCreatedRepo() {
             owner: repo.owner ?? null,
           },
           placement: selectedPlacement.value,
-          target: { kind: "default" },
+          target: selectedRootId.value
+            ? { kind: "root", rootId: selectedRootId.value }
+            : { kind: "default" },
         });
         if (!componentEpoch.assertAlive() || !props.open) return clonedRepo;
         emit("remoteCloned", clonedRepo, repo);
@@ -488,6 +503,21 @@ onUnmounted(() => {
           agent-id="repo-create.group.trigger"
           menu-label="选择仓库分组"
           menu-width="240px"
+          :disabled="groupPickerDisabled"
+        />
+      </div>
+
+      <div v-if="workspaceRootOptions.length > 1" class="repo-create-field">
+        <span>目标根目录</span>
+        <Dropdown
+          v-model="selectedRootId"
+          :options="workspaceRootOptions"
+          :icon="FolderInput"
+          placement="bottom"
+          button-class="repo-create-root-picker"
+          agent-id="repo-create.root.trigger"
+          menu-label="选择目标根目录"
+          menu-width="100%"
           :disabled="groupPickerDisabled"
         />
       </div>
@@ -696,6 +726,7 @@ onUnmounted(() => {
 }
 
 :deep(.repo-create-group-picker),
+:deep(.repo-create-root-picker),
 :deep(.repo-create-owner-picker),
 :deep(.repo-create-template-picker) {
   width: 100%;
@@ -706,6 +737,7 @@ onUnmounted(() => {
 }
 
 :deep(.repo-create-group-picker .chat-chip__label),
+:deep(.repo-create-root-picker .chat-chip__label),
 :deep(.repo-create-owner-picker .chat-chip__label),
 :deep(.repo-create-template-picker .dd__button-label) {
   max-width: none;
