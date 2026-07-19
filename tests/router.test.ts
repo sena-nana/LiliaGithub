@@ -874,16 +874,6 @@ describe("基础路由", () => {
     expect(screen.getByRole("img", { name: "本地提交贡献图" })).toBeInTheDocument();
   });
 
-  it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
-    await renderAt("/");
-
-    expect(
-      await screen.findByRole("link", { name: "GitHub 已授权。点击进入设置。" }),
-    ).toHaveAttribute("href", expect.stringContaining("/settings"));
-    expect(screen.getAllByRole("link", { name: "设置" })).toHaveLength(1);
-    expect(screen.queryByRole("link", { name: "扩展" })).toBeNull();
-  });
-
   it("没有 remote 的本地分支不会暴露发布操作", async () => {
     workspaceFallback.setFallbackRepoOverridesForTests({
       LiliaGithub: repoSummary("LiliaGithub", {

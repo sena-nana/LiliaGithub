@@ -3,7 +3,6 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, onUnmounted, ref, shallowRef, watch, type Component } from "vue";
 import {
   ArrowDownAZ,
-  Building2,
   ChevronRight,
   Clock,
   EyeOff,
@@ -15,7 +14,6 @@ import {
   Pin,
   Plus,
   Trash2,
-  UserRound,
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -29,7 +27,6 @@ import WorkspaceSwitcher from "../components/sidebar/WorkspaceSwitcher.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import {
   LiliaSidebarFrame,
   SidebarCollapse,
@@ -167,7 +164,7 @@ const footerStatus = computed(() => {
   return {
     to: "/settings",
     label: workspace.githubBinding.value?.login ?? "GitHub",
-    title: "GitHub 已授权。点击进入设置。",
+    title: "个人与组织主页。悬浮或点击打开。",
     tone: "ok" as const,
     icon: GitPullRequestArrow,
   };
@@ -179,6 +176,20 @@ const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecove
 const githubOrganizationVisibilityMessage = computed(() => githubOrganizationAccessMessage(githubOwners.value));
 const githubOrganizations = computed(() => githubOrganizationOwners(githubOwners.value));
 const githubOrganizationLogins = computed(() => githubOrganizations.value.map((owner) => owner.login));
+const footerAccountMenu = computed(() => {
+  const binding = workspace.githubBinding.value;
+  if (!workspace.isAuthorized.value || !binding) return null;
+  return {
+    login: binding.login,
+    avatarUrl: binding.avatarUrl,
+    organizations: githubOrganizations.value,
+    organizationsLoading: githubOwnersLoading.value,
+    organizationsError: githubOwnersError.value,
+    organizationVisibilityLimited: githubOrganizationVisibilityLimited.value,
+    organizationVisibilityMessage: githubOrganizationVisibilityMessage.value,
+    organizationRecoveryLabel: githubOrganizationRecovery.value.url ? "在 GitHub 授权" : "补充组织权限",
+  };
+});
 
 async function reconcileOrganizationRepoGroups() {
   if (!githubOrganizationLogins.value.length || !workspace.state.settings?.managedRepoIds.length) return;
@@ -895,66 +906,6 @@ async function deleteGroup(group: { id: string }) {
             <span class="sb-tree__name">{{ item.label }}</span>
             <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
           </RouterLink>
-          <template v-if="workspace.githubBinding.value">
-            <RouterLink
-              to="/profile"
-              class="sb-tree__row"
-              data-agent-id="sidebar.profile"
-              exact-active-class="is-active"
-            >
-              <img
-                v-if="workspace.githubBinding.value.avatarUrl"
-                :src="workspace.githubBinding.value.avatarUrl"
-                alt=""
-                class="sb-tree__avatar"
-              />
-              <UserRound v-else :size="14" aria-hidden="true" />
-              <span class="sb-tree__name">{{ workspace.githubBinding.value.login }}</span>
-            </RouterLink>
-            <RouterLink
-              v-for="organization in githubOrganizations"
-              :key="organization.login"
-              :to="{ name: 'github-organization', params: { login: organization.login } }"
-              class="sb-tree__row"
-              active-class="is-active"
-              :data-agent-id="`sidebar.organization.${organization.login}`"
-            >
-              <img
-                v-if="organization.avatarUrl"
-                :src="organization.avatarUrl"
-                alt=""
-                class="sb-tree__avatar"
-              />
-              <Building2 v-else :size="14" aria-hidden="true" />
-              <span class="sb-tree__name">{{ organization.login }}</span>
-              <span v-if="organization.source === 'repository_access'" class="sb-tree__meta">仓库访问</span>
-            </RouterLink>
-            <GitHubRepositoryStateNotice
-              v-if="githubOwnersLoading && !githubOrganizations.length"
-              state="loading"
-              compact
-              message="正在加载组织…"
-              agent-id="sidebar.organizations.loading"
-            />
-            <GitHubRepositoryStateNotice
-              v-else-if="githubOwnersError"
-              state="error"
-              compact
-              retryable
-              :message="githubOwnersError"
-              agent-id="sidebar.organizations.error"
-              @retry="loadSidebarGitHubOwners"
-            />
-            <GitHubRepositoryStateNotice
-              v-if="githubOrganizationVisibilityLimited"
-              state="limited"
-              compact
-              :message="githubOrganizationVisibilityMessage"
-              :action-label="githubOrganizationRecovery.url ? '在 GitHub 授权' : '补充组织权限'"
-              agent-id="sidebar.organizations.limited"
-              @authorize="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
-            />
-          </template>
         </nav>
       </div>
     </template>
@@ -1159,6 +1110,9 @@ async function deleteGroup(group: { id: string }) {
     <template #footer>
       <SidebarFooter
         :status="footerStatus"
+        :account-menu="footerAccountMenu"
+        @retry-organizations="loadSidebarGitHubOwners"
+        @authorize-organizations="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
       />
     </template>
   </LiliaSidebarFrame>
@@ -1212,20 +1166,6 @@ async function deleteGroup(group: { id: string }) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sb-tree__avatar {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.sb-tree__meta {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-size: 10px;
 }
 
 .sb-tree__empty--error {

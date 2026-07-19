@@ -415,12 +415,8 @@ describe("AppShell sidebar", () => {
     expect(within(mainNavigation).queryByRole("link", { name: "通知" })).toBeNull();
     expect(within(mainNavigation).queryByRole("link", { name: "跨仓库" })).toBeNull();
     expect(within(mainNavigation).queryByRole("link", { name: "首页" })).toBeNull();
-    const profileRow = sidebarRowForText(view.container, "lilia-user");
-    expect(profileRow).toHaveAttribute("href", "/profile");
-    const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
-    expect(organizationRow).toHaveAttribute("href", "/organizations/sena-nana");
-    expect(mainNavigation).toContainElement(profileRow);
-    expect(mainNavigation).toContainElement(organizationRow);
+    expect(within(mainNavigation).queryByText("lilia-user")).toBeNull();
+    expect(within(mainNavigation).queryByText("sena-nana")).toBeNull();
     expect(view.container.querySelector(".sb-section--favorites")).toBeInstanceOf(HTMLElement);
     expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();
@@ -432,10 +428,15 @@ describe("AppShell sidebar", () => {
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toBeEnabled();
     expect(view.queryByRole("button", { name: "在 未分组仓库 创建仓库" })).toBeNull();
 
-    await fireEvent.click(profileRow);
-    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/profile"));
-    await fireEvent.click(organizationRow);
-    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana"));
+    const connection = view.container.querySelector('[data-agent-id="sidebar.footer.connection"]');
+    if (!(connection instanceof HTMLElement)) throw new Error("未找到账号菜单入口");
+    await fireEvent.click(connection);
+    const accountMenu = await view.findByRole("menu", { name: "个人与组织主页" });
+    expect(accountMenu).toHaveAttribute("data-agent-id", "sidebar.footer.connection.menu");
+    const profileRow = within(accountMenu).getByRole("menuitem", { name: "lilia-user" });
+    const organizationRow = await within(accountMenu).findByRole("menuitem", { name: "sena-nana" });
+    expect(profileRow).toHaveAttribute("href", "/profile");
+    expect(organizationRow).toHaveAttribute("href", "/organizations/sena-nana");
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
@@ -514,15 +515,16 @@ describe("AppShell sidebar", () => {
     const mainNav = view.getByRole("navigation", { name: "主导航" });
     const footerSettings = view.container.querySelector('[data-agent-id="sidebar.footer.settings"]');
     const footerConnection = view.container.querySelector('[data-agent-id="sidebar.footer.connection"]');
-    const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
 
     expect(top).toContainElement(mainNav);
-    expect(mainNav).toContainElement(organizationRow);
-    expect(body).not.toContainElement(organizationRow);
+    expect(mainNav.querySelector('[data-agent-id="sidebar.profile"]')).toBeNull();
+    expect(mainNav.querySelector('[data-agent-id^="sidebar.organization."]')).toBeNull();
     expect(body).toContainElement(sidebarGroupForText(view.container, "未分组仓库", 120));
     expect(body).toContainElement(sidebarRowForText(view.container, "Repo-001"));
     expect(footer).toContainElement(footerSettings);
     expect(footer).toContainElement(footerConnection);
+    expect(view.getAllByRole("link", { name: "设置" })).toHaveLength(1);
+    expect(view.queryByRole("link", { name: "扩展" })).toBeNull();
     expect(body).not.toContainElement(mainNav);
     expect(body).not.toContainElement(footerSettings);
 
