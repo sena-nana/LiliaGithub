@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
@@ -120,6 +120,43 @@ vi.mock("../src/composables/workspace/state", async (importOriginal) => {
 
 const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
 
+async function renderPanel() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/", component: { template: "<div />" } },
+      { path: "/profile", component: { template: "<div />" } },
+      { path: "/organizations/:login", name: "github-organization", component: { template: "<div />" } },
+      { path: "/settings", component: { template: "<div />" } },
+      { path: "/repos/:repoId(.*)", component: { template: "<div />" } },
+    ],
+  });
+  await router.push("/");
+  await router.isReady();
+  render(SecondaryPanel, {
+    global: { plugins: [router, liliaContextMenuPlugin] },
+  });
+}
+
+async function openAccountMenu() {
+  const connection = document.querySelector('[data-agent-id="sidebar.footer.connection"]');
+  if (!(connection instanceof HTMLElement)) throw new Error("未找到账号菜单入口");
+  await fireEvent.click(connection);
+  return screen.findByRole("menu", { name: "个人与组织主页" });
+}
+
+const resolvedOwners: GitHubRepoOwner[] = [
+  {
+    login: "alpha-org",
+    kind: "organization",
+    avatarUrl: null,
+    membershipVisible: true,
+    membershipComplete: true,
+    repositoryAccessVisible: false,
+    source: "membership",
+  },
+];
+
 describe("侧边栏组织加载", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -130,46 +167,57 @@ describe("侧边栏组织加载", () => {
     const pending = deferred<GitHubRepoOwner[]>();
     workspace.getAccountRepositoryOwners.mockReturnValue(pending.promise);
 
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { path: "/", component: { template: "<div />" } },
-        { path: "/profile", component: { template: "<div />" } },
-        { path: "/organizations/:login", name: "github-organization", component: { template: "<div />" } },
-        { path: "/settings", component: { template: "<div />" } },
-        { path: "/repos/:repoId(.*)", component: { template: "<div />" } },
-      ],
-    });
-    await router.push("/");
-    await router.isReady();
-    const view = render(SecondaryPanel, {
-      global: { plugins: [router, liliaContextMenuPlugin] },
-    });
+    await renderPanel();
+    const menu = await openAccountMenu();
 
-    await waitFor(() => expect(view.getByText("正在加载组织…")).toBeInTheDocument());
+    await waitFor(() => expect(within(menu).getByText("正在加载组织…")).toBeInTheDocument());
     invalidateSessionContextSnapshot();
-    pending.resolve([
-      {
-        login: "octocat",
-        kind: "user",
-        avatarUrl: null,
-        membershipVisible: true,
-        membershipComplete: true,
-        repositoryAccessVisible: true,
-        source: "authenticated_user",
-      },
-      {
-        login: "alpha-org",
-        kind: "organization",
-        avatarUrl: null,
-        membershipVisible: true,
-        membershipComplete: true,
-        repositoryAccessVisible: false,
-        source: "membership",
-      },
-    ]);
+    pending.resolve(resolvedOwners);
 
-    await waitFor(() => expect(view.queryByText("正在加载组织…")).toBeNull());
-    expect(view.container.querySelector('[data-agent-id="sidebar.organization.alpha-org"]')).toBeTruthy();
+    await waitFor(() => expect(within(menu).queryByText("正在加载组织…")).toBeNull());
+    expect(await within(menu).findByRole("menuitem", { name: "alpha-org" }))
+      .toHaveAttribute("data-agent-id", "sidebar.organization.alpha-org");
+  });
+
+  it("组织加载失败后可在账户菜单重试", async () => {
+    workspace.getAccountRepositoryOwners
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(resolvedOwners);
+
+    await renderPanel();
+    const menu = await openAccountMenu();
+    const error = await within(menu).findByRole("alert");
+    expect(error).toHaveTextContent("账号与组织加载失败：network down");
+
+    await fireEvent.click(within(error).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => expect(workspace.getAccountRepositoryOwners).toHaveBeenCalledTimes(2));
+    expect(await within(menu).findByRole("menuitem", { name: "alpha-org" }))
+      .toHaveAttribute("href", "/organizations/alpha-org");
+    expect(within(menu).queryByRole("alert")).toBeNull();
+  });
+
+  it("组织权限受限时从账户菜单打开 GitHub 授权", async () => {
+    const recoveryUrl = "https://github.com/orgs/locked-org/sso";
+    workspace.getAccountRepositoryOwners.mockResolvedValueOnce([{
+      login: "locked-org",
+      kind: "organization",
+      avatarUrl: null,
+      membershipVisible: false,
+      membershipComplete: false,
+      membershipRestriction: "sso_required",
+      membershipRecoveryUrl: recoveryUrl,
+      repositoryAccessVisible: true,
+      source: "repository_access",
+    } satisfies GitHubRepoOwner]);
+
+    await renderPanel();
+    const menu = await openAccountMenu();
+    const authorize = await within(menu).findByRole("button", { name: "在 GitHub 授权" });
+    expect(authorize).toHaveAttribute("data-agent-id", "sidebar.organizations.limited.authorize");
+
+    await fireEvent.click(authorize);
+
+    await waitFor(() => expect(workspace.openUrl).toHaveBeenCalledWith(recoveryUrl));
   });
 });

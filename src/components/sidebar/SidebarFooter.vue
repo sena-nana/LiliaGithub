@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Clock3, ListChecks, LoaderCircle, Settings } from "@lucide/vue";
+import { Building2, Clock3, ListChecks, LoaderCircle, Settings, UserRound } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import {
   SB_MENU_POP_TRANSITION_MS,
@@ -8,18 +8,42 @@ import {
   type LiliaSidebarConfigInput,
 } from "../../ui";
 import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
+import type { GitHubRepoOwner } from "../../services/workspace";
+import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";
 
 type SidebarFooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatuses"]>[number];
 
-defineProps<{
+interface SidebarFooterAccountMenu {
+  login: string;
+  avatarUrl: string | null;
+  organizations: readonly GitHubRepoOwner[];
+  organizationsLoading: boolean;
+  organizationsError: string | null;
+  organizationVisibilityLimited: boolean;
+  organizationVisibilityMessage: string;
+  organizationRecoveryLabel: string;
+}
+
+const props = withDefaults(defineProps<{
   status: SidebarFooterStatus;
+  accountMenu?: SidebarFooterAccountMenu | null;
+}>(), {
+  accountMenu: null,
+});
+
+const emit = defineEmits<{
+  retryOrganizations: [];
+  authorizeOrganizations: [];
 }>();
 
 const { tasks } = useBackgroundTasks();
 const tasksOpen = ref(false);
+const accountOpen = ref(false);
 const placement = computed(() => "top" as const);
-const menuMotion = useAnchoredMenuMotion(tasksOpen, placement);
-const menuStyle = computed(() => menuMotion.overlayStyle.value);
+const tasksMenuMotion = useAnchoredMenuMotion(tasksOpen, placement);
+const accountMenuMotion = useAnchoredMenuMotion(accountOpen, placement);
+const tasksMenuStyle = computed(() => tasksMenuMotion.overlayStyle.value);
+const accountMenuStyle = computed(() => accountMenuMotion.overlayStyle.value);
 let closeTimer: number | null = null;
 
 const taskStatusDisplay = {
@@ -38,51 +62,71 @@ function clearCloseTimer() {
   }
 }
 
-function openTasks(event?: MouseEvent) {
+function closeMenus() {
   clearCloseTimer();
-  if (event) menuMotion.captureAnchor(event);
+  tasksOpen.value = false;
+  accountOpen.value = false;
+}
+
+function openTasks(event?: MouseEvent) {
+  closeMenus();
+  if (event) tasksMenuMotion.captureAnchor(event);
   tasksOpen.value = true;
+}
+
+function openAccount(event?: MouseEvent) {
+  if (!props.accountMenu) return;
+  closeMenus();
+  if (event) accountMenuMotion.captureAnchor(event);
+  accountOpen.value = true;
 }
 
 function scheduleClose() {
   clearCloseTimer();
-  closeTimer = window.setTimeout(() => {
-    tasksOpen.value = false;
-  }, 120);
+  closeTimer = window.setTimeout(closeMenus, 120);
 }
 
-function closeTasks() {
-  clearCloseTimer();
-  tasksOpen.value = false;
-}
-
-function onTaskKeydown(event: KeyboardEvent) {
+function onMenuKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
-  closeTasks();
+  closeMenus();
   event.stopPropagation();
 }
 
-watch(tasksOpen, async (open) => {
-  if (open) {
-    await menuMotion.updatePosition();
-    document.addEventListener("keydown", onTaskKeydown);
-  } else {
-    menuMotion.clearAnchor();
-    document.removeEventListener("keydown", onTaskKeydown);
-  }
+watch(tasksOpen, (open) => {
+  if (!open) tasksMenuMotion.clearAnchor();
 });
+
+watch(accountOpen, (open) => {
+  if (!open) accountMenuMotion.clearAnchor();
+});
+
+watch(
+  () => tasksOpen.value || accountOpen.value,
+  (open) => {
+    if (open) document.addEventListener("keydown", onMenuKeydown);
+    else document.removeEventListener("keydown", onMenuKeydown);
+  },
+);
 
 watch(
   () => tasks.value.length,
   () => {
     if (!tasksOpen.value) return;
-    void menuMotion.updatePosition();
+    void tasksMenuMotion.updatePosition();
+  },
+);
+
+watch(
+  () => props.accountMenu,
+  (accountMenu) => {
+    if (!accountMenu && accountOpen.value) closeMenus();
+    else if (accountOpen.value) void accountMenuMotion.updatePosition();
   },
 );
 
 onBeforeUnmount(() => {
   clearCloseTimer();
-  document.removeEventListener("keydown", onTaskKeydown);
+  document.removeEventListener("keydown", onMenuKeydown);
 });
 </script>
 
@@ -107,7 +151,7 @@ onBeforeUnmount(() => {
       @focusout="scheduleClose"
     >
       <button
-        :ref="menuMotion.triggerEl"
+        :ref="tasksMenuMotion.triggerEl"
         type="button"
         class="sb-footer__btn sb-tasks__btn"
         data-agent-id="sidebar.footer.tasks"
@@ -132,12 +176,12 @@ onBeforeUnmount(() => {
         <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
           <div
             v-if="tasksOpen"
-            :ref="menuMotion.menuEl"
-            class="sb-tasks__menu"
+            :ref="tasksMenuMotion.menuEl"
+            class="sb-footer-menu sb-tasks__menu"
             role="menu"
             aria-label="后台任务"
             data-agent-id="sidebar.footer.tasks.menu"
-            :style="menuStyle"
+            :style="tasksMenuStyle"
             @mouseenter="clearCloseTimer"
             @mouseleave="scheduleClose"
           >
@@ -175,7 +219,117 @@ onBeforeUnmount(() => {
       </Teleport>
     </div>
 
+    <div
+      v-if="accountMenu"
+      class="sb-account"
+      @mouseenter="openAccount($event)"
+      @mouseleave="scheduleClose"
+      @focusin="openAccount()"
+      @focusout="scheduleClose"
+    >
+      <button
+        :ref="accountMenuMotion.triggerEl"
+        type="button"
+        class="sb-conn"
+        data-agent-id="sidebar.footer.connection"
+        :class="`sb-conn--${status.tone}`"
+        :title="status.title"
+        :aria-label="status.title"
+        :aria-expanded="accountOpen"
+        aria-haspopup="menu"
+        aria-controls="sidebar-footer-account-menu"
+        @mouseenter="openAccount($event)"
+        @click="openAccount($event)"
+      >
+        <component :is="status.icon" :size="12" aria-hidden="true" />
+        <span class="sb-conn__label">{{ status.label }}</span>
+      </button>
+
+      <Teleport to="body">
+        <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
+          <div
+            v-if="accountOpen"
+            id="sidebar-footer-account-menu"
+            :ref="accountMenuMotion.menuEl"
+            class="sb-footer-menu sb-account__menu"
+            role="menu"
+            aria-label="个人与组织主页"
+            data-agent-id="sidebar.footer.connection.menu"
+            :style="accountMenuStyle"
+            @mouseenter="clearCloseTimer"
+            @mouseleave="scheduleClose"
+            @focusin="clearCloseTimer"
+            @focusout="scheduleClose"
+          >
+            <RouterLink
+              to="/profile"
+              class="sb-account__item"
+              role="menuitem"
+              data-agent-id="sidebar.profile"
+              exact-active-class="is-active"
+              @click="closeMenus"
+            >
+              <img
+                v-if="accountMenu.avatarUrl"
+                :src="accountMenu.avatarUrl"
+                alt=""
+                class="sb-account__avatar"
+              />
+              <UserRound v-else :size="14" aria-hidden="true" />
+              <span class="sb-account__label">{{ accountMenu.login }}</span>
+            </RouterLink>
+            <RouterLink
+              v-for="organization in accountMenu.organizations"
+              :key="organization.login"
+              :to="{ name: 'github-organization', params: { login: organization.login } }"
+              class="sb-account__item"
+              role="menuitem"
+              active-class="is-active"
+              :data-agent-id="`sidebar.organization.${organization.login}`"
+              @click="closeMenus"
+            >
+              <img
+                v-if="organization.avatarUrl"
+                :src="organization.avatarUrl"
+                alt=""
+                class="sb-account__avatar"
+              />
+              <Building2 v-else :size="14" aria-hidden="true" />
+              <span class="sb-account__label">{{ organization.login }}</span>
+              <span v-if="organization.source === 'repository_access'" class="sb-account__meta">仓库访问</span>
+            </RouterLink>
+            <GitHubRepositoryStateNotice
+              v-if="accountMenu.organizationsLoading && !accountMenu.organizations.length"
+              state="loading"
+              compact
+              message="正在加载组织…"
+              agent-id="sidebar.organizations.loading"
+            />
+            <GitHubRepositoryStateNotice
+              v-else-if="accountMenu.organizationsError"
+              state="error"
+              compact
+              retryable
+              :message="accountMenu.organizationsError"
+              agent-id="sidebar.organizations.error"
+              @retry="emit('retryOrganizations')"
+            />
+            <GitHubRepositoryStateNotice
+              v-if="accountMenu.organizationVisibilityLimited"
+              state="limited"
+              compact
+              :message="accountMenu.organizationVisibilityMessage"
+              :action-label="accountMenu.organizationRecoveryLabel"
+              agent-id="sidebar.organizations.limited"
+              @authorize="emit('authorizeOrganizations')"
+            />
+          </div>
+        </Transition>
+      </Teleport>
+    </div>
+
     <RouterLink
+      v-else
       :to="status.to"
       class="sb-conn"
       data-agent-id="sidebar.footer.connection"
@@ -235,7 +389,8 @@ onBeforeUnmount(() => {
   color: var(--lilia-state-foreground-selected);
 }
 
-.sb-tasks {
+.sb-tasks,
+.sb-account {
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -264,13 +419,11 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.sb-tasks__menu {
+.sb-footer-menu {
   position: fixed;
   left: 0;
   top: 0;
   z-index: var(--z-dropdown, 1900);
-  width: 280px;
-  max-width: min(280px, calc(100vw - 16px));
   max-height: min(360px, calc(100vh - 24px));
   overflow: auto;
   padding: 4px;
@@ -281,6 +434,69 @@ onBeforeUnmount(() => {
   contain: layout paint style;
   transform-origin: var(--sb-menu-origin-x, 0) var(--sb-menu-origin-y, 100%);
   will-change: transform, opacity;
+}
+
+.sb-tasks__menu {
+  width: 280px;
+  max-width: min(280px, calc(100vw - 16px));
+}
+
+.sb-account__menu {
+  width: 220px;
+  max-width: min(220px, calc(100vw - 16px));
+}
+
+.sb-account__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.sb-account__item:hover,
+.sb-account__item:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+  outline: none;
+}
+
+.sb-account__item.is-active {
+  background: var(--lilia-state-layer-selected);
+  color: var(--lilia-state-foreground-selected);
+}
+
+.sb-account__avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.sb-account__label,
+.sb-conn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-account__meta {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sb-account__menu :deep(.github-repository-state) {
+  margin-top: 4px;
 }
 
 .sb-tasks__empty {
@@ -357,6 +573,7 @@ onBeforeUnmount(() => {
 }
 
 .sb-conn {
+  border: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -367,9 +584,11 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.2px;
+  font-family: inherit;
   text-decoration: none;
   min-width: 0;
   opacity: 0.62;
+  cursor: pointer;
   transition: opacity 0.35s ease, background-color 0.12s ease, color 0.12s ease;
 }
 
@@ -395,10 +614,4 @@ onBeforeUnmount(() => {
   opacity: 0.9;
 }
 
-.sb-conn__label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 </style>
