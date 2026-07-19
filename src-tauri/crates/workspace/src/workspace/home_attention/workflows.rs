@@ -1,4 +1,6 @@
-use lilia_github_contracts::discovery::{GitHubDiscoveryFailedWorkflowRun, GitHubDiscoverySection};
+use lilia_github_contracts::home_attention::{
+    GitHubHomeAttentionFailedWorkflowRun, GitHubHomeAttentionSection,
+};
 use lilia_github_contracts::workspace::GitHubWorkflowRun;
 
 use super::aggregate::{aggregate_repositories, RepositoryItems, SOURCE_PAGE_SIZE};
@@ -11,7 +13,7 @@ pub(super) async fn scan_failed_workflows(
     app: AppHandle,
     repositories: Vec<String>,
     force_refresh: Option<bool>,
-) -> GitHubDiscoverySection<GitHubDiscoveryFailedWorkflowRun> {
+) -> GitHubHomeAttentionSection<GitHubHomeAttentionFailedWorkflowRun> {
     let now = now_millis() / 1_000;
     let mut section = aggregate_repositories(repositories, move |repo_full_name| {
         let app = app.clone();
@@ -28,7 +30,7 @@ pub(super) async fn scan_failed_workflows(
                 items: runs
                     .into_iter()
                     .filter(|run| is_recent_actionable_workflow(run, now))
-                    .map(|run| GitHubDiscoveryFailedWorkflowRun {
+                    .map(|run| GitHubHomeAttentionFailedWorkflowRun {
                         repo_full_name: repo_full_name.clone(),
                         run,
                     })
@@ -39,7 +41,14 @@ pub(super) async fn scan_failed_workflows(
     })
     .await;
     section.items.sort_by(|left, right| {
-        timestamp(&right.run.updated_at).cmp(&timestamp(&left.run.updated_at))
+        timestamp(&right.run.updated_at)
+            .cmp(&timestamp(&left.run.updated_at))
+            .then_with(|| {
+                left.repo_full_name
+                    .to_ascii_lowercase()
+                    .cmp(&right.repo_full_name.to_ascii_lowercase())
+            })
+            .then_with(|| left.run.id.cmp(&right.run.id))
     });
     section
 }

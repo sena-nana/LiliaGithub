@@ -60,10 +60,10 @@ macro_rules! delegate_dialog_command {
 mod bulk;
 mod code_review;
 mod conversations;
-mod discovery;
 mod file_browser;
 mod github;
 mod github_discussions;
+mod home_attention;
 mod launch;
 mod notifications;
 mod refresh;
@@ -249,9 +249,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_record_recent_local_repo,
         tasks::workspace_list_tasks,
         tasks::workspace_cancel_task,
-        discovery::github_discovery_get_repository_status,
-        discovery::github_discovery_scan,
-        discovery::github_discovery_submit_pull_request_review,
+        home_attention::github_list_home_attention,
         github::github_get_binding_status,
         github::github_get_account_profile,
         github::github_get_account_readme,
@@ -267,7 +265,6 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_update_repo_subscription,
         github::github_list_account_issues,
         github::github_list_action_notifications,
-        github::github_list_assigned_work,
         notifications::github_list_notifications,
         notifications::github_mark_notifications_read,
         notifications::github_unsubscribe_notification,

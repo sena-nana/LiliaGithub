@@ -81,7 +81,7 @@ describe("LiliaCode task handoff builders", () => {
     const handoff = buildWorkflowFailureHandoff({
       repository,
       run,
-      sourceRoute: "/discovery?workflow=77",
+      sourceRoute: "/repos/repo-1?projectTab=actions&run=77",
       logSummary: "typecheck failed in src/render.ts",
       relatedFiles: ["src/render.ts", "src/render.ts"],
     });

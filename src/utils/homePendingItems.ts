@@ -8,14 +8,18 @@ import type {
   RepoSummary,
 } from "../services/workspace";
 import type { RepoSyncIssueDisplay } from "../composables/workspace/state";
+import type {
+  HomeAttentionFailedWorkflowRun,
+  HomeAttentionPendingPullRequest,
+} from "../services/homeAttention/types";
 import { type WorkflowRunTone } from "./repoDisplay";
 
-export type HomePendingItemKind = "operation" | "issue" | "pull" | "workflow";
+export type HomePendingItemKind = "operation" | "issue" | "pull" | "review" | "workflow";
 
 export type HomePendingItemTarget = {
   kind: "repo";
   repoId: string;
-  view?: "conflicts";
+  view?: "changes" | "conflicts";
 } | {
   kind: "issue";
   repoFullName: string;
@@ -49,19 +53,24 @@ export type HomePendingItem = {
 };
 
 export type HomePendingRepoSource = {
-  githubRepo: GitHubRepoSummary;
+  githubRepo: Pick<GitHubRepoSummary, "fullName" | "updatedAt">;
   localRepo: RepoSummary | null;
   syncIssue: RepoSyncIssueDisplay | null;
   issues: readonly GitHubIssue[];
   pullRequests: readonly GitHubPullRequest[];
   pullRequestChecksByPull: Record<number, readonly GitHubPullRequestCheck[] | undefined> | undefined;
   actionNotifications: readonly GitHubActionNotification[];
+  attentionPullRequests: readonly HomeAttentionPendingPullRequest[];
+  failedWorkflows: readonly HomeAttentionFailedWorkflowRun[];
 };
 
 const PRIORITY_OPERATION_ERROR = 500;
 const PRIORITY_WORKFLOW_ERROR = 480;
+const PRIORITY_REVIEW_REQUEST = 470;
 const PRIORITY_PULL_CHECK_ERROR = 460;
 const PRIORITY_CONFLICT = 440;
+const PRIORITY_ASSIGNED_PULL = 400;
+const PRIORITY_LOCAL_CHANGES = 380;
 const PRIORITY_PULL_CHECK_PENDING = 360;
 const PRIORITY_PULL_OPEN = 320;
 const PRIORITY_ISSUE_OPEN = 260;
@@ -122,11 +131,12 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
   }
 
   if (localRepo && localRepo.conflictCount > 0) {
+    const dirty = localRepoDirtyCount(localRepo);
     items.push({
       id: `operation-conflict:${localRepo.id}:${localRepo.conflictCount}`,
       kind: "operation",
       title: "冲突待处理",
-      detail: `${localRepo.conflictCount} 个冲突文件`,
+      detail: `${localRepo.conflictCount} 个冲突文件${dirty ? `，另有 ${dirty} 项本地改动` : ""}`,
       summary: githubRepo.fullName,
       timestamp: repoPendingTimestamp(githubRepo, localRepo),
       priority: PRIORITY_CONFLICT,
@@ -135,9 +145,25 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     });
   }
 
+  const failedWorkflowRunIds = new Set(source.failedWorkflows.map(({ run }) => run.id));
+  for (const { run } of source.failedWorkflows) {
+    items.push({
+      id: `workflow-run:${githubRepo.fullName}:${run.id}`,
+      kind: "workflow",
+      title: "Workflow 失败",
+      detail: run.displayTitle || run.name,
+      summary: `${githubRepo.fullName} · ${run.branch || "默认分支"} · ${run.conclusion ?? "失败"}`,
+      timestamp: parseGitHubTime(run.updatedAt || run.createdAt),
+      priority: PRIORITY_WORKFLOW_ERROR,
+      target: { kind: "workflow", repoFullName: githubRepo.fullName, localRepoId, runId: run.id },
+      tone: "error",
+    });
+  }
+
   for (const notification of source.actionNotifications) {
     const tone = actionNotificationTone(notification);
     const runId = actionNotificationRunId(notification);
+    if (runId != null && failedWorkflowRunIds.has(runId)) continue;
     items.push({
       id: `workflow-notification:${notification.id}`,
       kind: "workflow",
@@ -151,8 +177,35 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     });
   }
 
+  const attentionPullRequests = new Map(
+    source.attentionPullRequests.map((entry) => [entry.pullRequest.number, entry]),
+  );
+  for (const { pullRequest, reasons } of attentionPullRequests.values()) {
+    if (!isOpenActionablePullRequest(pullRequest)) continue;
+    const reviewRequested = reasons.includes("review_requested");
+    items.push({
+      id: `${reviewRequested ? "review-request" : "assigned-pull"}:${githubRepo.fullName}:${pullRequest.number}`,
+      kind: reviewRequested ? "review" : "pull",
+      title: `${reviewRequested ? "Review 请求" : "已分配"} · PR #${pullRequest.number}`,
+      detail: pullRequest.title,
+      summary: `${githubRepo.fullName} · ${reviewRequested ? "等待你的 Review" : "已分配给你"}`,
+      timestamp: parseGitHubTime(pullRequest.updatedAt),
+      priority: reviewRequested ? PRIORITY_REVIEW_REQUEST : PRIORITY_ASSIGNED_PULL,
+      target: {
+        kind: "pull",
+        repoFullName: githubRepo.fullName,
+        localRepoId,
+        number: pullRequest.number,
+        state: pullRequest.state,
+        merged: pullRequest.merged,
+      },
+      tone: reviewRequested ? "warn" : undefined,
+    });
+  }
+
   for (const pullRequest of source.pullRequests) {
     if (!isOpenActionablePullRequest(pullRequest)) continue;
+    if (attentionPullRequests.has(pullRequest.number)) continue;
     const checks = source.pullRequestChecksByPull?.[pullRequest.number] ?? [];
     const checksOverview = pullRequestChecksOverview(checks);
     items.push({
@@ -173,6 +226,23 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       },
       tone: checksOverview.tone,
     });
+  }
+
+  if (localRepo && localRepo.conflictCount === 0) {
+    const dirty = localRepoDirtyCount(localRepo);
+    if (dirty > 0) {
+      items.push({
+        id: `operation-local-changes:${localRepo.id}:${localRevision(localRepo)}`,
+        kind: "operation",
+        title: "本地改动待处理",
+        detail: `${dirty} 项未提交改动`,
+        summary: githubRepo.fullName,
+        timestamp: repoPendingTimestamp(githubRepo, localRepo),
+        priority: PRIORITY_LOCAL_CHANGES,
+        target: { kind: "repo", repoId: localRepo.id, view: "changes" },
+        tone: "warn",
+      });
+    }
   }
 
   for (const issue of source.issues) {
@@ -226,6 +296,14 @@ function isOpenActionablePullRequest(pullRequest: GitHubPullRequest) {
   return pullRequest.state === "open" && !pullRequest.merged && !pullRequest.draft;
 }
 
+function localRepoDirtyCount(repo: RepoSummary) {
+  return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+}
+
+function localRevision(repo: RepoSummary) {
+  return `${repo.currentBranch ?? ""}:${repo.stagedCount}:${repo.unstagedCount}:${repo.untrackedCount}`;
+}
+
 function pullRequestPriority(tone: WorkflowRunTone | undefined) {
   if (tone === "error") return PRIORITY_PULL_CHECK_ERROR;
   if (tone === "warn") return PRIORITY_PULL_CHECK_PENDING;
@@ -271,8 +349,13 @@ function formatCheckNames(checks: readonly GitHubPullRequestCheck[]) {
   return `${names.join("、") || `${checks.length} 项`}${suffix}`;
 }
 
-function repoPendingTimestamp(githubRepo: GitHubRepoSummary, localRepo: RepoSummary) {
-  return localRepo.lastCommitAt ? localRepo.lastCommitAt * 1000 : parseGitHubTime(githubRepo.updatedAt);
+function repoPendingTimestamp(
+  githubRepo: Pick<GitHubRepoSummary, "updatedAt">,
+  localRepo: RepoSummary,
+) {
+  return localRepo.lastCommitAt
+    ? localRepo.lastCommitAt * 1000
+    : parseGitHubTime(githubRepo.updatedAt) || 1;
 }
 
 function parseGitHubTime(value: string | null | undefined) {

@@ -8,7 +8,6 @@ import {
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
-import { recordRepositoryBranchContext } from "../services/controlCenter";
 import { useWorkspace } from "./useWorkspace";
 import { repoSyncIssueForRepo } from "./workspace/state";
 import {
@@ -534,7 +533,6 @@ export function useRepoDetailController() {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         await workspace.recordRecentLocalRepo(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-        if (summary.value) recordRepositoryBranchContext(summary.value, route.fullPath);
         syncFocusedChange();
         markActiveRepoLocalReady(targetRepoId);
       } catch (err) {

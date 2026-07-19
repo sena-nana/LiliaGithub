@@ -64,6 +64,11 @@ import {
   type WorkspaceSettings,
 } from "../services/workspace";
 import { clearGitHubRepoCache } from "../services/workspace/cache";
+import {
+  listGitHubHomeAttention,
+  mergeHomeAttentionResult,
+  type HomeAttentionResult,
+} from "../services/homeAttention";
 import { isGitHubBindingExpiredError } from "../utils/githubErrors";
 import {
   clearHomeGitHubOverviewSnapshot,
@@ -306,6 +311,10 @@ const githubAccountIssuesLoading = ref(false);
 const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
+const homeAttentionResult = shallowRef<HomeAttentionResult | null>(null);
+const homeAttentionLoadedKey = ref("");
+const homeAttentionLoading = ref(false);
+const homeAttentionError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
 const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction } | null>(null);
 const cloningFullNames = reactive(new Set<string>());
@@ -713,34 +722,53 @@ const homeTimelineAccountIssuesPending = computed(() =>
 const homeTimelineActionNotificationsPending = computed(() =>
   homeTimelineRepos.value.some((repo) => overviewActionNotificationsByRepo.value[repo.fullName] == null),
 );
-function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary | null) {
-  const syncIssue = localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
-  return Boolean(
-    syncIssue ||
-    (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0 || localRepo.conflictCount > 0)) ||
-    overviewIssuesByRepo.value[repo.fullName]?.length ||
-    overviewPullRequestsByRepo.value[repo.fullName]?.length ||
-    overviewActionNotificationsByRepo.value[repo.fullName]?.length
-  );
+const homeAttentionPullRequestsByRepo = computed(() => groupHomeAttentionItemsByRepo(
+  homeAttentionResult.value?.pendingPullRequests.items ?? [],
+));
+const homeAttentionFailedWorkflowsByRepo = computed(() => groupHomeAttentionItemsByRepo(
+  homeAttentionResult.value?.failedWorkflows.items ?? [],
+));
+function groupHomeAttentionItemsByRepo<T extends { repoFullName: string }>(items: readonly T[]) {
+  return items.reduce<Record<string, T[]>>((grouped, item) => {
+    (grouped[item.repoFullName] ??= []).push(item);
+    return grouped;
+  }, {});
 }
 
 function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
-  return homeTimelineRepos.value
-    .filter((githubRepo) => {
-      const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
-      return hasHomeTimelineRepoData(githubRepo, localRepo);
-    })
-    .map((githubRepo) => {
-      return {
-        githubRepo,
-        localRepo: localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null,
-        syncIssue: repoSyncIssueForTimeline(githubRepo),
-        issues: overviewIssuesByRepo.value[githubRepo.fullName] ?? [],
-        pullRequests: overviewPullRequestsByRepo.value[githubRepo.fullName] ?? [],
-        pullRequestChecksByPull: undefined,
-        actionNotifications: overviewActionNotificationsByRepo.value[githubRepo.fullName] ?? [],
-      };
-    });
+  const remoteSources = homeTimelineRepos.value
+    .map((githubRepo) => ({
+      githubRepo,
+      localRepo: localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null,
+      syncIssue: repoSyncIssueForTimeline(githubRepo),
+      issues: overviewIssuesByRepo.value[githubRepo.fullName] ?? [],
+      pullRequests: overviewPullRequestsByRepo.value[githubRepo.fullName] ?? [],
+      pullRequestChecksByPull: undefined,
+      actionNotifications: overviewActionNotificationsByRepo.value[githubRepo.fullName] ?? [],
+      attentionPullRequests: homeAttentionPullRequestsByRepo.value[githubRepo.fullName] ?? [],
+      failedWorkflows: homeAttentionFailedWorkflowsByRepo.value[githubRepo.fullName] ?? [],
+    }));
+  const remoteNames = new Set(remoteSources.map(({ githubRepo }) => githubRepositoryIdentityKey(githubRepo.fullName)));
+  const localSources = overviewStatusRepos.value.flatMap((localRepo): HomePendingRepoSource[] => {
+    const fullName = localRepo.githubFullName || localRepo.name;
+    if (remoteNames.has(githubRepositoryIdentityKey(fullName))) return [];
+    if (!repoCalculatesHomeTimeline(homeOverviewSnapshot.value?.settings ?? null, localRepo.id)) return [];
+    return [{
+      githubRepo: {
+        fullName,
+        updatedAt: new Date(Math.max(0, localRepo.lastCommitAt ?? 0) * 1000).toISOString(),
+      },
+      localRepo,
+      syncIssue: overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null,
+      issues: [],
+      pullRequests: [],
+      pullRequestChecksByPull: undefined,
+      actionNotifications: [],
+      attentionPullRequests: [],
+      failedWorkflows: [],
+    }];
+  });
+  return [...remoteSources, ...localSources];
 }
 
 const homePendingRows = computed<HomePendingRow[]>(() =>
@@ -751,12 +779,15 @@ const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
   githubAccountIssuesLoading.value ||
   githubActionNotificationsLoading.value ||
+  homeAttentionLoading.value ||
   homeTimelineAccountIssuesPending.value ||
   homeTimelineActionNotificationsPending.value,
 );
+const homePendingError = computed(() => githubTimelineError.value || homeAttentionError.value);
 
 let githubPendingGeneration = 0;
 let githubAccountIssuesGeneration = 0;
+let homeAttentionGeneration = 0;
 watch(
   () => repoStatusRows.value.length,
   (length, previousLength) => {
@@ -915,7 +946,7 @@ function applyGitHubRepoPage(
   rememberGitHubScopePage();
   commitHomeOverviewSnapshotFromGitHubState();
   writeGitHubRepoOverviewSnapshot();
-  prepareGitHubTimeline(page.items, refreshIssues);
+  prepareGitHubTimeline(githubRepos.value, refreshIssues);
 }
 
 async function loadGitHubRepoOwners() {
@@ -942,6 +973,7 @@ async function loadGitHubRepoOwners() {
 async function selectHomeRepositoryScope(scope: GitHubRepositoryScope, updateRoute = true) {
   if (githubRepositoryScopeKey(scope) === githubRepositoryScopeKey(githubRepositoryScope.value)) return;
   rememberGitHubScopePage(githubReposLoaded.value);
+  githubPendingGeneration += 1;
   githubRepositoryScope.value = scope;
   const restored = restoreGitHubScopePage(scope);
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
@@ -955,7 +987,11 @@ async function selectHomeRepositoryScope(scope: GitHubRepositoryScope, updateRou
       // Keep scope switch even if preference persistence fails.
     }
   }
-  if (!restored) await loadGitHubRepoStatus();
+  if (restored) {
+    prepareGitHubTimeline(githubRepos.value);
+  } else {
+    await loadGitHubRepoStatus();
+  }
 }
 
 async function openOrganizationAuthorization() {
@@ -1031,6 +1067,11 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
   githubTimelineError.value = null;
+  homeAttentionGeneration += 1;
+  homeAttentionResult.value = null;
+  homeAttentionLoadedKey.value = "";
+  homeAttentionLoading.value = false;
+  homeAttentionError.value = null;
   homeOverviewSnapshot.value = null;
   homeContributionSnapshot.value = null;
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
@@ -1165,11 +1206,65 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
   }
 }
 
+async function loadHomeAttention(repos: GitHubRepoSummary[], refresh = false) {
+  const repoFullNames = repos.map((repo) => repo.fullName);
+  const key = homeAttentionRepositoryKey(repoFullNames);
+  if (!key) {
+    homeAttentionGeneration += 1;
+    homeAttentionResult.value = null;
+    homeAttentionLoadedKey.value = "";
+    homeAttentionLoading.value = false;
+    homeAttentionError.value = null;
+    return;
+  }
+  if (!refresh && homeAttentionLoadedKey.value === key) return;
+
+  const generation = ++homeAttentionGeneration;
+  const pendingGeneration = githubPendingGeneration;
+  const previous = homeAttentionLoadedKey.value === key ? homeAttentionResult.value : null;
+  if (homeAttentionLoadedKey.value !== key) {
+    homeAttentionResult.value = null;
+    homeAttentionLoadedKey.value = key;
+  }
+  homeAttentionLoading.value = true;
+  homeAttentionError.value = null;
+  try {
+    const result = await listGitHubHomeAttention(repoFullNames, { forceRefresh: refresh });
+    if (generation !== homeAttentionGeneration || pendingGeneration !== githubPendingGeneration) return;
+    homeAttentionResult.value = mergeHomeAttentionResult(previous, result);
+    const failures = new Set([
+      ...result.pendingPullRequests.failures.map((failure) => failure.repoFullName),
+      ...result.failedWorkflows.failures.map((failure) => failure.repoFullName),
+    ]);
+    if (failures.size) {
+      homeAttentionError.value = `${failures.size} 个仓库的关注事项暂时无法读取。`;
+    }
+  } catch (err) {
+    if (generation !== homeAttentionGeneration || pendingGeneration !== githubPendingGeneration) return;
+    homeAttentionError.value = `关注事项加载失败：${githubUserFacingError(err)}`;
+  } finally {
+    if (generation === homeAttentionGeneration && pendingGeneration === githubPendingGeneration) {
+      homeAttentionLoading.value = false;
+    }
+  }
+}
+
+function homeAttentionRepositoryKey(repoFullNames: readonly string[]) {
+  return [...new Set(repoFullNames.map((name) => githubRepositoryIdentityKey(name)))]
+    .sort()
+    .join("\n");
+}
+
 function clearGitHubPendingItems() {
   githubAccountIssuesGeneration += 1;
+  homeAttentionGeneration += 1;
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
   githubTimelineError.value = null;
+  homeAttentionResult.value = null;
+  homeAttentionLoadedKey.value = "";
+  homeAttentionLoading.value = false;
+  homeAttentionError.value = null;
   githubIssuesByRepo.value = {};
   githubPullRequestsByRepo.value = {};
   githubActionNotificationsByRepo.value = {};
@@ -1190,9 +1285,14 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
     githubActionNotificationsByRepo.value,
     refresh,
   );
-  if (!shouldLoadIssues && !shouldLoadNotifications) {
+  const attentionKey = homeAttentionRepositoryKey(timelineRepos.map((repo) => repo.fullName));
+  const shouldLoadAttention = Boolean(attentionKey) && (
+    refresh || homeAttentionLoadedKey.value !== attentionKey
+  );
+  if (!shouldLoadIssues && !shouldLoadNotifications && !shouldLoadAttention) {
     githubAccountIssuesLoading.value = false;
     githubActionNotificationsLoading.value = false;
+    homeAttentionLoading.value = false;
     return;
   }
 
@@ -1208,9 +1308,11 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   } else {
     githubActionNotificationsLoading.value = false;
   }
+  homeAttentionLoading.value = shouldLoadAttention;
   if (generation !== githubPendingGeneration) return;
   if (shouldLoadIssues) void loadHomePendingAccountIssues(timelineRepos, refresh);
   if (shouldLoadNotifications) void loadHomePendingActionNotifications(timelineRepos, refresh);
+  if (shouldLoadAttention) void loadHomeAttention(timelineRepos, refresh);
 }
 
 function retryHomePendingItems() {
@@ -1346,7 +1448,7 @@ function homePendingItemLink(item: HomePendingItem): HomePendingLink {
   if (target.kind === "repo") {
     const href = target.view === "conflicts"
       ? repoConflictRoute(target.repoId)
-      : repoRoute(target.repoId);
+      : repoRoute(target.repoId, target.view === "changes" ? "changes" : "repo");
     return homePendingRouteLink(href);
   }
   if (target.kind === "issue") {
@@ -1369,7 +1471,7 @@ function homePendingItemLink(item: HomePendingItem): HomePendingLink {
 
 function homePendingItemIcon(kind: HomePendingItem["kind"]) {
   if (kind === "issue") return CircleDot;
-  if (kind === "pull") return GitPullRequestArrow;
+  if (kind === "pull" || kind === "review") return GitPullRequestArrow;
   if (kind === "workflow") return RotateCw;
   return RefreshCw;
 }
@@ -1417,7 +1519,7 @@ function homePendingActionIcon(action: HomePendingAction) {
 
 function homePendingActions(item: HomePendingItem): HomePendingAction[] {
   if (item.target.kind === "issue") return ["issue-complete", "issue-close"];
-  if (item.target.kind === "pull") return ["pull-merge", "pull-close"];
+  if (item.kind === "pull" && item.target.kind === "pull") return ["pull-merge", "pull-close"];
   return [];
 }
 
@@ -2329,21 +2431,21 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
           <div class="home-scroll-card__body">
             <p
-              v-if="githubTimelineError"
+              v-if="homePendingError"
               class="repo-status-error"
             >
-              {{ githubTimelineError }}
-              <button type="button" class="ghost" :disabled="githubAccountIssuesLoading || githubActionNotificationsLoading" @click="retryHomePendingItems">
+              {{ homePendingError }}
+              <button type="button" class="ghost" :disabled="githubAccountIssuesLoading || githubActionNotificationsLoading || homeAttentionLoading" @click="retryHomePendingItems">
                 重试
               </button>
             </p>
             <p
-              v-if="githubTimelineBusy && !homePendingRows.length && !githubTimelineError"
+              v-if="githubTimelineBusy && !homePendingRows.length && !homePendingError"
               class="repo-status-empty"
             >
               正在加载待处理事项...
             </p>
-            <p v-else-if="!homePendingRows.length && !githubTimelineError" class="repo-status-empty">暂无待处理事项</p>
+            <p v-else-if="!homePendingRows.length && !homePendingError" class="repo-status-empty">暂无待处理事项</p>
             <ol
               v-if="homePendingRows.length"
               class="home-pending-list"

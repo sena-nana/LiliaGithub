@@ -232,13 +232,11 @@ export function findEnabledVisibleAgentId(elements, candidates) {
   return candidates.find((candidate) => available.has(candidate)) ?? null;
 }
 
-function findControlCenterActionTarget(elements, bucket, action) {
-  const prefix = `control-center.${bucket}.`;
-  const suffix = `.${action}`;
+export function findHomePendingOpenTarget(elements) {
   return (elements ?? [])
     .filter((element) => element.visible !== false && element.disabled !== true)
     .map((element) => element.id || element.agentId)
-    .find((id) => id?.startsWith(prefix) && id.endsWith(suffix)) ?? null;
+    .find((id) => id?.startsWith("home.pending.") && id.endsWith(".open")) ?? null;
 }
 
 function findReviewLineCommentTarget(elements) {
@@ -522,7 +520,7 @@ async function waitForAgentPressed(sessionId, target, pressed, timeoutMs = 30_00
   );
 }
 
-async function waitForControlCenterActionTarget(sessionId, bucket, action, timeoutMs = 30_000) {
+async function waitForHomePendingOpenTarget(sessionId, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const elements = await execute(
@@ -530,11 +528,11 @@ async function waitForControlCenterActionTarget(sessionId, bucket, action, timeo
       `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
        return api?.observe?.()?.elements ?? [];`,
     ).catch(() => []);
-    const target = findControlCenterActionTarget(elements, bucket, action);
+    const target = findHomePendingOpenTarget(elements);
     if (target) return target;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`No enabled control-center ${bucket} ${action} target became visible.`);
+  throw new Error("No enabled home pending deep-link target became visible.");
 }
 
 async function readAgentLinkRoute(sessionId, target) {
@@ -858,14 +856,6 @@ async function observeAgentStep(sessionId, label) {
   return observe;
 }
 
-async function openDiscoveryFromCurrentRoute(sessionId) {
-  const target = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/discovery");
-  await clickAgentTarget(sessionId, target);
-  await waitForExactRoute(sessionId, "/discovery");
-  await waitForAgentElement(sessionId, "discovery.page");
-  await waitForAgentElement(sessionId, "control-center.board");
-}
-
 async function runNotificationAndCommentFlow(sessionId) {
   const notificationsTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/notifications");
   await clickAgentTarget(sessionId, notificationsTarget);
@@ -972,94 +962,38 @@ async function runNotificationAndCommentFlow(sessionId) {
   await observeAgentStep(sessionId, "discussion-comment-written-and-replied");
 }
 
-async function runControlCenterFlow(sessionId) {
-  await waitForAgentElement(sessionId, "control-center.attention");
-  await waitForAgentElement(sessionId, "control-center.today");
-  const pinTarget = await waitForControlCenterActionTarget(sessionId, "attention", "pin");
-  const rowTarget = pinTarget.slice(0, -".pin".length);
-  const snoozeTarget = `${rowTarget}.snooze`;
-  const attentionOpenTarget = `${rowTarget}.open`;
+async function runHomePendingFlow(sessionId) {
+  await waitForAgentElementPrefix(sessionId, "home.pending.");
+  const visibleTargets = await execute(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return (api?.observe?.()?.elements ?? [])
+       .filter((element) => element.visible !== false && (element.id || element.agentId || "").startsWith("home.pending."))
+       .map((element) => element.id || element.agentId);`,
+  );
+  const openTarget = await waitForHomePendingOpenTarget(sessionId);
+  const deepLinkRoute = await readAgentLinkRoute(sessionId, openTarget);
+  if (!deepLinkRoute.startsWith("/repos/")) {
+    throw new Error(`Home pending target did not expose a repository deep link: ${openTarget} -> ${deepLinkRoute}`);
+  }
 
-  await clickAgentTarget(sessionId, pinTarget);
-  await waitForAgentPressed(sessionId, pinTarget, true);
-  recordReplayAssertion("control-center-attention-pin", { target: pinTarget, ariaPressed: true });
-
-  await clickAgentTarget(sessionId, snoozeTarget);
-  await waitForAgentTargetAbsent(sessionId, rowTarget);
-  await waitForAgentElement(sessionId, "control-center.hidden.restore", 30_000, true);
-  recordReplayAssertion("control-center-attention-snooze", {
-    target: rowTarget,
-    hidden: true,
-    restoreTarget: "control-center.hidden.restore",
-  });
-
-  await clickAgentTarget(sessionId, "control-center.hidden.restore");
-  await waitForAgentElement(sessionId, rowTarget);
-  await waitForAgentPressed(sessionId, pinTarget, true);
-  recordReplayAssertion("control-center-attention-restore", {
-    target: rowTarget,
-    visible: true,
-    pinnedStatePreserved: true,
-  });
-
-  const attentionRoute = await readAgentLinkRoute(sessionId, attentionOpenTarget);
-  await clickAgentTarget(sessionId, attentionOpenTarget);
-  if (new URL(attentionRoute, "http://agent-debug.local").searchParams.get("resolveConflicts") === "1") {
-    const durableRoute = new URL(attentionRoute, "http://agent-debug.local");
+  await clickAgentTarget(sessionId, openTarget);
+  if (new URL(deepLinkRoute, "http://agent-debug.local").searchParams.get("resolveConflicts") === "1") {
+    const durableRoute = new URL(deepLinkRoute, "http://agent-debug.local");
     durableRoute.searchParams.delete("resolveConflicts");
     await waitForExactRoute(sessionId, `${durableRoute.pathname}${durableRoute.search}${durableRoute.hash}`);
     await waitForAgentElement(sessionId, "repo.conflicts.dialog");
-    recordReplayAssertion("control-center-attention-open", {
-      target: attentionOpenTarget,
-      deepLinkRoute: attentionRoute,
+    recordReplayAssertion("home-pending-deep-link", {
+      target: openTarget,
+      visibleTargets,
+      deepLinkRoute,
       conflictDialogOpen: true,
     });
   } else {
-    await waitForExactRoute(sessionId, attentionRoute);
-    recordReplayAssertion("control-center-attention-open", { target: attentionOpenTarget, route: attentionRoute });
+    await waitForExactRoute(sessionId, deepLinkRoute);
+    recordReplayAssertion("home-pending-deep-link", { target: openTarget, visibleTargets, deepLinkRoute });
   }
-  await observeAgentStep(sessionId, "control-center-attention-open");
-  await openDiscoveryFromCurrentRoute(sessionId);
-
-  const todayOpenTarget = await waitForControlCenterActionTarget(sessionId, "today", "open");
-  const todayRoute = await readAgentLinkRoute(sessionId, todayOpenTarget);
-  await clickAgentTarget(sessionId, todayOpenTarget);
-  await waitForExactRoute(sessionId, todayRoute);
-  recordReplayAssertion("control-center-today-open", { target: todayOpenTarget, route: todayRoute });
-  await observeAgentStep(sessionId, "control-center-today-open");
-  await openDiscoveryFromCurrentRoute(sessionId);
-
-  const continueOpenTarget = await waitForAgentLinkTargetByRoute(
-    sessionId,
-    "control-center.continue.",
-    todayRoute,
-  );
-  await clickAgentTarget(sessionId, continueOpenTarget);
-  await waitForExactRoute(sessionId, todayRoute);
-  recordReplayAssertion("control-center-continue-exact-route", {
-    target: continueOpenTarget,
-    expectedRoute: todayRoute,
-    actualRoute: todayRoute,
-  });
-  await observeAgentStep(sessionId, "control-center-continue-restored");
-  await openDiscoveryFromCurrentRoute(sessionId);
-
-  const handoffTarget = await waitForControlCenterActionTarget(sessionId, "attention", "handoff");
-  const handoffPrefix = handoffTarget.slice(0, -".handoff".length);
-  const resultTarget = `${handoffPrefix}.handoff-result`;
-  await clickAgentTarget(sessionId, handoffTarget);
-  await waitForAgentElement(sessionId, resultTarget, 30_000, true);
-  recordReplayAssertion("control-center-workflow-handoff-accepted", {
-    target: handoffTarget,
-    resultTarget,
-  });
-  await clickAgentTarget(sessionId, resultTarget);
-  await waitForAgentElement(sessionId, `${resultTarget}.status`);
-  recordReplayAssertion("control-center-workflow-result-open", {
-    target: resultTarget,
-    statusTarget: `${resultTarget}.status`,
-  });
-  await observeAgentStep(sessionId, "control-center-workflow-result-opened");
+  await observeAgentStep(sessionId, "home-pending-deep-link-opened");
 }
 
 async function runPullRequestReviewFlow(sessionId) {
@@ -1348,9 +1282,7 @@ async function runRegressionFlow(sessionId) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
       if (step.observe === "home-overview") {
-        await openDiscoveryFromCurrentRoute(sessionId);
-        await observeAgentStep(sessionId, "discovery-control-center");
-        await runControlCenterFlow(sessionId);
+        await runHomePendingFlow(sessionId);
         await runNotificationAndCommentFlow(sessionId);
         const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/");
         await clickAgentTarget(sessionId, overviewTarget);

@@ -113,12 +113,7 @@ import type {
   LiliaCodeTaskHandoff,
   LiliaCodeTaskHandoffStatus,
 } from "../liliaCodeHandoff/types";
-import type {
-  DiscoveryPullRequestReviewRequest,
-  DiscoveryRepositoryStatus,
-  DiscoveryScanRequest,
-  DiscoveryScanResult,
-} from "../discovery/types";
+import type { HomeAttentionResult } from "../homeAttention/types";
 import type {
   GitHubNotificationMutationResult,
   GitHubNotificationPage,
@@ -238,10 +233,10 @@ export interface WorkspaceCommandContracts {
     direction: Maybe<string>;
     forceRefresh: Maybe<boolean>;
   }, GitHubAccountIssueItem[]>;
-  github_list_assigned_work: CommandContract<{
-    perPage: Maybe<number>;
+  github_list_home_attention: CommandContract<{
+    repoFullNames: string[];
     forceRefresh: Maybe<boolean>;
-  }, GitHubAccountIssueItem[]>;
+  }, HomeAttentionResult>;
   github_list_notifications: CommandContract<{
     all: boolean;
     page: number;
@@ -263,15 +258,6 @@ export interface WorkspaceCommandContracts {
   github_list_repo_templates: CommandContract<NoArgs, GitHubRepoTemplate[]>;
   github_create_repo: CommandContract<{ request: GitHubCreateRepoRequest }, GitHubRepoSummary>;
   github_get_repo_management: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRepoManagement>;
-  github_discovery_get_repository_status: CommandContract<
-    RepoFullNameArg & ForceRefreshArg,
-    DiscoveryRepositoryStatus
-  >;
-  github_discovery_scan: CommandContract<{ request: DiscoveryScanRequest }, DiscoveryScanResult>;
-  github_discovery_submit_pull_request_review: CommandContract<
-    RepoFullNameArg & { pullNumber: number; request: DiscoveryPullRequestReviewRequest },
-    void
-  >;
   github_update_repo_settings: CommandContract<
     RepoFullNameArg & { request: GitHubUpdateRepoSettingsRequest },
     GitHubRepoManagement

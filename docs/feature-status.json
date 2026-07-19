@@ -1,5 +1,5 @@
 {
-  "lastChecked": "2026-07-17",
+  "lastChecked": "2026-07-19",
   "sections": [
     {
       "id": "local-git",
@@ -190,10 +190,10 @@
       ]
     },
     {
-      "id": "personal-control-center",
+      "id": "personal-workspace",
       "title": {
-        "en": "Personal Developer Control Center",
-        "zh-CN": "个人开发中控台"
+        "en": "Personal Workspace",
+        "zh-CN": "个人工作区"
       },
       "items": [
         {
@@ -237,19 +237,19 @@
           }
         },
         {
-          "id": "attention-today-continue",
+          "id": "home-pending-attention",
           "complete": true,
           "text": {
-            "en": "Explainable Attention / Today / Continue work-item organization and exact context restoration.",
-            "zh-CN": "可解释的 Attention / Today / Continue 工作项组织和精确上下文恢复。"
+            "en": "Home pending Attention for review requests, assigned pull requests, failed workflows, local blockers, and existing collaboration signals, with direct repository routes.",
+            "zh-CN": "首页待处理 Attention 汇总 Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和既有协作信号，并提供仓库直达入口。"
           }
         },
         {
           "id": "lilia-code-handoff",
           "complete": true,
           "text": {
-            "en": "Structured LiliaCode task handoff with source context, acceptance criteria, and result return path.",
-            "zh-CN": "包含来源上下文、验收条件和结果返回路径的结构化 LiliaCode 任务交接。"
+            "en": "Structured LiliaCode fix-task handoff from full pull request reviews, with source context, acceptance criteria, and result return path.",
+            "zh-CN": "从完整 Pull Request Review 发起结构化 LiliaCode 修复任务交接，包含来源上下文、验收条件和结果返回路径。"
           }
         },
         {
