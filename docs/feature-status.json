@@ -125,8 +125,8 @@
           "id": "home-timeline",
           "complete": true,
           "text": {
-            "en": "Home timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.",
-            "zh-CN": "当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的首页时间线。"
+            "en": "Project overview timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.",
+            "zh-CN": "当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的项目总览时间线。"
           }
         },
         {
@@ -218,14 +218,6 @@
           "text": {
             "en": "Account and organization repository browsing, repository creation, and clone-to-workspace flow.",
             "zh-CN": "个人与组织仓库浏览、仓库创建和克隆到工作区流程。"
-          }
-        },
-        {
-          "id": "personal-home",
-          "complete": true,
-          "text": {
-            "en": "Personal home for assigned work, recently touched repositories, notification summary, and current workspace context.",
-            "zh-CN": "展示分配工作、最近仓库、通知摘要和当前工作区上下文的个人首页。"
           }
         },
         {

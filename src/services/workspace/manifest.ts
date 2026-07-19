@@ -65,7 +65,6 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_update_repo_subscription",
     "github_list_account_issues",
     "github_list_assigned_work",
-    "github_list_personal_notifications",
     "github_list_notifications",
     "github_mark_notifications_read",
     "github_unsubscribe_notification",

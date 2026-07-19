@@ -59,7 +59,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - 工作区优先的仓库视图：扫描本地工作区，将仓库状态、分支、变更、历史和同步状态放在同一套界面里。
 - 聚焦单仓库操作：在单仓库界面完成暂存、提交、pull、push、checkout、必要时打开远端页面和打开本地文件夹。
 - GitHub 项目查看：把仓库、issue、pull request、review、release 和 project 看板信息带入桌面端，减少频繁切换浏览器。
-- 个人工作区控制：提供登录后的个人首页，用于查看账号状态、仓库列表、通知摘要、关注仓库和个人偏好。
+- 项目总览与个人控制：在项目总览查看仓库状态，并通过各自页面管理账号仓库、通知、关注仓库和个人偏好。
 - 推送活动回顾：在管理仓库的同一界面查看最近推送、待推送变更、CI / release 结果和同步问题。
 - 快速启动命令：保存仓库启动目标，轮询运行状态，并查看最近输出日志，而不是把主工作区改造成纯终端界面。
 - 队列化同步工作流：对 pull / push 做预检，并按受控队列执行。
@@ -89,7 +89,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [x] 基于关联 Issue 和 Pull Request 分组的仓库 Milestones。
 - [x] Issue 和 Pull Request 详情中的已关联 project 字段元数据。
 - [x] Actions run 详情、job 与 workflow 图、日志、artifact 预览、失败诊断和重跑。
-- [x] 当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的首页时间线。
+- [x] 当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的项目总览时间线。
 - [x] Release 列表和状态管理。
 - [x] GitHub Discussions 浏览、详情查看和主题创建。
 - [x] 包含 Changed Files、thread、回复和 review 提交的完整 Pull Request Code Review。
@@ -103,7 +103,6 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [x] GitHub 账号连接和个人资料管理。
 - [x] 账号仓库范围、列表偏好、本地工作区偏好和主题持久化。
 - [x] 个人与组织仓库浏览、仓库创建和克隆到工作区流程。
-- [x] 展示分配工作、最近仓库、通知摘要和当前工作区上下文的个人首页。
 - [x] 关注仓库和仓库通知偏好。
 - [x] 本地仓库收藏和仓库分组。
 - [x] 可解释的 Attention / Today / Continue 工作项组织和精确上下文恢复。

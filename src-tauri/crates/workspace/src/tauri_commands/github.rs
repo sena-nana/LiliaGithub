@@ -62,5 +62,6 @@ delegate_command!(async github; fn github_delete_release_asset(app: AppHandle, r
 delegate_command!(async github; fn github_list_repo_files(app: AppHandle, repo_full_name: String, parent_path: Option<String>, ref_name: Option<String>, _force_refresh: Option<bool>,) -> Result<Vec<RepoFileTreeEntry>, String>);
 delegate_command!(async github; fn github_get_repo_file_preview(app: AppHandle, repo_full_name: String, path: String, ref_name: Option<String>, _force_refresh: Option<bool>,) -> Result<RepoFilePreview, String>);
 delegate_command!(async github; fn github_list_account_issues(app: AppHandle, state: Option<String>, per_page: Option<u32>, sort: Option<String>, direction: Option<String>, _force_refresh: Option<bool>,) -> Result<Vec<GitHubAccountIssueItem>, String>);
+delegate_command!(async github; fn github_list_assigned_work(app: AppHandle, per_page: Option<u32>, _force_refresh: Option<bool>,) -> Result<Vec<GitHubAccountIssueItem>, String>);
 delegate_command!(async github; fn github_list_action_notifications(app: AppHandle, per_page: Option<u32>, _force_refresh: Option<bool>,) -> Result<Vec<GitHubActionNotification>, String>);
 delegate_command!(async github; fn github_list_repo_contribution(app: AppHandle, repo_full_name: String,) -> Result<GitHubContributionResult, String>);

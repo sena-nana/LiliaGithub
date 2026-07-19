@@ -9,7 +9,6 @@ pub mod launch;
 mod lilia_code_handoff;
 pub mod notifications;
 pub(crate) mod operations;
-pub mod personal_home;
 pub(crate) mod readme;
 pub(crate) mod refresh;
 pub(crate) mod repo_guard;

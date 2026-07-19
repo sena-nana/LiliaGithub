@@ -2,7 +2,6 @@ import {
   Bell,
   FolderGit2,
   Boxes,
-  Home,
   Info,
   Palette,
   Sparkles,
@@ -35,14 +34,8 @@ export const SIDEBAR_CONFIG = {
 
 export const SIDEBAR_NAV: SidebarNavItems = [
   {
-    key: "home",
-    to: "/",
-    label: "首页",
-    icon: Home,
-  },
-  {
     key: "overview",
-    to: "/overview",
+    to: "/",
     label: "项目总览",
     icon: FolderGit2,
   },
