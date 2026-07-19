@@ -127,7 +127,7 @@ watch(() => `${workspace.githubBinding.value?.login ?? ""}:${JSON.stringify(pref
         </div>
       </SettingsRow>
       <p v-if="defaultWorkspaceUnavailable" class="preferences-card__warning" role="status">默认工作区当前不可用，可重新选择。</p>
-      <SettingsRow label="仓库范围" hint="首页和克隆仓库默认使用此范围。" divided>
+      <SettingsRow label="仓库范围" hint="项目总览和克隆仓库默认使用此范围。" divided>
         <Dropdown v-model="repositoryScopeValue" :options="repositoryScopeOptions" :disabled="ownersLoading" placement="bottom" agent-id="settings.account.preferences.scope" />
       </SettingsRow>
       <p v-if="selectedOrganizationUnavailable" class="preferences-card__warning" role="status">保存的组织当前不可访问，仓库列表会临时显示全部仓库。</p>

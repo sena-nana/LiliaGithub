@@ -8942,6 +8942,44 @@ pub async fn github_list_account_issues(
     .await
 }
 
+pub async fn github_list_assigned_work(
+    app: AppHandle,
+    per_page: Option<u32>,
+    _force_refresh: Option<bool>,
+) -> Result<Vec<GitHubAccountIssueItem>, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取分配给我的工作",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取分配给我的工作失败",
+                github_headers(
+                    client.get("https://api.github.com/issues").query(&[
+                        ("filter", "assigned"),
+                        ("state", "open"),
+                        ("per_page", per_page.as_str()),
+                        ("sort", "updated"),
+                        ("direction", "desc"),
+                    ]),
+                    Some(&token),
+                ),
+            )?;
+            let items =
+                github_json::<Vec<GitHubIssueResponse>>("读取分配给我的工作失败", response)?;
+            Ok(items
+                .into_iter()
+                .filter_map(github_account_issue_item_from_response)
+                .collect())
+        },
+    )
+    .await
+}
+
 pub async fn github_list_action_notifications(
     app: AppHandle,
     per_page: Option<u32>,

@@ -29,3 +29,4 @@ delegate_command!(settings; fn workspace_forget_remote_repo(app: AppHandle, full
 delegate_command!(settings; fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn repo_use_default_token_auth(app: AppHandle, repo_id: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo>);
+delegate_command!(settings; fn workspace_record_recent_local_repo(app: AppHandle, repo_id: String,) -> Result<WorkspaceSettings, String>);

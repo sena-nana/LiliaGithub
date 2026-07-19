@@ -1,20 +1,64 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
-import { computed } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import ControlCenterBoard from "../components/control-center/ControlCenterBoard.vue";
 import DiscoveryRepositoryScopeControl from "../components/discovery/DiscoveryRepositoryScopeControl.vue";
 import { useDiscoveryRepositories } from "../composables/discovery/useDiscoveryRepositories";
 import { useDiscoveryScan } from "../composables/discovery/useDiscoveryScan";
+import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
+import { listGitHubAssignedWork } from "../services/discovery";
+import type { GitHubAccountIssueItem } from "../services/workspace";
 
 const workspace = useWorkspace();
 const discovery = useDiscoveryRepositories();
 const scan = useDiscoveryScan(discovery.repositories, discovery.refreshToken);
+const assignedWorkLoader = createLatestAsyncLoader();
+const assignedWork = ref<GitHubAccountIssueItem[]>([]);
+const assignedWorkLoading = ref(false);
+const assignedWorkError = ref<string | null>(null);
 const controlScope = computed(() => discovery.login.value || "anonymous");
 const scopedLocalRepositories = computed(() => discovery.repositories.value.flatMap((repository) =>
   repository.localRepo ? [repository.localRepo] : []
 ));
+
+async function loadAssignedWork(forceRefresh = false) {
+  const login = discovery.login.value;
+  if (!login) return;
+  await assignedWorkLoader.run(login, async (runId) => {
+    assignedWorkLoading.value = true;
+    assignedWorkError.value = null;
+    try {
+      const items = await listGitHubAssignedWork(50, { forceRefresh });
+      if (assignedWorkLoader.isCurrent(runId)) {
+        assignedWork.value = items;
+      }
+    } catch {
+      if (assignedWorkLoader.isCurrent(runId)) {
+        assignedWorkError.value = "暂时无法读取分配给你的工作，请重试。";
+      }
+    } finally {
+      if (assignedWorkLoader.isCurrent(runId)) {
+        assignedWorkLoading.value = false;
+      }
+    }
+  });
+}
+
+async function refreshControlCenter() {
+  await Promise.all([discovery.refresh(), loadAssignedWork(true)]);
+}
+
+watch(discovery.login, (login) => {
+  assignedWorkLoader.invalidate();
+  assignedWork.value = [];
+  assignedWorkError.value = null;
+  assignedWorkLoading.value = false;
+  if (login) void loadAssignedWork();
+}, { immediate: true });
+
+onUnmounted(assignedWorkLoader.invalidate);
 </script>
 
 <template>
@@ -24,8 +68,8 @@ const scopedLocalRepositories = computed(() => discovery.repositories.value.flat
         <h1>跨仓库</h1>
         <p>集中处理当前仓库批次中需要关注的工作。</p>
       </div>
-      <button type="button" class="ghost discovery-refresh" data-agent-id="discovery.refresh" :disabled="discovery.loading.value" @click="discovery.refresh">
-        <RefreshCw :size="14" aria-hidden="true" :class="{ 'sb-spin': discovery.loading.value }" />
+      <button type="button" class="ghost discovery-refresh" data-agent-id="discovery.refresh" :disabled="discovery.loading.value || assignedWorkLoading" @click="refreshControlCenter">
+        <RefreshCw :size="14" aria-hidden="true" :class="{ 'sb-spin': discovery.loading.value || assignedWorkLoading }" />
         <span>刷新</span>
       </button>
     </header>
@@ -60,9 +104,10 @@ const scopedLocalRepositories = computed(() => discovery.repositories.value.flat
         :repositories="discovery.repositories.value"
         :local-repositories="scopedLocalRepositories"
         :scan="scan.result.value"
+        :account-items="assignedWork"
         :tasks="workspace.state.tasks"
-        :loading="scan.loading.value || discovery.loading.value"
-        :error="scan.error.value"
+        :loading="scan.loading.value || discovery.loading.value || assignedWorkLoading"
+        :error="scan.error.value || assignedWorkError"
         :scope="controlScope"
       />
 

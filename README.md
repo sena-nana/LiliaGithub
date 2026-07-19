@@ -59,7 +59,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 - Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
 - Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
 - GitHub project visibility: bring repository, issue, pull request, review, release, and milestone context into the desktop app instead of requiring constant browser switching.
-- Personal workspace controls: provide a signed-in home for account state, repository lists, notification summary, watched repositories, and personal preferences.
+- Project overview and personal controls: keep repository state on the project overview, with account repositories, notifications, watched repositories, and preferences in their dedicated views.
 - Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
 - Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
 - Queued sync workflows: preflight pull / push operations and execute them in a controlled queue.
@@ -89,7 +89,7 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Repository milestones grouped from linked issues and pull requests.
 - [x] Linked project field metadata in issue and pull request details.
 - [x] Actions run details, job and workflow graphs, logs, artifact preview, failure diagnostics, and rerun.
-- [x] Home timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.
+- [x] Project overview timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.
 - [x] Release list and status management.
 - [x] GitHub Discussions browsing, detail view, and topic creation.
 - [x] Complete pull request code review with changed files, threads, replies, and review submission.
@@ -103,7 +103,6 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Signed-in GitHub account connection and profile management.
 - [x] Account repository scope, list preferences, local workspace preference, and theme persistence.
 - [x] Account and organization repository browsing, repository creation, and clone-to-workspace flow.
-- [x] Personal home for assigned work, recently touched repositories, notification summary, and current workspace context.
 - [x] Watched repositories and repository notification preferences.
 - [x] Local repository favorites and repository groups.
 - [x] Explainable Attention / Today / Continue work-item organization and exact context restoration.

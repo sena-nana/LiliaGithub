@@ -858,10 +858,11 @@ async function observeAgentStep(sessionId, label) {
   return observe;
 }
 
-async function openHomeFromCurrentRoute(sessionId) {
-  const target = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/");
+async function openDiscoveryFromCurrentRoute(sessionId) {
+  const target = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/discovery");
   await clickAgentTarget(sessionId, target);
-  await waitForExactRoute(sessionId, "/");
+  await waitForExactRoute(sessionId, "/discovery");
+  await waitForAgentElement(sessionId, "discovery.page");
   await waitForAgentElement(sessionId, "control-center.board");
 }
 
@@ -1018,7 +1019,7 @@ async function runControlCenterFlow(sessionId) {
     recordReplayAssertion("control-center-attention-open", { target: attentionOpenTarget, route: attentionRoute });
   }
   await observeAgentStep(sessionId, "control-center-attention-open");
-  await openHomeFromCurrentRoute(sessionId);
+  await openDiscoveryFromCurrentRoute(sessionId);
 
   const todayOpenTarget = await waitForControlCenterActionTarget(sessionId, "today", "open");
   const todayRoute = await readAgentLinkRoute(sessionId, todayOpenTarget);
@@ -1026,7 +1027,7 @@ async function runControlCenterFlow(sessionId) {
   await waitForExactRoute(sessionId, todayRoute);
   recordReplayAssertion("control-center-today-open", { target: todayOpenTarget, route: todayRoute });
   await observeAgentStep(sessionId, "control-center-today-open");
-  await openHomeFromCurrentRoute(sessionId);
+  await openDiscoveryFromCurrentRoute(sessionId);
 
   const continueOpenTarget = await waitForAgentLinkTargetByRoute(
     sessionId,
@@ -1041,7 +1042,7 @@ async function runControlCenterFlow(sessionId) {
     actualRoute: todayRoute,
   });
   await observeAgentStep(sessionId, "control-center-continue-restored");
-  await openHomeFromCurrentRoute(sessionId);
+  await openDiscoveryFromCurrentRoute(sessionId);
 
   const handoffTarget = await waitForControlCenterActionTarget(sessionId, "attention", "handoff");
   const handoffPrefix = handoffTarget.slice(0, -".handoff".length);
@@ -1157,72 +1158,6 @@ async function runPullRequestReviewFlow(sessionId) {
   await waitForAgentElement(sessionId, pullTarget);
 }
 
-const selectHomePendingOpenTarget = `(ids) => ids
-  .find((id) => /^home\\.pending\\.(issue:|pull-request:|workflow-notification:).+\\.open$/.test(id))`;
-
-const selectHomePendingActionTarget = `(ids) => {
-  const actionSuffixes = ["pull-merge", "issue-complete", "issue-close", "pull-close"];
-  for (const suffix of actionSuffixes) {
-    const target = ids.find((id) => id.startsWith("home.pending.") && id.endsWith("." + suffix));
-    if (target) return target;
-  }
-  return null;
-}`;
-
-function homePendingRouteMarker(target) {
-  if (target.startsWith("home.pending.issue:")) return "projectTab=issues";
-  if (target.startsWith("home.pending.pull-request:")) return "projectTab=pulls";
-  if (target.startsWith("home.pending.workflow-notification:")) return "projectTab=actions";
-  throw new Error(`Unsupported home pending route target: ${target}`);
-}
-
-async function waitForHomePendingActionRemoved(sessionId, target) {
-  await waitForAgentDebugCondition(
-    sessionId,
-    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
-     const observe = api?.observe?.();
-     return !observe?.elements?.some((element) =>
-       (element.id || element.agentId) === arguments[0] && element.visible !== false
-     );`,
-    [target],
-    `Home pending action did not leave the pending list after confirmation: ${target}`,
-  );
-}
-
-async function runHomePendingFlow(sessionId) {
-  const openTarget = await waitForVisibleAgentId(
-    sessionId,
-    selectHomePendingOpenTarget,
-    [],
-    "No actionable home pending open target became visible.",
-  );
-  await clickAgentTarget(sessionId, openTarget);
-  await waitForRouteIncludes(sessionId, homePendingRouteMarker(openTarget));
-  await observeAgentStep(sessionId, "home-pending-open");
-
-  const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/overview");
-  await clickAgentTarget(sessionId, overviewTarget);
-  await waitForAgentElement(sessionId, "home.overview.search");
-
-  const actionTarget = await waitForVisibleAgentId(
-    sessionId,
-    selectHomePendingActionTarget,
-    [],
-    "No actionable home pending operation target became visible.",
-  );
-  const confirmTarget = `${actionTarget}.confirm`;
-  await clickAgentTarget(sessionId, actionTarget);
-  await waitForAgentElement(sessionId, confirmTarget);
-  await observeAgentStep(sessionId, "home-pending-confirm");
-
-  await clickAgentTarget(sessionId, confirmTarget);
-  await clickAgentTarget(sessionId, "sidebar.footer.tasks");
-  await waitForAgentElement(sessionId, "sidebar.footer.tasks.menu");
-  await waitForAgentElementPrefix(sessionId, "sidebar.footer.tasks.item.", 10_000);
-  await observeAgentStep(sessionId, "home-pending-background-task");
-  await waitForHomePendingActionRemoved(sessionId, actionTarget);
-}
-
 async function runRepoLaunchFlow(sessionId) {
   const candidateTarget = launchCandidateAgentId("yarn dev", null);
 
@@ -1293,10 +1228,6 @@ async function runProfileInteractionFlow(sessionId) {
 
 async function runRegressionFlow(sessionId) {
   const steps = [
-    {
-      observe: "personal-home-control-center",
-      waits: ["personal-home.page", "control-center.board"],
-    },
     {
       observe: "home-overview",
       waits: ["home.page", "home.overview.search"],
@@ -1416,12 +1347,16 @@ async function runRegressionFlow(sessionId) {
     if (step.observe) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
-      if (step.observe === "personal-home-control-center") {
+      if (step.observe === "home-overview") {
+        await openDiscoveryFromCurrentRoute(sessionId);
+        await observeAgentStep(sessionId, "discovery-control-center");
         await runControlCenterFlow(sessionId);
         await runNotificationAndCommentFlow(sessionId);
-        const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/overview");
+        const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/");
         await clickAgentTarget(sessionId, overviewTarget);
-        await waitForExactRoute(sessionId, "/overview");
+        await waitForExactRoute(sessionId, "/");
+        await waitForAgentElement(sessionId, "home.page");
+        await waitForAgentElement(sessionId, "home.overview.search");
       }
       if (step.observe === "pulls-panel") await runPullRequestReviewFlow(sessionId);
     }

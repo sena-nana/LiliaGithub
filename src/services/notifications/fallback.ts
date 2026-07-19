@@ -74,10 +74,6 @@ export function unsubscribeNotificationFallback(notificationId: string): Promise
   return Promise.resolve();
 }
 
-export function notificationFallbackItems(perPage = 50) {
-  return clone(notifications.slice(0, perPage));
-}
-
 export function setNotificationFallbackForTests(items: readonly GitHubNotification[]) {
   notifications = clone([...items]);
 }

@@ -953,7 +953,7 @@ async function deleteGroup(group: { id: string }) {
             @open="openRemoteRepo(repo.fullName)"
             @remove="removeRemoteRepo(repo.fullName)"
           />
-          <p v-if="!favoriteRepos.length" class="sb-tree__empty">右键本地仓库或在首页置顶。</p>
+          <p v-if="!favoriteRepos.length" class="sb-tree__empty">右键本地仓库或在项目总览置顶。</p>
           <p v-if="favoriteError" class="sb-tree__empty sb-tree__empty--error">{{ favoriteError }}</p>
         </div>
       </div>

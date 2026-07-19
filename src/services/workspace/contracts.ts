@@ -119,7 +119,6 @@ import type {
   DiscoveryScanRequest,
   DiscoveryScanResult,
 } from "../discovery/types";
-import type { PersonalHomeNotification } from "../personalHome/types";
 import type {
   GitHubNotificationMutationResult,
   GitHubNotificationPage,
@@ -243,10 +242,6 @@ export interface WorkspaceCommandContracts {
     perPage: Maybe<number>;
     forceRefresh: Maybe<boolean>;
   }, GitHubAccountIssueItem[]>;
-  github_list_personal_notifications: CommandContract<{
-    perPage: Maybe<number>;
-    forceRefresh: Maybe<boolean>;
-  }, PersonalHomeNotification[]>;
   github_list_notifications: CommandContract<{
     all: boolean;
     page: number;

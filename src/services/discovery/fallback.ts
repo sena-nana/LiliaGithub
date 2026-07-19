@@ -5,11 +5,26 @@ import type {
   DiscoveryScanResult,
 } from "./types";
 import { getGitHubRepoManagement, listGitHubRepos } from "../workspace/client";
+import type { GitHubAccountIssueItem } from "../workspace/types";
 import { loadDiscoveryAssignedIssues } from "./issues";
 import { loadDiscoveryPendingPullRequests } from "./pullRequests";
 import { loadDiscoveryRecentReleases } from "./releases";
 import { loadDiscoveryRepositoryStatuses } from "./repositoryStatus";
 import { loadDiscoveryFailedWorkflowRuns } from "./workflows";
+
+let assignedWorkFallback: GitHubAccountIssueItem[] = [];
+
+export function listAssignedWorkFallback(perPage = 50) {
+  return Promise.resolve(structuredClone(assignedWorkFallback.slice(0, perPage)));
+}
+
+export function setAssignedWorkFallbackForTests(items: readonly GitHubAccountIssueItem[]) {
+  assignedWorkFallback = structuredClone([...items]);
+}
+
+export function resetAssignedWorkFallbackForTests() {
+  assignedWorkFallback = [];
+}
 
 export async function scanDiscoveryFallback(
   repoFullNames: readonly string[],

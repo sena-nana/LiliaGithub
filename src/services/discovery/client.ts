@@ -6,8 +6,21 @@ import type {
   DiscoveryRepositoryStatus,
   DiscoveryScanResult,
 } from "./types";
+import type { GitHubAccountIssueItem } from "../workspace/types";
 
 const fallbackModule = createCachedAsyncModule(() => import("./fallback"));
+
+export function listGitHubAssignedWork(
+  perPage = 50,
+  options: DiscoveryCommandOptions = {},
+): Promise<GitHubAccountIssueItem[]> {
+  const args = { perPage, forceRefresh: options.forceRefresh ?? null };
+  return call(
+    "github_list_assigned_work",
+    args,
+    async () => (await fallbackModule.load()).listAssignedWorkFallback(perPage),
+  );
+}
 
 export function scanGitHubDiscovery(
   repoFullNames: readonly string[],

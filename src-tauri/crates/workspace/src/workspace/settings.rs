@@ -25,7 +25,7 @@ use lilia_github_contracts::workspace::{
     ContributionIdentityRecommendation, ContributionIdentityRecommendationConfidence,
     ContributionIdentityRecommendationRepo, ContributionIdentityRecommendationResult,
     ContributionIdentityRecommendationSource, GitHubOwnerKind, HiddenRepo, RemoteRepoShortcut,
-    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoSyncPreference,
+    RecentLocalRepoVisit, RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoSyncPreference,
     WorkspaceCloneRepositoryRef, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceSettings,
     WorkspaceStartupCache, WorkspaceStartupContributions,
 };
@@ -37,6 +37,7 @@ pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
 #[cfg(target_os = "windows")]
 const NTFS_REQUIRED: &str = "工作区必须位于 NTFS 文件系统";
 const SETTINGS_VERSION: u32 = 2;
+const RECENT_LOCAL_REPO_LIMIT: usize = 12;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1559,6 +1560,45 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
     Ok(visible_workspace_settings(settings))
 }
 
+pub fn workspace_record_recent_local_repo(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<WorkspaceSettings, String> {
+    let repo_id = repo_id.trim();
+    if repo_id.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    repo_path_by_id(&app, repo_id)?;
+
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut settings = load_settings(&app);
+    record_recent_local_repo_visit(&mut settings.recent_local_repos, repo_id, now_millis());
+    save_settings(&app, &settings)?;
+    Ok(visible_workspace_settings(settings))
+}
+
+fn record_recent_local_repo_visit(
+    visits: &mut Vec<RecentLocalRepoVisit>,
+    repo_id: &str,
+    opened_at: i64,
+) {
+    visits.retain(|visit| !visit.repo_id.trim().is_empty() && visit.repo_id != repo_id);
+    visits.push(RecentLocalRepoVisit {
+        repo_id: repo_id.to_string(),
+        opened_at,
+    });
+    visits.sort_by(|left, right| {
+        right
+            .opened_at
+            .cmp(&left.opened_at)
+            .then_with(|| left.repo_id.cmp(&right.repo_id))
+    });
+    visits.dedup_by(|left, right| left.repo_id == right.repo_id);
+    visits.truncate(RECENT_LOCAL_REPO_LIMIT);
+}
+
 pub fn workspace_create_repo_group(
     app: AppHandle,
     name: String,
@@ -2018,5 +2058,30 @@ mod account_profile_storage_tests {
             visible.account_preferences.default_workspace_root,
             Some(missing_root)
         );
+    }
+
+    #[test]
+    fn recent_local_repo_visits_are_deduplicated_ordered_and_limited() {
+        let mut visits = (0..RECENT_LOCAL_REPO_LIMIT + 3)
+            .map(|index| RecentLocalRepoVisit {
+                repo_id: format!("repo-{index}"),
+                opened_at: index as i64,
+            })
+            .collect::<Vec<_>>();
+
+        record_recent_local_repo_visit(&mut visits, "repo-0", 100);
+
+        assert_eq!(visits.len(), RECENT_LOCAL_REPO_LIMIT);
+        assert_eq!(visits[0].repo_id, "repo-0");
+        assert_eq!(
+            visits
+                .iter()
+                .filter(|visit| visit.repo_id == "repo-0")
+                .count(),
+            1
+        );
+        assert!(visits
+            .windows(2)
+            .all(|pair| pair[0].opened_at >= pair[1].opened_at));
     }
 }

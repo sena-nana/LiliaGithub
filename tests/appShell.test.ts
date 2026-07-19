@@ -410,8 +410,9 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    expect(sidebarRowForText(view.container, "首页")).toHaveAttribute("href", "/");
-    expect(sidebarRowForText(view.container, "项目总览")).toHaveAttribute("href", "/overview");
+    const mainNavigation = view.getByRole("navigation", { name: "主导航" });
+    expect(within(mainNavigation).getByRole("link", { name: "项目总览" })).toHaveAttribute("href", "/");
+    expect(within(mainNavigation).queryByRole("link", { name: "首页" })).toBeNull();
     const profileRow = sidebarRowForText(view.container, "lilia-user");
     expect(profileRow).toHaveAttribute("href", "/profile");
     const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
