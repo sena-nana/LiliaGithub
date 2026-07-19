@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   assertNoMissingAgentIds,
   findEnabledVisibleAgentId,
-  findHomePendingOpenTarget,
 } from "../agent-debug/verify-agent-debug.mjs";
 
 describe("agent debug verify script", () => {
@@ -39,15 +38,5 @@ describe("agent debug verify script", () => {
     expect(findEnabledVisibleAgentId([
       { agentId: "profile.edit", visible: true, disabled: false },
     ], ["profile.edit"])).toBe("profile.edit");
-  });
-
-  it("selects the first visible enabled home pending deep link", () => {
-    expect(findHomePendingOpenTarget([
-      { id: "home.pending.conflict.repo-a.open", visible: false, disabled: false },
-      { id: "home.pending.workflow.repo-b.open", visible: true, disabled: true },
-      { id: "home.pending.pull.repo-c", visible: true, disabled: false },
-      { agentId: "home.pending.pull.repo-c.open", visible: true, disabled: false },
-      { id: "repo.pulls.7.open", visible: true, disabled: false },
-    ])).toBe("home.pending.pull.repo-c.open");
   });
 });

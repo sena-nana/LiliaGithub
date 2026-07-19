@@ -45,7 +45,7 @@ The product deliberately prioritizes focused developer decisions and recoverable
 ## Milestones
 
 - `1.0 Closing Stability`: stabilize the existing local Git, GitHub collaboration, Actions, Release, quick launch, and packaging paths, then close recovery guidance, failure diagnostics, and release validation gaps.
-- `Collaboration And Attention`: complete high-frequency review, comment, notification, and home pending Attention workflows inside the app.
+- `Collaboration And Attention`: complete high-frequency review, comment, and home pending Attention workflows inside the app.
 - `Focused Extensions`: add pull request review handoff to LiliaCode, multiple workspaces, account activity, Projects V2 context, and Actions controls where they strengthen the personal developer workflow without copying the full GitHub web UI.
 
 ## The Lilia Family
@@ -59,7 +59,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 - Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
 - Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
 - GitHub project visibility: bring repository, issue, pull request, review, release, and milestone context into the desktop app instead of requiring constant browser switching.
-- Project overview and personal controls: keep repository state on the project overview, with account repositories, notifications, watched repositories, and preferences in their dedicated views.
+- Project overview and personal controls: keep repository state and pending Attention on the project overview, with account repositories, watched repositories, and preferences in their dedicated views.
 - Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
 - Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
 - Queued sync workflows: preflight pull / push operations and execute them in a controlled queue.
@@ -94,7 +94,6 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] GitHub Discussions browsing, detail view, and topic creation.
 - [x] Complete pull request code review with changed files, threads, replies, and review submission.
 - [x] Issue, pull request, and Discussion comment round-trips with recoverable writes.
-- [x] In-app notification inbox with filtering, read state, unsubscribe, and internal routing.
 - [ ] Projects V2 browsing and common field updates connected to the work-item model. `P2`
 - [ ] Actions workflow dispatch, run cancellation, and deployment approval controls. `P2`
 

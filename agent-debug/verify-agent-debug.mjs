@@ -26,6 +26,7 @@ const localViteBin = path.join(repoRoot, "node_modules", "vite", "bin", "vite.js
 const replay = [];
 const observedSnapshots = [];
 const replayAssertions = [];
+const homePendingIssueTarget = "home.pending.issue:sena-nana/LiliaGithub:12.open";
 
 const agentDebugEnv = {
   LILIA_GITHUB_AGENT_DEBUG: "1",
@@ -230,13 +231,6 @@ export function findEnabledVisibleAgentId(elements, candidates) {
       .filter(Boolean),
   );
   return candidates.find((candidate) => available.has(candidate)) ?? null;
-}
-
-export function findHomePendingOpenTarget(elements) {
-  return (elements ?? [])
-    .filter((element) => element.visible !== false && element.disabled !== true)
-    .map((element) => element.id || element.agentId)
-    .find((id) => id?.startsWith("home.pending.") && id.endsWith(".open")) ?? null;
 }
 
 function findReviewLineCommentTarget(elements) {
@@ -520,21 +514,6 @@ async function waitForAgentPressed(sessionId, target, pressed, timeoutMs = 30_00
   );
 }
 
-async function waitForHomePendingOpenTarget(sessionId, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const elements = await execute(
-      sessionId,
-      `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
-       return api?.observe?.()?.elements ?? [];`,
-    ).catch(() => []);
-    const target = findHomePendingOpenTarget(elements);
-    if (target) return target;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error("No enabled home pending deep-link target became visible.");
-}
-
 async function readAgentLinkRoute(sessionId, target) {
   const route = await execute(
     sessionId,
@@ -547,26 +526,6 @@ async function readAgentLinkRoute(sessionId, target) {
   );
   if (!route) throw new Error(`Agent debug target is not a routed link: ${target}`);
   return route;
-}
-
-async function waitForAgentLinkTargetByRoute(sessionId, prefix, route, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const target = await execute(
-      sessionId,
-      `const candidates = Array.from(document.querySelectorAll('[data-agent-id]'));
-       const match = candidates.find((element) => {
-         if (!(element instanceof HTMLAnchorElement) || !element.dataset.agentId?.startsWith(arguments[0])) return false;
-         const url = new URL(element.href, window.location.href);
-         return url.pathname + url.search + url.hash === arguments[1];
-       });
-       return match?.dataset.agentId ?? null;`,
-      [prefix, route],
-    ).catch(() => null);
-    if (target) return target;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error(`No agent link with prefix ${prefix} routes to ${route}`);
 }
 
 function recordReplayAssertion(name, evidence) {
@@ -734,18 +693,6 @@ async function waitForReviewThreadCommentCount(sessionId, threadTarget, expected
   );
 }
 
-async function waitForAgentClass(sessionId, target, className, timeoutMs = 30_000) {
-  await waitForAgentDebugCondition(
-    sessionId,
-    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
-       .find((candidate) => candidate.dataset.agentId === arguments[0]);
-     return Boolean(element?.classList.contains(arguments[1]));`,
-    [target, className],
-    `Agent debug target ${target} did not gain class ${className}.`,
-    timeoutMs,
-  );
-}
-
 async function waitForConversationActionByBody(sessionId, body, action, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -856,41 +803,7 @@ async function observeAgentStep(sessionId, label) {
   return observe;
 }
 
-async function runNotificationAndCommentFlow(sessionId) {
-  const notificationsTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/notifications");
-  await clickAgentTarget(sessionId, notificationsTarget);
-  await waitForExactRoute(sessionId, "/notifications");
-  await waitForAgentElement(sessionId, "notifications.page");
-
-  const markRow = "notifications.row.agent-debug-mark-read";
-  const markTarget = `${markRow}.mark-read`;
-  const openRow = "notifications.row.agent-debug-open-issue";
-  const openTarget = `${openRow}.open`;
-  await waitForAgentElement(sessionId, markTarget, 30_000, true);
-  await waitForAgentElement(sessionId, openTarget, 30_000, true);
-  recordReplayAssertion("notifications-inbox-loaded", { route: "/notifications", rows: [markRow, openRow] });
-  await observeAgentStep(sessionId, "notifications-inbox-loaded");
-
-  await waitForAgentClass(sessionId, markRow, "is-unread");
-  await clickAgentTarget(sessionId, markTarget);
-  await waitForAgentTargetAbsent(sessionId, markRow);
-  recordReplayAssertion("notifications-single-mark-read", {
-    row: markRow,
-    initiallyUnread: true,
-    absentFromUnreadInbox: true,
-  });
-
-  const issueRoute = "/repos/github%3Asena-nana%2FLiliaGithub?projectTab=issues&issue=12";
-  await clickAgentTarget(sessionId, openTarget);
-  await waitForExactRoute(sessionId, issueRoute);
-  await waitForAgentElement(sessionId, "repo.conversation.create-body", 30_000, true);
-  recordReplayAssertion("notifications-recognized-object-exact-route", {
-    target: openTarget,
-    expectedRoute: issueRoute,
-    actualRoute: issueRoute,
-  });
-  await observeAgentStep(sessionId, "notification-opened-issue");
-
+async function runCommentFlow(sessionId, issueRoute) {
   const createBody = `agent-debug-comment-${runId}`;
   await typeAgentTarget(sessionId, "repo.conversation.create-body", createBody);
   await waitForAgentElement(sessionId, "repo.conversation.create-submit", 30_000, true);
@@ -963,37 +876,24 @@ async function runNotificationAndCommentFlow(sessionId) {
 }
 
 async function runHomePendingFlow(sessionId) {
-  await waitForAgentElementPrefix(sessionId, "home.pending.");
-  const visibleTargets = await execute(
-    sessionId,
-    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
-     return (api?.observe?.()?.elements ?? [])
-       .filter((element) => element.visible !== false && (element.id || element.agentId || "").startsWith("home.pending."))
-       .map((element) => element.id || element.agentId);`,
-  );
-  const openTarget = await waitForHomePendingOpenTarget(sessionId);
-  const deepLinkRoute = await readAgentLinkRoute(sessionId, openTarget);
-  if (!deepLinkRoute.startsWith("/repos/")) {
-    throw new Error(`Home pending target did not expose a repository deep link: ${openTarget} -> ${deepLinkRoute}`);
+  await waitForAgentElement(sessionId, homePendingIssueTarget, 30_000, true);
+  const issueRoute = await readAgentLinkRoute(sessionId, homePendingIssueTarget);
+  if (!issueRoute.startsWith("/repos/") || !issueRoute.endsWith("?projectTab=issues&issue=12")) {
+    throw new Error(`Home pending Issue target exposed an unexpected route: ${homePendingIssueTarget} -> ${issueRoute}`);
   }
+  await clickAgentTarget(sessionId, homePendingIssueTarget);
+  await waitForExactRoute(sessionId, issueRoute);
+  await waitForAgentElement(sessionId, "repo.conversation.create-body", 30_000, true);
+  recordReplayAssertion("home-pending-deep-link", { target: homePendingIssueTarget, deepLinkRoute: issueRoute });
+  await observeAgentStep(sessionId, "home-pending-issue-opened");
+  return issueRoute;
+}
 
-  await clickAgentTarget(sessionId, openTarget);
-  if (new URL(deepLinkRoute, "http://agent-debug.local").searchParams.get("resolveConflicts") === "1") {
-    const durableRoute = new URL(deepLinkRoute, "http://agent-debug.local");
-    durableRoute.searchParams.delete("resolveConflicts");
-    await waitForExactRoute(sessionId, `${durableRoute.pathname}${durableRoute.search}${durableRoute.hash}`);
-    await waitForAgentElement(sessionId, "repo.conflicts.dialog");
-    recordReplayAssertion("home-pending-deep-link", {
-      target: openTarget,
-      visibleTargets,
-      deepLinkRoute,
-      conflictDialogOpen: true,
-    });
-  } else {
-    await waitForExactRoute(sessionId, deepLinkRoute);
-    recordReplayAssertion("home-pending-deep-link", { target: openTarget, visibleTargets, deepLinkRoute });
-  }
-  await observeAgentStep(sessionId, "home-pending-deep-link-opened");
+async function openHomeOverview(sessionId) {
+  await clickAgentTarget(sessionId, "sidebar.nav.项目总览");
+  await waitForExactRoute(sessionId, "/");
+  await waitForAgentElement(sessionId, "home.page");
+  await waitForAgentElement(sessionId, "home.overview.search");
 }
 
 async function runPullRequestReviewFlow(sessionId) {
@@ -1282,13 +1182,9 @@ async function runRegressionFlow(sessionId) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
       if (step.observe === "home-overview") {
-        await runHomePendingFlow(sessionId);
-        await runNotificationAndCommentFlow(sessionId);
-        const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/");
-        await clickAgentTarget(sessionId, overviewTarget);
-        await waitForExactRoute(sessionId, "/");
-        await waitForAgentElement(sessionId, "home.page");
-        await waitForAgentElement(sessionId, "home.overview.search");
+        const issueRoute = await runHomePendingFlow(sessionId);
+        await runCommentFlow(sessionId, issueRoute);
+        await openHomeOverview(sessionId);
       }
       if (step.observe === "pulls-panel") await runPullRequestReviewFlow(sessionId);
     }

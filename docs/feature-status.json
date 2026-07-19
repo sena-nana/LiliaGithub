@@ -162,14 +162,6 @@
           }
         },
         {
-          "id": "notification-inbox",
-          "complete": true,
-          "text": {
-            "en": "In-app notification inbox with filtering, read state, unsubscribe, and internal routing.",
-            "zh-CN": "支持筛选、已读状态、取消订阅和内部路由的应用内通知收件箱。"
-          }
-        },
-        {
           "id": "projects-v2",
           "complete": false,
           "milestone": "P2",

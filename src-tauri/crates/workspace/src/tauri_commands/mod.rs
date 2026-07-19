@@ -65,7 +65,6 @@ mod github;
 mod github_discussions;
 mod home_attention;
 mod launch;
-mod notifications;
 mod refresh;
 mod repos;
 mod settings;
@@ -265,9 +264,6 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_update_repo_subscription,
         github::github_list_account_issues,
         github::github_list_action_notifications,
-        notifications::github_list_notifications,
-        notifications::github_mark_notifications_read,
-        notifications::github_unsubscribe_notification,
         github::github_list_repo_contribution,
         github::github_list_repo_owners,
         github::github_list_repo_templates,

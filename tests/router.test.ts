@@ -1598,8 +1598,8 @@ describe("基础路由", () => {
     expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
   });
 
-  it("根路由展示项目总览，未知路由与旧总览地址回到根路由", async () => {
-    for (const path of ["/", "/missing", "/overview", "/discovery"]) {
+  it("根路由展示项目总览，未知路由与旧地址回到根路由", async () => {
+    for (const path of ["/", "/missing", "/overview", "/discovery", "/notifications"]) {
       const { router } = await renderAt(path);
 
       expect(router.currentRoute.value.fullPath).toBe("/");

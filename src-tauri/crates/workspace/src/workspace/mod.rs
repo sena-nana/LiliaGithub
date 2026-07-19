@@ -7,7 +7,6 @@ pub mod github_discussions;
 pub mod home_attention;
 pub mod launch;
 mod lilia_code_handoff;
-pub mod notifications;
 pub(crate) mod operations;
 pub(crate) mod readme;
 pub(crate) mod refresh;
