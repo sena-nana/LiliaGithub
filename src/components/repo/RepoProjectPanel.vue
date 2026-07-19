@@ -4300,7 +4300,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         overflow="hidden"
       >
         <aside
-          class="card card--outlined project-sidebar"
+          class="project-sidebar"
           :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
         >
         <div
@@ -4812,6 +4812,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   align-content: stretch;
   align-self: stretch;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .project-sidebar--fill {
@@ -4830,7 +4831,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 2px;
 }
 
 .project-sidebar--fill .project-sidebar__scroll {
@@ -4846,9 +4846,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   min-width: 0;
   height: var(--repo-sidebar-header-height);
   padding: 3px;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-subtle);
+  background: var(--bg-elev);
 }
 
 .project-sidebar-switcher__tabs {
