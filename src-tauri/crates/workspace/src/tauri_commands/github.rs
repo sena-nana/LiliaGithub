@@ -54,6 +54,7 @@ delegate_command!(async github; fn github_get_workflow_artifact_file_preview(app
 delegate_command!(async github; fn github_list_repo_commits(app: AppHandle, repo_full_name: String, per_page: Option<u32>, sha: Option<String>, force_refresh: Option<bool>,) -> Result<Vec<CommitSummary>, String>);
 delegate_command!(async github; fn github_get_repo_commit_detail(app: AppHandle, repo_full_name: String, hash: String, force_refresh: Option<bool>,) -> Result<CommitDetail, String>);
 delegate_command!(async github; fn github_list_releases(app: AppHandle, repo_full_name: String, force_refresh: Option<bool>,) -> Result<Vec<GitHubRelease>, String>);
+delegate_command!(async github; fn github_get_release_by_tag(app: AppHandle, repo_full_name: String, tag_name: String,) -> Result<GitHubRelease, String>);
 delegate_command!(async github; fn github_create_release(app: AppHandle, repo_full_name: String, request: GitHubCreateReleaseRequest,) -> Result<GitHubRelease, String>);
 delegate_command!(async github; fn github_update_release(app: AppHandle, repo_full_name: String, release_id: u64, request: GitHubUpdateReleaseRequest,) -> Result<GitHubRelease, String>);
 delegate_command!(async github; fn github_delete_release(app: AppHandle, repo_full_name: String, release_id: u64,) -> Result<(), String>);

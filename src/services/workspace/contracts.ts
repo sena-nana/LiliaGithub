@@ -94,6 +94,7 @@ import type {
   SystemOpenTarget,
   WorkspaceSettings,
   WorkspaceBootstrap,
+  WorkspaceRecentContextV1,
   WorkspaceViewPreferences,
   WorkspaceRepoRefreshRequest,
   WorkspaceStartupCache,
@@ -162,6 +163,10 @@ export interface WorkspaceCommandContracts {
   workspace_update_view_preferences: CommandContract<
     { preferences: WorkspaceViewPreferences },
     WorkspaceSettings
+  >;
+  workspace_update_recent_context: CommandContract<
+    { workspaceId: string; context: Maybe<WorkspaceRecentContextV1> },
+    void
   >;
   workspace_update_account_preferences: CommandContract<
     { preferences: AccountPreferences },
@@ -456,6 +461,7 @@ export interface WorkspaceCommandContracts {
   >;
   github_get_repo_commit_detail: CommandContract<RepoFullNameArg & CommitHashArg & ForceRefreshArg, CommitDetail>;
   github_list_releases: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRelease[]>;
+  github_get_release_by_tag: CommandContract<RepoFullNameArg & { tagName: string }, GitHubRelease>;
   github_create_release: CommandContract<RepoFullNameArg & { request: GitHubCreateReleaseRequest }, GitHubRelease>;
   github_update_release: CommandContract<
     RepoFullNameArg & { releaseId: number; request: GitHubUpdateReleaseRequest },

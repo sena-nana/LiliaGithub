@@ -3,10 +3,12 @@ import { Settings } from "@lucide/vue";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useWorkspace } from "../../composables/useWorkspace";
+import { useWorkspaceRecentContext } from "../../composables/useWorkspaceRecentContext";
 import { Dropdown, UiIconButton } from "../../ui";
 
 const workspace = useWorkspace();
 const router = useRouter();
+const workspaceRecentContext = useWorkspaceRecentContext();
 const error = ref<string | null>(null);
 
 const options = computed(() => workspace.workspaceCatalog.value.map((item) => {
@@ -35,8 +37,7 @@ const activeWorkspaceId = computed({
 async function switchWorkspace(workspaceId: string) {
   error.value = null;
   try {
-    await workspace.switchWorkspace(workspaceId);
-    await router.push("/");
+    await workspaceRecentContext.switchWorkspace(workspaceId);
   } catch (nextError) {
     error.value = String(nextError).replace(/^Error:\s*/, "");
   }

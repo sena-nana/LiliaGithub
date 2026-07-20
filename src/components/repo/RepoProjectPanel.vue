@@ -48,6 +48,7 @@ import { invalidateSessionContextSnapshot } from "../../composables/sessionConte
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
+import { useWorkspaceRecentContext } from "../../composables/useWorkspaceRecentContext";
 import { useAccountPreferences } from "../../composables/useAccountPreferences";
 import type { RepoSyncIssueDisplay } from "../../composables/workspace/state";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
@@ -62,8 +63,11 @@ import {
   getRepoFilePreview,
   getRepoStorageStats,
   getGitHubIssueFilterMetadata,
+  getGitHubPullRequest,
   getGitHubPullRequestDiscussion,
+  getGitHubReleaseByTag,
   getGitHubRepoManagement,
+  getGitHubWorkflowRunDetail,
   listGitHubBranches,
   listRepoFiles,
   listGitHubIssues,
@@ -82,6 +86,7 @@ import {
   uploadGitHubReleaseAsset,
   deleteGitHubRepo,
   openUrl,
+  isConfirmedMissingResource,
   isGitHubBindingExpiredError,
 } from "../../services/workspace/client";
 import type {
@@ -401,6 +406,7 @@ const emit = defineEmits<{
   retrySync: [];
 }>();
 const workspace = useWorkspace();
+const workspaceRecentContext = useWorkspaceRecentContext();
 const accountPreferences = useAccountPreferences();
 const route = useRoute();
 const router = useRouter();
@@ -422,6 +428,8 @@ const fileBrowser = useRepoFileBrowser({
   targetHash: toRef(props, "fileTargetHash"),
   enabled: fileBrowserEnabled,
   deleteFile: (path: string) => workspace.deleteRepoFile(props.repoId, path),
+  onSelectionChange: syncFileSelectionRoute,
+  onMissingTarget: clearMissingFileTarget,
 });
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
@@ -581,6 +589,27 @@ const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
 let githubMutationGeneration = 0;
 let aboutTopicResizeObserver: ResizeObserver | null = null;
+
+function syncFileSelectionRoute(path: string) {
+  if (activeSection.value !== "files" || route.query.file === path) return;
+  const query: LocationQueryRaw = { ...route.query, file: path };
+  delete query.hash;
+  void router.replace({ path: route.path, query, hash: route.hash });
+}
+
+function clearMissingFileTarget(path: string) {
+  if (route.query.file !== path) return;
+  const query: LocationQueryRaw = { ...route.query };
+  delete query.file;
+  delete query.hash;
+  void router.replace({ path: route.path, query, hash: route.hash });
+}
+
+function clearMissingProjectTarget(...keys: string[]) {
+  const query: LocationQueryRaw = { ...route.query };
+  for (const key of keys) delete query[key];
+  void router.replace({ path: route.path, query, hash: route.hash });
+}
 
 const settingsForm = reactive({
   name: "",
@@ -1683,10 +1712,6 @@ function clearProjectCreateRoute() {
   void router.replace({ path: route.path, query });
 }
 
-function hasPullRequest(pullNumber: number) {
-  return pulls.value.some((pull) => pull.number === pullNumber);
-}
-
 function hasRun(runId: number) {
   return workflowRuns.value.some((run) => run.id === runId);
 }
@@ -1844,18 +1869,16 @@ async function focusIssue(issueNumber: number | null | undefined) {
     await loadIssues();
     return;
   }
-  if (issueState.value !== "all" && !hasIssue(issueNumber)) {
-    suppressIssueStateReload = true;
-    issueState.value = "all";
-  }
   await loadIssues();
-  if (!hasIssue(issueNumber)) {
+  const outcome = await loadIssueDiscussion(issueNumber);
+  if (outcome === "missing") {
     focusedIssueNumber.value = null;
     issueDiscussion.value = null;
+    clearMissingProjectTarget("issue");
     return;
   }
+  if (outcome !== "loaded") return;
   focusedIssueNumber.value = issueNumber;
-  await loadIssueDiscussion(issueNumber);
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.project-row--issue[data-issue-number="${issueNumber}"]`,
@@ -1875,15 +1898,27 @@ async function focusRun(runId: number | null | undefined) {
     await loadActions();
     return;
   }
+  if (!hasRun(runId)) await loadActions();
+  if (!hasRun(runId)) await loadActions(true);
   if (!hasRun(runId)) {
-    await loadActions();
-  }
-  if (!hasRun(runId)) {
-    await loadActions(true);
-  }
-  if (!hasRun(runId)) {
-    focusedRunId.value = null;
-    return;
+    const repoFullName = props.repoFullName;
+    if (!repoFullName) return;
+    try {
+      const detail = await getGitHubWorkflowRunDetail(repoFullName, runId, { forceRefresh: true });
+      workflowRuns.value = [detail.run, ...workflowRuns.value.filter((run) => run.id !== runId)];
+      const jobId = focusedJobId.value;
+      if (jobId && !detail.jobs.some((job) => job.id === jobId)) {
+        focusedJobId.value = null;
+        clearMissingProjectTarget("job");
+      }
+    } catch (err) {
+      if (isConfirmedMissingResource(err)) {
+        focusedRunId.value = null;
+        focusedJobId.value = null;
+        clearMissingProjectTarget("run", "job");
+      }
+      return;
+    }
   }
   focusedRunId.value = runId;
   await loadReleases();
@@ -1910,17 +1945,17 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
     return;
   }
   await loadPullRequests();
-  if (!hasPullRequest(pullNumber)) {
-    for (const state of ["closed", "merged"] as const) {
-      suppressPullStateReload = true;
-      pullState.value = state;
-      await loadPullRequests();
-      if (hasPullRequest(pullNumber)) break;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName) return;
+  try {
+    const pull = await getGitHubPullRequest(repoFullName, pullNumber);
+    pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pullNumber)];
+  } catch (err) {
+    if (isConfirmedMissingResource(err)) {
+      focusedPullRequestNumber.value = null;
+      pullRequestDiscussion.value = null;
+      clearMissingProjectTarget("pr");
     }
-  }
-  if (!hasPullRequest(pullNumber)) {
-    focusedPullRequestNumber.value = null;
-    pullRequestDiscussion.value = null;
     return;
   }
   focusedPullRequestNumber.value = pullNumber;
@@ -1944,7 +1979,21 @@ async function focusReleaseTag(tag: string | null | undefined, updateRoute = fal
   focusedJobId.value = null;
   await loadReleases();
   const normalized = tag?.trim() || null;
-  focusedReleaseTag.value = normalized && hasReleaseTag(normalized) ? normalized : null;
+  focusedReleaseTag.value = normalized;
+  if (normalized && props.repoFullName) {
+    try {
+      const release = await getGitHubReleaseByTag(props.repoFullName, normalized);
+      releases.value = [release, ...releases.value.filter((item) => item.id !== release.id)];
+      releasesError.value = null;
+    } catch (err) {
+      if (isConfirmedMissingResource(err)) {
+        focusedReleaseTag.value = null;
+        clearMissingProjectTarget("releaseTag");
+      } else {
+        releasesError.value = String(err);
+      }
+    }
+  }
   if (updateRoute && activeSection.value === "release") await pushProjectTabRoute("release");
   if (!focusedReleaseTag.value) return;
   await nextTick();
@@ -2210,10 +2259,11 @@ async function loadIssues(force = false) {
   }, { reusePending: !force });
 }
 
-async function loadIssueDiscussion(issueNumber: number, force = false) {
+async function loadIssueDiscussion(issueNumber: number, force = false): Promise<"loaded" | "missing" | "error"> {
   const repoFullName = props.repoFullName;
-  if (!repoFullName || remoteDeleted.value) return;
-  if (!force && issueDiscussion.value?.issue.number === issueNumber) return;
+  if (!repoFullName || remoteDeleted.value) return "error";
+  if (!force && issueDiscussion.value?.issue.number === issueNumber) return "loaded";
+  let outcome: "loaded" | "missing" | "error" = "error";
   issueDiscussionError.value = null;
   issueDiscussionLoading.value = true;
   await issueDiscussionLoader.run(issueNumber, async (runId) => {
@@ -2223,13 +2273,18 @@ async function loadIssueDiscussion(issueNumber: number, force = false) {
         : await getGitHubIssueDiscussion(repoFullName, issueNumber);
       if (!issueDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issueDiscussion.value = discussion;
-      issues.value = issues.value.map((issue) => issue.number === discussion.issue.number ? discussion.issue : issue);
+      issues.value = [discussion.issue, ...issues.value.filter((issue) => issue.number !== discussion.issue.number)];
+      outcome = "loaded";
     } catch (err) {
-      if (issueDiscussionLoader.isCurrent(runId)) issueDiscussionError.value = String(err);
+      if (issueDiscussionLoader.isCurrent(runId)) {
+        issueDiscussionError.value = String(err);
+        outcome = isConfirmedMissingResource(err) ? "missing" : "error";
+      }
     } finally {
       if (issueDiscussionLoader.isCurrent(runId)) issueDiscussionLoading.value = false;
     }
   });
+  return outcome;
 }
 
 async function loadPullRequests(force = false) {
@@ -2877,7 +2932,7 @@ async function confirmDeleteLocalRepo() {
     if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
-    await router.push("/");
+    await workspaceRecentContext.replaceAfterConfirmedMissing("/");
   } catch (err) {
     if (isRepoMutationCurrent(generation, repoId)) {
       deleteError.value = String(err);
@@ -2911,7 +2966,7 @@ async function confirmDeleteRepo() {
       currentRemoteFullName && repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
       && route.fullPath.startsWith(targetRoute)
     ) {
-      await router.push("/");
+      await workspaceRecentContext.replaceAfterConfirmedMissing("/");
     }
   } catch (err) {
     if (isGitHubMutationCurrent(generation, repoFullName)) {
@@ -3926,6 +3981,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :create-view="discussionCreateView"
             @focus="focusDiscussion"
             @back="closeDiscussionDetail"
+            @missing="closeDiscussionDetail"
             @cancel-create="closeDiscussionCreateView"
             @created="handleDiscussionCreated"
           />

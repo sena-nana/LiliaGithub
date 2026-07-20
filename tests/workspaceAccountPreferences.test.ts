@@ -3,17 +3,21 @@ import {
   addWorkspaceRoot,
   createLocalRepo,
   createWorkspace,
+  deleteWorkspace,
   getGitHubAccountProfile,
   getGitHubAccountReadme,
   getGitHubBindingStatus,
+  getWorkspaceBootstrap,
   getWorkspaceSettings,
   pollGitHubDeviceFlow,
+  renameWorkspace,
   resetWorkspaceFallbacksForTests,
   setContributionIdentities,
   startGitHubDeviceFlow,
   switchWorkspace,
   unbindGitHub,
   updateAccountPreferences,
+  updateWorkspaceRecentContext,
   updateWorkspaceViewPreferences,
   updateGitHubAccountProfile,
   workspaceFallbackForTests,
@@ -95,9 +99,53 @@ describe("workspace account preferences fallback", () => {
     expect(restored.settings.managedRepoIds).toContain(alphaRepo.id);
   });
 
+  it("persists recent context by workspace without changing the active context revision", async () => {
+    const alpha = await createWorkspace("Alpha", "C:\\Workspaces\\Alpha");
+    const alphaId = alpha.settings.activeWorkspaceId!;
+    await updateWorkspaceRecentContext(alphaId, {
+      version: 1,
+      route: "/repos/alpha/issues/42?state=open",
+    });
+    await renameWorkspace(alphaId, "Alpha Renamed");
+
+    const beta = await createWorkspace("Beta", "C:\\Workspaces\\Beta");
+    const betaId = beta.settings.activeWorkspaceId!;
+    const revision = beta.contextRevision;
+
+    await updateWorkspaceRecentContext(alphaId, {
+      version: 1,
+      route: "/repos/alpha/pulls/7",
+    });
+    const activeBeta = await getWorkspaceBootstrap();
+    expect(activeBeta.contextRevision).toBe(revision);
+    expect(activeBeta.settings.activeWorkspace).toMatchObject({
+      id: betaId,
+      recentContext: null,
+    });
+
+    const restoredAlpha = await switchWorkspace(alphaId);
+    expect(restoredAlpha.settings.activeWorkspace).toMatchObject({
+      name: "Alpha Renamed",
+      recentContext: { version: 1, route: "/repos/alpha/pulls/7" },
+    });
+
+    const switchedRevision = restoredAlpha.contextRevision;
+    await updateWorkspaceRecentContext(alphaId, null);
+    const cleared = await getWorkspaceBootstrap();
+    expect(cleared.contextRevision).toBe(switchedRevision);
+    expect(cleared.settings.activeWorkspace?.recentContext).toBeNull();
+
+    const afterDelete = await deleteWorkspace(alphaId);
+    expect(afterDelete.settings.activeWorkspace?.id).toBe(betaId);
+  });
+
   it("keeps the complete workspace profile isolated across bound and anonymous accounts", async () => {
     const accountA = (await getGitHubBindingStatus()).binding!.login;
-    await createWorkspace("Account A", "C:\\Accounts\\A");
+    const accountAWorkspace = await createWorkspace("Account A", "C:\\Accounts\\A");
+    await updateWorkspaceRecentContext(accountAWorkspace.settings.activeWorkspaceId!, {
+      version: 1,
+      route: "/repos/account-a/issues/1",
+    });
     await updateAccountPreferences(preferences());
     await setContributionIdentities([{ name: "Account A", email: "a@example.com" }]);
 
@@ -108,11 +156,16 @@ describe("workspace account preferences fallback", () => {
       pullRequests: { state: "open", sort: "updated", direction: "desc" },
     });
     expect(newAccount.contributionIdentities).toEqual([]);
-    await createWorkspace("Account B", "C:\\Accounts\\B");
+    const accountBWorkspace = await createWorkspace("Account B", "C:\\Accounts\\B");
+    await updateWorkspaceRecentContext(accountBWorkspace.settings.activeWorkspaceId!, {
+      version: 1,
+      route: "/repos/account-b/files?ref=main",
+    });
 
     fallback.setFallbackGitHubBindingStatusForTests(binding(accountA));
     const restoredA = await getWorkspaceSettings();
     expect(restoredA.workspaceRoot).toBe("C:\\Accounts\\A");
+    expect(restoredA.activeWorkspace?.recentContext?.route).toBe("/repos/account-a/issues/1");
     expect(restoredA.accountPreferences).toEqual(preferences());
     expect(restoredA.contributionIdentities).toEqual([{ name: "Account A", email: "a@example.com" }]);
 
@@ -122,6 +175,8 @@ describe("workspace account preferences fallback", () => {
 
     fallback.setFallbackGitHubBindingStatusForTests(binding("account-b"));
     expect((await getWorkspaceSettings()).workspaceRoot).toBe("C:\\Accounts\\B");
+    expect((await getWorkspaceSettings()).activeWorkspace?.recentContext?.route)
+      .toBe("/repos/account-b/files?ref=main");
     await unbindGitHub();
     expect((await getWorkspaceSettings()).workspaceRoot).toBe("C:\\Accounts\\Anonymous");
   });

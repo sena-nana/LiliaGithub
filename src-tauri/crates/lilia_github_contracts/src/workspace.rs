@@ -73,6 +73,13 @@ pub struct WorkspaceViewPreferences {
     pub home_repository_status_sort: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRecentContextV1 {
+    pub version: u32,
+    pub route: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NamedWorkspace {
@@ -112,6 +119,8 @@ pub struct NamedWorkspace {
     pub contribution_identities: Vec<ContributionIdentity>,
     #[serde(default)]
     pub view_preferences: WorkspaceViewPreferences,
+    #[serde(default)]
+    pub recent_context: Option<WorkspaceRecentContextV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

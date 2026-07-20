@@ -31,7 +31,17 @@ import type {
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { hasRepoTag, resolveRepoContext } from "../utils/repoContext";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
-import { normalizeRepoProjectTab, repoRoute, repoRouteTabFromRoute, type RepoProjectTab, type RepoRouteTab } from "../utils/repoRoutes";
+import { isConfirmedMissingResource } from "../services/workspace/client";
+import { useWorkspaceRecentContext } from "./useWorkspaceRecentContext";
+import { isLocalRepositoryConfirmedMissing } from "../utils/workspaceTruth";
+import {
+  normalizeRepoProjectTab,
+  repoCommitRoute,
+  repoRoute,
+  repoRouteTabFromRoute,
+  type RepoProjectTab,
+  type RepoRouteTab,
+} from "../utils/repoRoutes";
 
 type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
@@ -62,6 +72,7 @@ export function useRepoDetailController() {
   const route = useRoute();
   const router = useRouter();
   const workspace = useWorkspace();
+  const workspaceRecentContext = useWorkspaceRecentContext();
   const activeTab = computed<RepoRouteTab>(() => repoRouteTabFromRoute(route));
   const activeProjectTab = computed<RepoProjectTab>(
     () => normalizeRepoProjectTab(route.query.projectTab) ?? "readme",
@@ -73,6 +84,8 @@ export function useRepoDetailController() {
   const activeProjectJob = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.job));
   const activeFilePath = computed<string | null>(() => normalizeStringQuery(route.query.file));
   const activeFileHash = computed<string | null>(() => normalizeStringQuery(route.query.hash));
+  const activeChangePath = computed<string | null>(() => normalizeStringQuery(route.query.change));
+  const activeRemoteRef = computed<string | null>(() => normalizeStringQuery(route.query.ref));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
   const repoDetailLoading = ref(false);
@@ -81,12 +94,12 @@ export function useRepoDetailController() {
   const launchTerminalVisible = ref(false);
   const pullStrategy = ref<RepoPullStrategy>("merge");
   const openTarget = ref<SystemOpenTarget>("folder");
-  const focusedChangePath = ref<string | null>(null);
+  const focusedChangePath = ref<string | null>(activeChangePath.value);
   const selectedCommitHash = ref<string | null>(null);
   const githubBranches = ref<BranchSummary[]>([]);
   const githubCommits = ref<CommitSummary[]>([]);
   const githubDefaultBranch = ref<string | null>(null);
-  const activeRemoteBranch = ref<string | null>(null);
+  const activeRemoteBranch = ref<string | null>(activeRemoteRef.value);
   const githubBranchLoading = ref(false);
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
@@ -216,6 +229,19 @@ export function useRepoDetailController() {
   const hasConflicts = computed(() =>
     conflicts.value.files.length > 0 || conflicts.value.operation !== "none",
   );
+  const localRepoConfirmedMissing = computed(() => {
+    const active = workspace.state.settings?.activeWorkspace;
+    return isLocalRepositoryConfirmedMissing({
+      repoId: repoId.value,
+      remoteRepo: Boolean(remoteFullName.value),
+      loading: workspace.state.loading,
+      scanning: workspace.state.scanning,
+      activeWorkspaceId: active?.id ?? null,
+      rootsAvailable: Boolean(active?.roots.length && active.roots.every((root) => root.available)),
+      verifiedWorkspaceId: workspace.state.repoListVerifiedWorkspaceId,
+      repoPresent: workspace.repoById(repoId.value) != null,
+    });
+  });
 
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
@@ -375,6 +401,10 @@ export function useRepoDetailController() {
     }, 1500);
   });
 
+  watch(localRepoConfirmedMissing, (missing) => {
+    if (missing) void workspaceRecentContext.replaceAfterConfirmedMissing("/");
+  }, { immediate: true });
+
   onUnmounted(() => {
     void setActiveRepoForRefresh(null);
     repoDetailLoader.invalidate();
@@ -390,7 +420,7 @@ export function useRepoDetailController() {
   watch(repoId, () => {
     commitMessage.value = "";
     launchTerminalVisible.value = false;
-    focusedChangePath.value = null;
+    focusedChangePath.value = activeChangePath.value;
     selectedCommitHash.value = null;
     openTarget.value = "folder";
     repoDetailLoader.invalidate();
@@ -401,7 +431,7 @@ export function useRepoDetailController() {
     githubBranches.value = [];
     githubCommits.value = [];
     githubDefaultBranch.value = null;
-    activeRemoteBranch.value = null;
+    activeRemoteBranch.value = activeRemoteRef.value;
     githubBranchLoading.value = false;
     repoDetailLoading.value = false;
     repoDetailError.value = null;
@@ -425,6 +455,15 @@ export function useRepoDetailController() {
 
   watch(changes, () => {
     syncFocusedChange();
+  });
+
+  watch(activeChangePath, (path) => {
+    focusedChangePath.value = path;
+    syncFocusedChange();
+  });
+
+  watch(activeRemoteRef, (branch) => {
+    if (branch !== activeRemoteBranch.value) activeRemoteBranch.value = branch;
   });
 
   watch(
@@ -519,6 +558,15 @@ export function useRepoDetailController() {
         repoDetailLoading.value = false;
         repoDetailError.value = null;
         if (!remoteContextRestored.value) return;
+        if (githubRepoFullName.value && canUseGitHubData.value) {
+          try {
+            await workspace.getGitHubRepoManagement(githubRepoFullName.value);
+          } catch (err) {
+            if (isConfirmedMissingResource(err)) await workspaceRecentContext.replaceAfterConfirmedMissing("/");
+            else actionError.value = String(err);
+            return;
+          }
+        }
         await loadVisibleRemoteGitHubData(githubRepoFullName.value);
         return;
       }
@@ -621,6 +669,7 @@ export function useRepoDetailController() {
             ? current
             : management.defaultBranch || branches[0]?.name || null;
           activeRemoteBranch.value = nextBranch;
+          if (current && current !== nextBranch) replaceRouteQuery("ref", null);
         }
       } catch (err) {
         if (!githubBranchesLoader.isCurrent(runId)) return;
@@ -682,11 +731,20 @@ export function useRepoDetailController() {
     if (!focusedChangePath.value) return;
     if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
       focusedChangePath.value = null;
+      replaceRouteQuery("change", null);
     }
   }
 
   function focusChange(path: string) {
     focusedChangePath.value = path;
+    replaceRouteQuery("change", path);
+  }
+
+  function replaceRouteQuery(key: string, value: string | null) {
+    const query = { ...route.query };
+    if (value) query[key] = value;
+    else delete query[key];
+    void router.replace({ path: route.path, query, hash: route.hash });
   }
 
   function shouldOfferSystemGitPush(error: unknown) {
@@ -1173,6 +1231,7 @@ export function useRepoDetailController() {
   function checkout(branch: string) {
     if (branchBrowseUsesGitHub.value) {
       activeRemoteBranch.value = branch.trim() || activeRemoteBranch.value;
+      replaceRouteQuery("ref", activeRemoteBranch.value);
       return;
     }
     void runAction(
@@ -1256,8 +1315,7 @@ export function useRepoDetailController() {
   }
 
   function openCommit(commit: HistoryCommit) {
-    void router.push(repoRoute(repoId.value, "history"));
-    selectedCommitHash.value = commit.hash;
+    void router.push(repoCommitRoute(repoId.value, commit.hash));
   }
 
   function cherryPickCommit(hash: string) {

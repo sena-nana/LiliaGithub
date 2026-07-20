@@ -110,6 +110,7 @@ import type {
   SystemOpenTarget,
   WorkspaceTask,
   WorkspaceBootstrap,
+  WorkspaceRecentContextV1,
   WorkspaceRoot,
   WorkspaceViewPreferences,
   WorkspaceRepoRefreshRequest,
@@ -2510,6 +2511,7 @@ function withFallbackWorkspaceMetadata(
     activeWorkspace: {
       id,
       name,
+      recentContext: null,
       roots,
       primaryRootId,
       viewPreferences: defaultWorkspaceViewPreferences(),
@@ -2606,6 +2608,7 @@ let fallbackSettingsByAccount = new Map<string, WorkspaceSettings>();
 type FallbackWorkspaceSlot = {
   id: string;
   name: string;
+  recentContext: WorkspaceRecentContextV1 | null;
   roots: WorkspaceRoot[];
   primaryRootId: string | null;
   viewPreferences: WorkspaceViewPreferences;
@@ -2648,6 +2651,7 @@ type FallbackGitHubActionNotificationsOverride = (
 ) => Promise<GitHubActionNotification[]> | GitHubActionNotification[];
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
+let fallbackGitHubRepoManagementError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscriptions();
 let fallbackGitHubAccountIssuesOverride: FallbackGitHubAccountIssuesOverride | null = null;
@@ -2779,6 +2783,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoDetailOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
+  fallbackGitHubRepoManagementError = null;
   fallbackGitHubRepoPagesOverride = null;
   fallbackGitHubAccountIssuesOverride = null;
   fallbackGitHubActionNotificationsOverride = null;
@@ -2929,6 +2934,16 @@ export function setFallbackRepoOverridesForTests(overrides: Record<string, RepoS
   fallbackRepoOverrides = Object.fromEntries(
     Object.entries(overrides).map(([repoId, summary]) => [repoId, { ...summary }]),
   );
+  const knownIds = new Set(fallbackRepos.map((repo) => repo.id));
+  for (const summary of Object.values(overrides)) {
+    if (!knownIds.has(summary.id)) {
+      fallbackRepos.push(cloneRepoSummary(summary));
+      if (!fallbackSettings.managedRepoIds.includes(summary.id)) {
+        fallbackSettings.managedRepoIds = [...fallbackSettings.managedRepoIds, summary.id];
+      }
+      knownIds.add(summary.id);
+    }
+  }
 }
 
 export function setFallbackLaunchCandidatesForTests(
@@ -2960,6 +2975,10 @@ export function setFallbackStartupCacheForTests(cache: WorkspaceStartupCache | n
 
 export function setFallbackGitHubReposErrorForTests(error: string | null) {
   fallbackGitHubReposError = error;
+}
+
+export function setFallbackGitHubRepoManagementErrorForTests(error: string | null) {
+  fallbackGitHubRepoManagementError = error;
 }
 
 export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | null) {
@@ -3337,6 +3356,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     activeWorkspace: settings.activeWorkspace
       ? {
           ...settings.activeWorkspace,
+          recentContext: cloneWorkspaceRecentContext(settings.activeWorkspace.recentContext),
           roots: settings.activeWorkspace.roots.map((root) => ({ ...root })),
           viewPreferences: {
             ...settings.activeWorkspace.viewPreferences,
@@ -3425,11 +3445,18 @@ function cloneWorkspaceViewPreferences(preferences: WorkspaceViewPreferences): W
   return { ...preferences, collapsedGroupIds: [...preferences.collapsedGroupIds] };
 }
 
+function cloneWorkspaceRecentContext(
+  context: WorkspaceRecentContextV1 | null,
+): WorkspaceRecentContextV1 | null {
+  return context ? { ...context } : null;
+}
+
 function namedWorkspaceFromSlot(slot: FallbackWorkspaceSlot) {
   const settings = slot.settings;
   return {
     id: slot.id,
     name: slot.name,
+    recentContext: cloneWorkspaceRecentContext(slot.recentContext),
     roots: slot.roots.map(cloneWorkspaceRoot),
     primaryRootId: slot.primaryRootId,
     viewPreferences: cloneWorkspaceViewPreferences(slot.viewPreferences),
@@ -3488,6 +3515,7 @@ function createFallbackWorkspaceProfile(settings: WorkspaceSettings): FallbackWo
   const slot: FallbackWorkspaceSlot = {
     id: active?.id ?? settings.activeWorkspaceId ?? "workspace-default",
     name: active?.name ?? "默认工作区",
+    recentContext: cloneWorkspaceRecentContext(active?.recentContext ?? null),
     roots,
     primaryRootId: active?.primaryRootId ?? roots[0]?.id ?? null,
     viewPreferences: active
@@ -4183,6 +4211,7 @@ export function createWorkspace(name: string, rootPath: string): Promise<Workspa
     const slot: FallbackWorkspaceSlot = {
       id: workspaceId,
       name: normalizedName,
+      recentContext: null,
       roots: [root],
       primaryRootId: root.id,
       viewPreferences: defaultWorkspaceViewPreferences(),
@@ -4313,6 +4342,22 @@ export function updateWorkspaceViewPreferences(
     slot.viewPreferences = cloneWorkspaceViewPreferences(preferences);
     fallbackSettings = fallbackSettingsForProfile(profile);
     return visibleFallbackSettings();
+  });
+}
+
+export function updateWorkspaceRecentContext(
+  workspaceId: string,
+  context: WorkspaceRecentContextV1 | null,
+): Promise<void> {
+  return call("workspace_update_recent_context", { workspaceId, context }, () => {
+    persistCurrentFallbackWorkspace();
+    const profile = currentFallbackWorkspaceProfile();
+    const slot = profile.workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!slot) throw new Error("工作区不存在");
+    slot.recentContext = cloneWorkspaceRecentContext(context);
+    if (profile.activeWorkspaceId === workspaceId) {
+      fallbackSettings = fallbackSettingsForProfile(profile);
+    }
   });
 }
 
@@ -6034,7 +6079,10 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
 }
 
 export function getGitHubRepoManagement(repoFullName: string): Promise<GitHubRepoManagement> {
-  return call("github_get_repo_management", { repoFullName }, () => fallbackRepoManagement(repoFullName));
+  return call("github_get_repo_management", { repoFullName }, () => {
+    if (fallbackGitHubRepoManagementError) throw new Error(fallbackGitHubRepoManagementError);
+    return fallbackRepoManagement(repoFullName);
+  });
 }
 
 export function updateGitHubRepoSettings(
@@ -7135,6 +7183,15 @@ export function listGitHubReleases(repoFullName: string): Promise<GitHubRelease[
       .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
       .map(cloneRelease),
   );
+}
+
+export function getGitHubReleaseByTag(repoFullName: string, tagName: string): Promise<GitHubRelease> {
+  return call("github_get_release_by_tag", { repoFullName, tagName }, () => {
+    const release = (fallbackGitHubReleases[repoFullName] ?? [])
+      .find((item) => item.tagName === tagName);
+    if (!release) throw new Error(`未找到 Release ${tagName}`);
+    return cloneRelease(release);
+  });
 }
 
 export function createGitHubRelease(

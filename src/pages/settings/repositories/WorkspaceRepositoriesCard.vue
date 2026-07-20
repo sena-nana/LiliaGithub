@@ -4,11 +4,13 @@ import { useRouter } from "vue-router";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../../composables/useWorkspace";
+import { useWorkspaceRecentContext } from "../../../composables/useWorkspaceRecentContext";
 import type { HiddenRepo, WorkspaceRoot } from "../../../services/workspace";
 import { Dropdown, SettingsRow, UiButton, UiCard, UiDialog } from "../../../ui";
 
 const workspace = useWorkspace();
 const router = useRouter();
+const workspaceRecentContext = useWorkspaceRecentContext();
 const componentEpoch = useComponentEpoch();
 const hiddenReposLoader = createLatestAsyncLoader({ componentEpoch });
 const hiddenRepos = ref<HiddenRepo[]>([]);
@@ -72,8 +74,7 @@ async function switchWorkspace(workspaceId: string) {
   error.value = null;
   notice.value = null;
   try {
-    await workspace.switchWorkspace(workspaceId);
-    await router.push("/");
+    await workspaceRecentContext.switchWorkspace(workspaceId);
   } catch (nextError) {
     error.value = cleanError(nextError);
   }
@@ -94,9 +95,8 @@ async function createWorkspace() {
   busy.value = true;
   error.value = null;
   try {
-    await workspace.createWorkspace(name, createRootPath.value);
+    await workspaceRecentContext.createWorkspace(name, createRootPath.value);
     createDialogOpen.value = false;
-    await router.push("/");
   } catch (nextError) {
     error.value = cleanError(nextError);
   } finally {
@@ -133,9 +133,8 @@ async function deleteWorkspace() {
   busy.value = true;
   error.value = null;
   try {
-    await workspace.deleteWorkspace(current.id);
+    await workspaceRecentContext.deleteWorkspace(current.id);
     deleteDialogOpen.value = false;
-    await router.push("/");
   } catch (nextError) {
     error.value = cleanError(nextError);
   } finally {
