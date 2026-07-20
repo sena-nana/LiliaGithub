@@ -23,7 +23,6 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
-import WorkspaceSwitcher from "../components/sidebar/WorkspaceSwitcher.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
@@ -888,10 +887,6 @@ async function deleteGroup(group: { id: string }) {
   <LiliaSidebarFrame agent-id="sidebar">
     <template #top>
       <div class="sb-section">
-        <div class="sb-section__header">
-          <span class="sb-section__title">工作区</span>
-        </div>
-        <WorkspaceSwitcher />
         <nav class="sb-tree" aria-label="主导航">
           <RouterLink
             v-for="item in SIDEBAR_NAV"
