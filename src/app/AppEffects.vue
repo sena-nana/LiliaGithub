@@ -1,28 +1,27 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from "vue";
 import { installLiliaGithubAgentDebugCompat } from "../agentDebug/compat";
-import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
 import { installRepoRefreshEvents } from "../composables/workspace/repoRefreshEvents";
+import { useWorkspaceRecentContext } from "../composables/useWorkspaceRecentContext";
 
-const workspace = useWorkspace();
-if (!workspace.isReady.value && !workspace.state.loading) {
-  void workspace.initialize();
-}
+const workspaceRecentContext = useWorkspaceRecentContext();
 
 let cleanupEffects: (() => void) | null = null;
+let cleanupDebug: (() => void) | null = null;
 let disposed = false;
 
 onMounted(async () => {
-  const cleanupDebug = installLiliaGithubAgentDebugCompat();
+  cleanupDebug = installLiliaGithubAgentDebugCompat();
+  await workspaceRecentContext.initialize();
+  if (disposed) return;
   const [cleanupFocus, cleanupLaunch, cleanupRepoRefresh] = await Promise.all([
     installWorkspaceFocusRefresh(),
     installLaunchStatusEvents(),
     installRepoRefreshEvents(),
   ]);
   const cleanup = () => {
-    cleanupDebug();
     cleanupFocus();
     cleanupLaunch();
     cleanupRepoRefresh();
@@ -36,6 +35,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true;
+  workspaceRecentContext.dispose();
+  cleanupDebug?.();
+  cleanupDebug = null;
   cleanupEffects?.();
   cleanupEffects = null;
 });

@@ -24,8 +24,10 @@ import {
   getGitHubIssueDiscussion,
   getGitHubIssueFilterMetadata,
   getGitHubBranchProtection,
+  getGitHubPullRequest,
   getGitHubRepoFilePreview,
   getGitHubPullRequestDiscussion,
+  getGitHubReleaseByTag,
   getGitHubRepoManagement,
   getGitHubRepoRuleset,
   getGitHubRepoSettingsSection,
@@ -666,6 +668,8 @@ vi.mock("../src/services/workspace/client", () => ({
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
   getGitHubPullRequestDiscussion: vi.fn(),
+  getGitHubPullRequest: vi.fn(),
+  getGitHubReleaseByTag: vi.fn(),
   getRepoCommitDetail: getRepoCommitDetailMock,
   getGitHubRepoManagement: vi.fn(),
   getGitHubRepoRuleset: vi.fn(),
@@ -693,6 +697,7 @@ vi.mock("../src/services/workspace/client", () => ({
       message.includes("HTTP 403") ||
       message.toLowerCase().includes("bad credentials");
   },
+  isConfirmedMissingResource: (err: unknown) => /404|not[ -]?found|不存在|已删除|未找到/i.test(String(err)),
   mergeGitHubPullRequest: vi.fn(),
   pickFiles: vi.fn(),
   listRepoFiles: vi.fn(async () => []),
@@ -872,6 +877,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(getGitHubIssueDiscussion).mockReset();
     vi.mocked(getGitHubBranchProtection).mockReset();
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
+    vi.mocked(getGitHubPullRequest).mockReset();
+    vi.mocked(getGitHubReleaseByTag).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
     vi.mocked(getRepoCommitDetail).mockReset();
     vi.mocked(getRepoFilePreview).mockReset();
@@ -886,6 +893,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubRepoRulesets).mockReset();
     vi.mocked(listGitHubBranches).mockReset();
     vi.mocked(listGitHubReleases).mockReset();
+    vi.mocked(getGitHubReleaseByTag).mockResolvedValue(githubReleases[0]);
+    vi.mocked(getGitHubPullRequest).mockResolvedValue(githubPullRequests[0]);
     vi.mocked(listRepoFiles).mockReset();
     vi.mocked(openPathTarget).mockReset();
     vi.mocked(pickFiles).mockReset();
@@ -1685,6 +1694,35 @@ describe("RepoProjectPanel", () => {
 
     await view.refreshCurrentPage();
     expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
+  });
+
+  it("Release 深链通过 tag 详情恢复，只有确认缺失才清理目标", async () => {
+    const hiddenRelease = {
+      ...githubReleases[0],
+      id: 9999,
+      tagName: "v9.0.0",
+      name: "Hidden release",
+    };
+    vi.mocked(listGitHubReleases).mockResolvedValue([githubReleases[0]]);
+    vi.mocked(getGitHubReleaseByTag).mockResolvedValue(hiddenRelease);
+    const found = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo", projectTab: "release" },
+      "/repos/local-repo?projectTab=release&releaseTag=v9.0.0",
+    );
+
+    expect(await found.findByRole("heading", { level: 4, name: "Hidden release" })).toBeInTheDocument();
+    expect(getGitHubReleaseByTag).toHaveBeenCalledWith("sena-nana/remote-repo", "v9.0.0");
+    expect(found.router.currentRoute.value.query.releaseTag).toBe("v9.0.0");
+    found.unmount();
+
+    vi.mocked(listGitHubReleases).mockResolvedValue([githubReleases[0]]);
+    vi.mocked(getGitHubReleaseByTag).mockRejectedValue(new Error("HTTP 404 Not Found"));
+    const missing = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo", projectTab: "release" },
+      "/repos/local-repo?projectTab=release&releaseTag=deleted-tag",
+    );
+    await waitFor(() => expect(missing.router.currentRoute.value.query).not.toHaveProperty("releaseTag"));
+    expect(await missing.findByRole("heading", { level: 4, name: "Lilia v1.0.0" })).toBeInTheDocument();
   });
 
   it("Release Tab 支持创建、编辑、删除 release 与上传、删除资产", async () => {
@@ -2737,6 +2775,27 @@ describe("RepoProjectPanel", () => {
         direction: "asc",
       }),
     );
+  });
+
+  it("Pull Request 不在当前筛选结果时通过详情接口恢复且保留筛选", async () => {
+    vi.mocked(listGitHubPullRequests).mockResolvedValue([]);
+    vi.mocked(getGitHubPullRequest).mockResolvedValue(githubPullRequests[0]);
+    const view = await renderProjectPanel(
+      {
+        repoFullName: "sena-nana/remote-repo",
+        projectTab: "pulls",
+        projectPullRequestNumber: githubPullRequests[0].number,
+      },
+      `/repos/local-repo?projectTab=pulls&pullState=open&pr=${githubPullRequests[0].number}`,
+    );
+
+    expect(await view.findByText(`#${githubPullRequests[0].number} ${githubPullRequests[0].title}`)).toBeInTheDocument();
+    expect(getGitHubPullRequest).toHaveBeenCalledWith("sena-nana/remote-repo", githubPullRequests[0].number);
+    expect(view.router.currentRoute.value.query).toMatchObject({
+      projectTab: "pulls",
+      pullState: "open",
+      pr: String(githubPullRequests[0].number),
+    });
   });
 
   it("Issues 分区通过模板创建视图提交 Issue Form", async () => {

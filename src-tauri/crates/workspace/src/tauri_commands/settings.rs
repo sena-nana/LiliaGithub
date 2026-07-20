@@ -4,6 +4,7 @@ delegate_command!(settings; fn workspace_get_settings(app: AppHandle) -> Workspa
 delegate_command!(settings; fn workspace_get_bootstrap(app: AppHandle) -> WorkspaceBootstrap);
 delegate_command!(settings; fn workspace_create(app: AppHandle, name: String, root_path: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_rename(app: AppHandle, workspace_id: String, name: String,) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn workspace_update_recent_context(app: AppHandle, workspace_id: String, context: Option<WorkspaceRecentContextV1>,) -> Result<(), String>);
 delegate_command!(settings; fn workspace_delete(app: AppHandle, workspace_id: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_switch(app: AppHandle, workspace_id: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_add_root(app: AppHandle, workspace_id: String, root_path: String,) -> Result<WorkspaceBootstrap, String>);

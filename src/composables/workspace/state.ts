@@ -28,6 +28,7 @@ export interface WorkspaceState {
   switchingWorkspace: boolean;
   bindingStatus: GitHubBindingStatus | null;
   repos: RepoSummary[];
+  repoListVerifiedWorkspaceId: string | null;
   repoListChange: RepoListChangeState;
   repoDetails: Record<string, RepoDetail | undefined>;
   repoRemoteCheckedAt: Record<string, number | undefined>;
@@ -95,6 +96,7 @@ export const state = reactive<WorkspaceState>({
   switchingWorkspace: false,
   bindingStatus: null,
   repos: [],
+  repoListVerifiedWorkspaceId: null,
   repoListChange: {
     revision: 0,
     changedRepoIds: [],
@@ -156,6 +158,7 @@ export function isCurrentWorkspaceContext(value: {
 
 export function resetWorkspaceScopedState() {
   state.repos = [];
+  state.repoListVerifiedWorkspaceId = null;
   state.repoListChange = {
     revision: state.repoListChange.revision + 1,
     changedRepoIds: [],
@@ -325,6 +328,10 @@ export function replaceRepos(summaries: RepoSummary[]) {
       };
     }
   }
+}
+
+export function markRepoListVerified(workspaceId: string | null) {
+  state.repoListVerifiedWorkspaceId = workspaceId;
 }
 
 export function removeRepo(repoId: string) {
@@ -685,6 +692,7 @@ export function resetWorkspaceStateForTests() {
   state.switchingWorkspace = false;
   state.bindingStatus = null;
   state.repos = [];
+  state.repoListVerifiedWorkspaceId = null;
   state.repoListChange = {
     revision: 0,
     changedRepoIds: [],

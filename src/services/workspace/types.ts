@@ -13,6 +13,11 @@ export interface WorkspaceViewPreferences {
   homeRepositoryStatusSort: string;
 }
 
+export interface WorkspaceRecentContextV1 {
+  version: 1;
+  route: string;
+}
+
 export interface WorkspaceScopedSettings {
   roots: WorkspaceRoot[];
   primaryRootId: string | null;
@@ -36,6 +41,7 @@ export interface WorkspaceScopedSettings {
 export interface NamedWorkspace extends WorkspaceScopedSettings {
   id: string;
   name: string;
+  recentContext: WorkspaceRecentContextV1 | null;
 }
 
 export interface WorkspaceCatalogEntry {

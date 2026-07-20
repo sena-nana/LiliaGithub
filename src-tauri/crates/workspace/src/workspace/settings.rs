@@ -30,9 +30,9 @@ use lilia_github_contracts::workspace::{
     ContributionIdentityRecommendationSource, GitHubOwnerKind, HiddenRepo, NamedWorkspace,
     RecentLocalRepoVisit, RemoteRepoShortcut, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
     RepoSummary, RepoSyncPreference, WorkspaceBootstrap, WorkspaceCatalogEntry,
-    WorkspaceCloneRepositoryRef, WorkspaceProfile, WorkspaceRepoGroup, WorkspaceRepoPlacement,
-    WorkspaceRoot, WorkspaceSettings, WorkspaceStartupCache, WorkspaceStartupContributions,
-    WorkspaceViewPreferences,
+    WorkspaceCloneRepositoryRef, WorkspaceProfile, WorkspaceRecentContextV1, WorkspaceRepoGroup,
+    WorkspaceRepoPlacement, WorkspaceRoot, WorkspaceSettings, WorkspaceStartupCache,
+    WorkspaceStartupContributions, WorkspaceViewPreferences,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -220,6 +220,7 @@ fn workspace_from_legacy(mut legacy: WorkspaceSettings) -> Option<NamedWorkspace
         local_contribution_cache: legacy.local_contribution_cache,
         contribution_identities: legacy.contribution_identities,
         view_preferences: WorkspaceViewPreferences::default(),
+        recent_context: None,
     };
     migrate_repo_ids(&mut workspace, &root_id);
     Some(workspace)
@@ -1620,6 +1621,24 @@ pub fn workspace_rename(
     Ok(workspace_get_settings(app))
 }
 
+pub fn workspace_update_recent_context(
+    app: AppHandle,
+    workspace_id: String,
+    context: Option<WorkspaceRecentContextV1>,
+) -> Result<(), String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let (mut document, _) = read_settings_document(&app);
+    let workspace = profile_mut_from_document(&mut document)
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == workspace_id.trim())
+        .ok_or_else(|| "未找到工作区".to_string())?;
+    workspace.recent_context = context;
+    write_settings_document(&app, &document)
+}
+
 pub fn workspace_switch(
     app: AppHandle,
     workspace_id: String,
@@ -2783,6 +2802,13 @@ mod account_profile_storage_tests {
         }
     }
 
+    fn recent_context(route: &str) -> WorkspaceRecentContextV1 {
+        WorkspaceRecentContextV1 {
+            version: 1,
+            route: route.to_string(),
+        }
+    }
+
     #[test]
     fn legacy_settings_migrate_and_profiles_are_isolated_by_normalized_login() {
         let runtime = Arc::new(MemoryRuntime::default());
@@ -2897,6 +2923,197 @@ mod account_profile_storage_tests {
             runtime.value(STORE_FILE, SETTINGS_KEY).unwrap()["version"],
             3
         );
+    }
+
+    #[test]
+    fn existing_v3_workspace_defaults_recent_context_to_none() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        runtime.insert(
+            STORE_FILE,
+            SETTINGS_KEY,
+            serde_json::json!({
+                "version": 3,
+                "binding": null,
+                "anonymous": {
+                    "activeWorkspaceId": "workspace-existing",
+                    "workspaces": [{
+                        "id": "workspace-existing",
+                        "name": "Existing",
+                        "roots": [],
+                        "primaryRootId": null
+                    }]
+                },
+                "profiles": {}
+            }),
+        );
+        let app = WorkspaceContext::new(runtime);
+
+        let (document, migrated) = read_settings_document(&app);
+        let workspace = &document.anonymous.workspaces[0];
+
+        assert!(!migrated);
+        assert_eq!(document.version, SETTINGS_VERSION);
+        assert_eq!(
+            document.anonymous.active_workspace_id.as_deref(),
+            Some("workspace-existing")
+        );
+        assert_eq!(workspace.name, "Existing");
+        assert!(workspace.recent_context.is_none());
+    }
+
+    #[test]
+    fn recent_context_follows_workspace_crud_and_explicit_workspace_updates() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime);
+        let base =
+            std::env::temp_dir().join(format!("lilia-workspace-recent-context-{}", now_millis()));
+        let first = base.join("first");
+        let second = base.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+
+        let first_id = workspace_create(
+            app.clone(),
+            "First".into(),
+            first.to_string_lossy().into_owned(),
+        )
+        .unwrap()
+        .settings
+        .active_workspace_id
+        .unwrap();
+        assert!(load_settings(&app)
+            .active_workspace
+            .unwrap()
+            .recent_context
+            .is_none());
+        let first_context = recent_context("/repos/local:first/issues/17?state=closed");
+        workspace_update_recent_context(app.clone(), first_id.clone(), Some(first_context.clone()))
+            .unwrap();
+        let renamed = workspace_rename(app.clone(), first_id.clone(), "Renamed".into()).unwrap();
+        assert_eq!(
+            renamed.active_workspace.unwrap().recent_context,
+            Some(first_context.clone())
+        );
+
+        let second_id = workspace_create(
+            app.clone(),
+            "Second".into(),
+            second.to_string_lossy().into_owned(),
+        )
+        .unwrap()
+        .settings
+        .active_workspace_id
+        .unwrap();
+        assert!(load_settings(&app)
+            .active_workspace
+            .unwrap()
+            .recent_context
+            .is_none());
+        let second_context = recent_context("/repos/local:second/files?ref=feature&file=README.md");
+        workspace_update_recent_context(
+            app.clone(),
+            second_id.clone(),
+            Some(second_context.clone()),
+        )
+        .unwrap();
+
+        workspace_switch(app.clone(), first_id.clone()).unwrap();
+        let revised_second_context =
+            recent_context("/repos/local:second/changes?change=src/lib.rs");
+        workspace_update_recent_context(
+            app.clone(),
+            second_id.clone(),
+            Some(revised_second_context.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            load_settings(&app).active_workspace.unwrap().recent_context,
+            Some(first_context)
+        );
+        assert_eq!(
+            workspace_switch(app.clone(), second_id.clone())
+                .unwrap()
+                .settings
+                .active_workspace
+                .unwrap()
+                .recent_context,
+            Some(revised_second_context)
+        );
+        workspace_update_recent_context(app.clone(), second_id.clone(), None).unwrap();
+        assert!(load_settings(&app)
+            .active_workspace
+            .unwrap()
+            .recent_context
+            .is_none());
+
+        let replacement = workspace_delete(app.clone(), second_id).unwrap();
+        assert_eq!(
+            replacement.settings.active_workspace_id.as_deref(),
+            Some(first_id.as_str())
+        );
+        assert_eq!(
+            replacement.settings.active_workspace.unwrap().name,
+            "Renamed"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn recent_context_is_isolated_between_account_profiles() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime);
+        let base =
+            std::env::temp_dir().join(format!("lilia-workspace-account-context-{}", now_millis()));
+        let alice_root = base.join("alice");
+        let bob_root = base.join("bob");
+        fs::create_dir_all(&alice_root).unwrap();
+        fs::create_dir_all(&bob_root).unwrap();
+
+        switch_github_binding(&app, binding("Alice")).unwrap();
+        let alice_id = workspace_create(
+            app.clone(),
+            "Alice workspace".into(),
+            alice_root.to_string_lossy().into_owned(),
+        )
+        .unwrap()
+        .settings
+        .active_workspace_id
+        .unwrap();
+        let alice_context = recent_context("/repos/github:alice/repo/issues/1");
+        workspace_update_recent_context(app.clone(), alice_id, Some(alice_context.clone()))
+            .unwrap();
+
+        let bob_empty = switch_github_binding(&app, binding("Bob")).unwrap();
+        assert!(bob_empty.active_workspace.is_none());
+        let bob_id = workspace_create(
+            app.clone(),
+            "Bob workspace".into(),
+            bob_root.to_string_lossy().into_owned(),
+        )
+        .unwrap()
+        .settings
+        .active_workspace_id
+        .unwrap();
+        let bob_context = recent_context("/repos/github:bob/repo/pulls/2");
+        workspace_update_recent_context(app.clone(), bob_id, Some(bob_context.clone())).unwrap();
+
+        assert_eq!(
+            switch_github_binding(&app, binding("ALICE"))
+                .unwrap()
+                .active_workspace
+                .unwrap()
+                .recent_context,
+            Some(alice_context)
+        );
+        assert_eq!(
+            switch_github_binding(&app, binding("bob"))
+                .unwrap()
+                .active_workspace
+                .unwrap()
+                .recent_context,
+            Some(bob_context)
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

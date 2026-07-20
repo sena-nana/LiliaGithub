@@ -12,6 +12,7 @@ import {
   commitFileStatusText,
   formatRepoTime,
 } from "../../utils/repoDisplay";
+import { isConfirmedMissingResource } from "../../services/workspace/client";
 
 const props = withDefaults(defineProps<{
   repoId: string;
@@ -27,6 +28,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: [];
+  missing: [];
 }>();
 
 const workspace = useWorkspace();
@@ -119,6 +121,7 @@ async function load(forceRefresh = false) {
       if (!detailLoader.isCurrent(runId)) return;
       error.value = String(err);
       detail.value = null;
+      if (isConfirmedMissingResource(err)) emit("missing");
     } finally {
       if (detailLoader.isCurrent(runId)) {
         loading.value = false;

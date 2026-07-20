@@ -19,6 +19,7 @@ import {
 } from "../../utils/diffCode";
 import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
+import { isConfirmedMissingResource } from "../../services/workspace/client";
 
 type MarkdownReadmeHandle = {
   scrollToAnchor(hash: string): void;
@@ -33,6 +34,8 @@ export interface RepoFileBrowserInput {
   targetHash: Ref<string | null | undefined>;
   enabled?: Ref<boolean | undefined>;
   deleteFile?: (path: string) => Promise<unknown>;
+  onSelectionChange?: (path: string) => void;
+  onMissingTarget?: (path: string) => void;
 }
 
 const ROOT_KEY = "";
@@ -134,7 +137,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     () => [input.targetPath.value, input.targetHash.value] as const,
     ([path, hash]) => {
       if (!path || !isEnabled()) return;
-      void selectFile(path, hash);
+      void selectFile(path, hash, { updateTarget: false });
     },
   );
 
@@ -160,13 +163,13 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
         if (!panelLoader.isCurrent(runId) || !isCurrentRepoRequest(repoId, repoRef)) return;
         treeLoading.value = false;
         if (input.targetPath.value) {
-          await selectFile(input.targetPath.value, input.targetHash.value);
+          await selectFile(input.targetPath.value, input.targetHash.value, { updateTarget: false });
         } else {
           const defaultFile =
             rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md") ??
             rootEntries.find((entry) => entry.kind === "file");
           if (defaultFile) {
-            await selectFile(defaultFile.path);
+            await selectFile(defaultFile.path, null, { updateTarget: false });
           }
         }
       } catch (err) {
@@ -266,7 +269,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   async function selectFile(
     path: string,
     hash?: string | null,
-    options: { forceRefresh?: boolean } = {},
+    options: { forceRefresh?: boolean; updateTarget?: boolean } = {},
   ) {
     const repoId = input.repoId.value;
     const repoRef = currentRepoRef();
@@ -289,6 +292,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
         ) return;
         preview.value = nextPreview;
         textPreviewTargetLine.value = nextPreview.previewKind === "text" ? lineHashNumber(hash) : null;
+        if (options.updateTarget !== false) input.onSelectionChange?.(path);
         if (hash && nextPreview.previewKind === "markdown") {
           await nextTick();
           if (previewLoader.isCurrent(runId)) {
@@ -300,6 +304,9 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
         preview.value = null;
         textPreviewTargetLine.value = null;
         previewError.value = String(err);
+        if (path === input.targetPath.value && isConfirmedMissingResource(err)) {
+          input.onMissingTarget?.(path);
+        }
       } finally {
         if (previewLoader.isCurrent(runId)) {
           previewLoading.value = false;
@@ -368,7 +375,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
           await selectFile(
             nextPath,
             nextPath === input.targetPath.value ? input.targetHash.value : null,
-            { forceRefresh: true },
+            { forceRefresh: true, updateTarget: nextPath !== input.targetPath.value },
           );
         } else {
           selectedPath.value = null;

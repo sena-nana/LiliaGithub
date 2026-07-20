@@ -2,6 +2,7 @@
 import { MessagesSquare, Plus } from "@lucide/vue";
 import { Dropdown } from "../../../ui";
 import { computed, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useRepoDiscussionsStore } from "./useRepoDiscussions";
 
 const props = defineProps<{
@@ -13,6 +14,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ create: [] }>();
 const store = useRepoDiscussionsStore(() => props.repoFullName);
+const route = useRoute();
+const router = useRouter();
 const metadata = computed(() => store.value.list.metadata.value);
 const createDisabled = computed(() => Boolean(
   props.unavailableReason ||
@@ -47,16 +50,73 @@ const answeredValue = computed(() => {
 const sortValue = computed(() => `${store.value.list.filters.sort}-${store.value.list.filters.direction}`);
 
 watch(() => props.repoFullName, () => {
+  Object.assign(store.value.list.filters, discussionFiltersFromRoute());
   if (!props.unavailableReason) void store.value.list.ensureLoaded();
 }, { immediate: true });
 
+watch(
+  () => [
+    route.query.discussionState,
+    route.query.discussionCategory,
+    route.query.discussionAnswered,
+    route.query.discussionSort,
+    route.query.discussionDirection,
+  ],
+  () => {
+    const next = discussionFiltersFromRoute();
+    const current = store.value.list.filters;
+    if (
+      current.state !== next.state ||
+      current.categoryId !== next.categoryId ||
+      current.answered !== next.answered ||
+      current.sort !== next.sort ||
+      current.direction !== next.direction
+    ) void store.value.list.updateFilters(next);
+  },
+);
+
+function queryString(value: unknown) {
+  const next = Array.isArray(value) ? value[0] : value;
+  return typeof next === "string" && next.trim() ? next.trim() : null;
+}
+
+function discussionFiltersFromRoute() {
+  const state = queryString(route.query.discussionState);
+  const answered = queryString(route.query.discussionAnswered);
+  const sort = queryString(route.query.discussionSort);
+  const direction = queryString(route.query.discussionDirection);
+  return {
+    state: state === "closed" || state === "all" ? state : "open",
+    categoryId: queryString(route.query.discussionCategory),
+    answered: answered === "answered" ? true : answered === "unanswered" ? false : null,
+    sort: sort === "created" ? "created" : "updated",
+    direction: direction === "asc" ? "asc" : "desc",
+  } as const;
+}
+
+async function updateDiscussionFilters(next: Partial<ReturnType<typeof discussionFiltersFromRoute>>) {
+  await store.value.list.updateFilters(next);
+  const filters = store.value.list.filters;
+  const query = { ...route.query };
+  const set = (key: string, value: string | null) => {
+    if (value) query[key] = value;
+    else delete query[key];
+  };
+  set("discussionState", filters.state === "open" ? null : filters.state);
+  set("discussionCategory", filters.categoryId);
+  set("discussionAnswered", filters.answered == null ? null : filters.answered ? "answered" : "unanswered");
+  set("discussionSort", filters.sort === "updated" ? null : filters.sort);
+  set("discussionDirection", filters.direction === "desc" ? null : filters.direction);
+  await router.replace({ path: route.path, query, hash: route.hash });
+}
+
 function setAnswered(value: string) {
-  void store.value.list.updateFilters({ answered: value === "all" ? null : value === "answered" });
+  void updateDiscussionFilters({ answered: value === "all" ? null : value === "answered" });
 }
 
 function setSort(value: string) {
   const [sort, direction] = value.split("-") as ["created" | "updated", "asc" | "desc"];
-  void store.value.list.updateFilters({ sort, direction });
+  void updateDiscussionFilters({ sort, direction });
 }
 </script>
 
@@ -85,7 +145,7 @@ function setSort(value: string) {
         class="ghost"
         :class="{ 'is-active': store.list.filters.state === state }"
         :data-agent-id="`repo.discussions.state.${state}`"
-        @click="store.list.updateFilters({ state })"
+        @click="updateDiscussionFilters({ state })"
       >
         {{ state === "open" ? "Open" : state === "closed" ? "Closed" : "All" }}
       </button>
@@ -97,7 +157,7 @@ function setSort(value: string) {
         :options="categoryOptions"
         menu-label="Discussion 分类筛选"
         agent-id="repo.discussions.filters.category"
-        @update:model-value="store.list.updateFilters({ categoryId: $event || null })"
+        @update:model-value="updateDiscussionFilters({ categoryId: $event || null })"
       />
     </label>
     <label>

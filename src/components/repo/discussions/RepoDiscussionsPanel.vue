@@ -9,6 +9,7 @@ import {
 } from "./discussionViewModules";
 import { useRepoDiscussionsStore } from "./useRepoDiscussions";
 import { useWorkspace } from "../../../composables/useWorkspace";
+import { isConfirmedMissingResource } from "../../../services/workspace/client";
 
 const props = defineProps<{
   repoFullName: string;
@@ -20,6 +21,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   focus: [discussionNumber: number];
   back: [];
+  missing: [];
   cancelCreate: [];
   created: [discussionNumber: number];
 }>();
@@ -49,6 +51,13 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  () => [props.focusedDiscussionNumber, store.value.detail.detailError.value] as const,
+  ([discussionNumber, error]) => {
+    if (discussionNumber && error && isConfirmedMissingResource(error)) emit("missing");
+  },
 );
 
 async function submitCreate() {

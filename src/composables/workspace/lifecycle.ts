@@ -14,7 +14,11 @@ import {
 } from "./repoRefreshEvents";
 import { loadWorkspaceService } from "./serviceLoader";
 import { hasRecentInput } from "../../utils/lowPriorityScheduler";
-import type { WorkspaceBootstrap, WorkspaceViewPreferences } from "../../services/workspace";
+import type {
+  WorkspaceBootstrap,
+  WorkspaceRecentContextV1,
+  WorkspaceViewPreferences,
+} from "../../services/workspace";
 import { resetRepositoryRuntime } from "./repositories";
 import { resetLaunchRuntime } from "./launch";
 import { resetBulkRuntime } from "./bulk";
@@ -196,6 +200,14 @@ export async function updateWorkspaceViewPreferences(preferences: WorkspaceViewP
   const settings = await service.updateWorkspaceViewPreferences(preferences);
   state.settings = settings;
   return settings;
+}
+
+export async function updateWorkspaceRecentContext(
+  workspaceId: string,
+  context: WorkspaceRecentContextV1 | null,
+) {
+  const service = await loadWorkspaceService();
+  return service.updateWorkspaceRecentContext(workspaceId, context);
 }
 
 export async function installWorkspaceFocusRefresh(): Promise<() => void> {

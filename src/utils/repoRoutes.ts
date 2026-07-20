@@ -16,6 +16,10 @@ export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
   return tab === "repo" ? base : `${base}/${tab}`;
 }
 
+export function repoCommitRoute(repoId: string, hash: string) {
+  return `${repoRoute(repoId)}/commits/${encodeURIComponent(hash)}`;
+}
+
 export function repoConflictRoute(repoId: string) {
   return `${repoRoute(repoId, "changes")}?resolveConflicts=1`;
 }

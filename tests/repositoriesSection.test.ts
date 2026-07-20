@@ -102,6 +102,14 @@ vi.mock("../src/composables/useWorkspace", async () => {
   };
 });
 
+vi.mock("../src/composables/useWorkspaceRecentContext", () => ({
+  useWorkspaceRecentContext: () => ({
+    switchWorkspace: workspace.switchWorkspace,
+    createWorkspace: workspace.createWorkspace,
+    deleteWorkspace: workspace.deleteWorkspace,
+  }),
+}));
+
 describe("RepositoriesSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();

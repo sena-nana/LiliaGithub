@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { ArrowLeft } from "@lucide/vue";
 import CommitDetailCard from "../components/repo/CommitDetailCard.vue";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -8,12 +8,17 @@ import { repoDisplayName } from "../utils/repoDisplay";
 import { repoRoute } from "../utils/repoRoutes";
 
 const route = useRoute();
+const router = useRouter();
 const workspace = useWorkspace();
 
 const repoId = computed(() => String(route.params.repoId ?? ""));
 const hash = computed(() => String(route.params.hash ?? ""));
 const summary = computed(() => workspace.repoById(repoId.value));
 const repoTitle = computed(() => repoDisplayName(summary.value) || repoId.value);
+
+function returnToHistory() {
+  void router.replace(repoRoute(repoId.value, "history"));
+}
 </script>
 
 <template>
@@ -33,6 +38,7 @@ const repoTitle = computed(() => repoDisplayName(summary.value) || repoId.value)
       :repo-id="repoId"
       :repo-title="repoTitle"
       :hash="hash"
+      @missing="returnToHistory"
     />
   </section>
 </template>

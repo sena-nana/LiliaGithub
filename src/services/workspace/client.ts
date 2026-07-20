@@ -1,7 +1,12 @@
 import { invoke } from "../../tauri/runtime";
 import { createCachedAsyncModule } from "../../utils/asyncModule";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
-import { isGitHubBindingExpiredError, githubErrorCode, isGitHubPermissionError } from "../../utils/githubErrors";
+import {
+  isConfirmedMissingResource,
+  isGitHubBindingExpiredError,
+  githubErrorCode,
+  isGitHubPermissionError,
+} from "../../utils/githubErrors";
 import {
   ALL_GITHUB_REPOSITORIES,
   githubRepoCache,
@@ -128,6 +133,7 @@ import type {
   SystemOpenTarget,
   WorkspaceTask,
   WorkspaceBootstrap,
+  WorkspaceRecentContextV1,
   WorkspaceViewPreferences,
   WorkspaceCloneResult,
   WorkspaceRepoRefreshRequest,
@@ -288,6 +294,15 @@ export function setPrimaryWorkspaceRoot(workspaceId: string, rootId: string): Pr
 export function updateWorkspaceViewPreferences(preferences: WorkspaceViewPreferences): Promise<WorkspaceSettings> {
   return call("workspace_update_view_preferences", { preferences }, () =>
     workspaceFallback().updateWorkspaceViewPreferences(preferences)
+  );
+}
+
+export function updateWorkspaceRecentContext(
+  workspaceId: string,
+  context: WorkspaceRecentContextV1 | null,
+): Promise<void> {
+  return call("workspace_update_recent_context", { workspaceId, context }, () =>
+    workspaceFallback().updateWorkspaceRecentContext(workspaceId, context)
   );
 }
 
@@ -473,7 +488,12 @@ function removeGitHubReleaseAsset(repoFullName: string, releaseId: number, asset
   });
 }
 
-export { isGitHubBindingExpiredError, githubErrorCode, isGitHubPermissionError };
+export {
+  isConfirmedMissingResource,
+  isGitHubBindingExpiredError,
+  githubErrorCode,
+  isGitHubPermissionError,
+};
 
 export function preloadGitHubRepos(
   opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
@@ -1492,6 +1512,19 @@ export function listGitHubReleases(
       cache.releases = cloneProjectList(releases);
       return cloneProjectList(releases);
     });
+}
+
+export function getGitHubReleaseByTag(
+  repoFullName: string,
+  tagName: string,
+): Promise<GitHubRelease> {
+  const normalizedTag = tagName.trim();
+  return call("github_get_release_by_tag", { repoFullName, tagName: normalizedTag }, () =>
+    workspaceFallback().getGitHubReleaseByTag(repoFullName, normalizedTag)
+  ).then((release) => {
+    upsertGitHubRelease(repoFullName, release);
+    return cloneProjectData(release);
+  });
 }
 
 export function createGitHubRelease(

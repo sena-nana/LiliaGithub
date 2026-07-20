@@ -27,6 +27,7 @@ import {
   addWorkspaceRoot,
   removeWorkspaceRoot,
   setPrimaryWorkspaceRoot,
+  updateWorkspaceRecentContext,
   updateWorkspaceViewPreferences,
 } from "./workspace/lifecycle";
 import {
@@ -148,7 +149,6 @@ import {
   preloadGitHubRepos,
   getGitHubBindingStatus,
 } from "./workspace/account";
-
 export function useWorkspace() {
   return {
     state: readonly(state),
@@ -175,6 +175,7 @@ export function useWorkspace() {
     removeWorkspaceRoot,
     setPrimaryWorkspaceRoot,
     updateWorkspaceViewPreferences,
+    updateWorkspaceRecentContext,
     cancelWorkspaceTask,
     cloneRepo,
     createLocalRepo,

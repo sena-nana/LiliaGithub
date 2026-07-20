@@ -29,28 +29,28 @@ use crate::workspace::{run_core_operation, run_core_operation_as};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
     GitHubAccountProfile, GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest,
-    GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult,
-    GitHubCreateIssueRequest, GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest,
-    GitHubCreateRepoRequest, GitHubDevelopmentItem, GitHubDeviceFlowPollResult,
-    GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion,
-    GitHubIssueFilterMetadata, GitHubIssueMilestone, GitHubIssueProjectItem,
-    GitHubMergePullRequestRequest, GitHubOrganizationFeaturedSection,
-    GitHubOrganizationFeaturedSource, GitHubOrganizationMember, GitHubOrganizationMembersSection,
-    GitHubOrganizationOverview, GitHubOrganizationProfile, GitHubOrganizationProfileView,
-    GitHubOrganizationRepositorySection, GitHubOrganizationSectionStatus, GitHubOwnerKind,
-    GitHubProfileReadmeSection, GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest,
-    GitHubPullRequestCheck, GitHubPullRequestDiscussion, GitHubPullRequestReviewer,
-    GitHubReadmeSectionStatus, GitHubRelease, GitHubReleaseAsset,
-    GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
-    GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
-    GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner,
-    GitHubRepositoryPermissions, GitHubRepositoryScope, GitHubRepositorySubscription,
-    GitHubRepositorySubscriptionMode, GitHubRulesetSummary, GitHubUpdateAccountProfileRequest,
-    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
-    GitHubUpdateRepoSettingsRequest, GitHubWatchedRepoPage, GitHubWorkflowArtifact,
-    GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog,
-    GitHubWorkflowJobStep, GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut,
-    RepoFilePreview, RepoFileTreeEntry,
+    GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult, GitHubCreateIssueRequest,
+    GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest, GitHubCreateRepoRequest,
+    GitHubDevelopmentItem, GitHubDeviceFlowPollResult, GitHubDeviceFlowStart,
+    GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion, GitHubIssueFilterMetadata,
+    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
+    GitHubOrganizationFeaturedSection, GitHubOrganizationFeaturedSource, GitHubOrganizationMember,
+    GitHubOrganizationMembersSection, GitHubOrganizationOverview, GitHubOrganizationProfile,
+    GitHubOrganizationProfileView, GitHubOrganizationRepositorySection,
+    GitHubOrganizationSectionStatus, GitHubOwnerKind, GitHubProfileReadmeSection,
+    GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
+    GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubReadmeSectionStatus,
+    GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest, GitHubRepoLicense,
+    GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage, GitHubRepoSettingsEndpointItem,
+    GitHubRepoSettingsSection, GitHubRepoSummary, GitHubRepoTemplate,
+    GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner, GitHubRepositoryPermissions,
+    GitHubRepositoryScope, GitHubRepositorySubscription, GitHubRepositorySubscriptionMode,
+    GitHubRulesetSummary, GitHubUpdateAccountProfileRequest, GitHubUpdateIssueRequest,
+    GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest, GitHubUpdateRepoSettingsRequest,
+    GitHubWatchedRepoPage, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
+    GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
+    GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
+    RepoFileTreeEntry,
 };
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -8432,6 +8432,45 @@ pub async fn github_list_releases(
                 repo_cache.releases = Some(releases.clone());
             })?;
             Ok(releases)
+        },
+    )
+    .await
+}
+
+pub async fn github_get_release_by_tag(
+    app: AppHandle,
+    repo_full_name: String,
+    tag_name: String,
+) -> Result<GitHubRelease, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Release",
+        move || {
+            let normalized_tag = tag_name.trim();
+            if normalized_tag.is_empty() {
+                return Err("Release tag 不能为空".to_string());
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Release 失败",
+                github_headers(
+                    client.get(format!(
+                        "{}/releases/tags/{}",
+                        github_repo_api_url(&repo_full_name)?,
+                        url_encode_path_segment(normalized_tag),
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            Ok(github_release_from_response(github_json::<
+                GitHubReleaseResponse,
+            >(
+                "读取 GitHub Release 失败",
+                response,
+            )?))
         },
     )
     .await

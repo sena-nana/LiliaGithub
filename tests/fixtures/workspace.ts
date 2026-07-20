@@ -135,6 +135,7 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     activeWorkspace: {
       id: "workspace-default",
       name: "workspace",
+      recentContext: null,
       roots: [root],
       primaryRootId: root.id,
       projectLaunchConfigs: {},

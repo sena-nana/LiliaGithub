@@ -7,6 +7,7 @@ import {
   rememberRecentSync,
   recordRepoSyncResult,
   state,
+  markRepoListVerified,
   replaceRepos,
   removeRepo,
   setRepoDetail,
@@ -444,6 +445,7 @@ async function loadManagedRepoList() {
     const service = await loadWorkspaceService();
     const repos = await service.listManagedRepos();
     replaceRepos(repos);
+    markRepoListVerified(state.settings?.activeWorkspaceId ?? null);
     return repos;
   } catch (err) {
     state.error = String(err);
