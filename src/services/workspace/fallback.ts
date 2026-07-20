@@ -159,6 +159,9 @@ const useReadmeShowcaseFallback = typeof import.meta !== "undefined"
 const useAgentDebugMockWorkspace = typeof import.meta !== "undefined"
   && import.meta.env?.DEV === true
   && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE === "1";
+const agentDebugHandoffWorktreePath = useAgentDebugMockWorkspace
+  ? import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_HANDOFF_WORKTREE_PATH?.trim()
+  : undefined;
 const useDefaultFallback = !useReadmeShowcaseFallback;
 
 type FallbackRepoInput = Omit<RepoSummary, "remoteBranchStates" | "remotesNeedingPull" | "remotesNeedingPush">;
@@ -337,7 +340,7 @@ function createDefaultFallbackRepos(): RepoSummary[] {
     {
       id: "LiliaGithub",
       name: "LiliaGithub",
-      path: "C:\\Files\\workspace\\LiliaGithub",
+      path: agentDebugHandoffWorktreePath || "C:\\Files\\workspace\\LiliaGithub",
       relativePath: "LiliaGithub",
       currentBranch: "main",
       remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",

@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCw,
   Search,
+  Send,
   ShieldCheck,
   Pin,
   X,
@@ -38,6 +39,12 @@ import {
   type ContextMenuItem,
 } from "../ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
+import {
+  findWorkflowFailureWorktree,
+  isWorkflowFailureHandoffRun,
+  useHomeWorkflowFailureHandoff,
+  type WorkflowFailureHandoffSession,
+} from "../composables/useHomeWorkflowFailureHandoff";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   repoSyncIssuesByRepoId,
@@ -147,6 +154,7 @@ import {
 } from "../utils/githubRepositoryScope";
 
 const workspace = useWorkspace();
+const workflowFailureHandoff = useHomeWorkflowFailureHandoff();
 const activeNamedWorkspace = computed(() => workspace.activeWorkspace.value);
 const hasAvailableWorkspaceRoot = computed(() => workspace.hasAvailableWorkspaceRoot.value);
 const accountPreferences = useAccountPreferences();
@@ -276,8 +284,21 @@ type HomePendingRow = {
   repoFullName: string;
   link: HomePendingLink;
   actions: HomePendingAction[];
+  handoff: HomePendingWorkflowHandoff | null;
   confirmingAction: HomePendingAction | null;
   runningAction: HomePendingAction | null;
+};
+
+type HomePendingWorkflowHandoff = {
+  worktree: RepoSummary | null;
+  sourceRoute: string;
+  unavailableReason: string | null;
+  accepted: boolean;
+  expanded: boolean;
+  busy: boolean;
+  error: string | null;
+  buttonLabel: string;
+  statusText: string | null;
 };
 
 type HomeOverviewSettingsSnapshot = Pick<WorkspaceSettings, "repoSyncPreferences"> | null;
@@ -1479,15 +1500,85 @@ function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
 
 function toHomePendingRow(item: HomePendingItem): HomePendingRow {
   const armedAction = homePendingArmedAction.value;
+  const workflowWorktree = homePendingWorkflowWorktree(item);
+  const link = homePendingItemLink(item, workflowWorktree);
   return {
     item,
     icon: homePendingItemIcon(item.kind),
     repoFullName: homePendingItemRepoFullName(item),
-    link: homePendingItemLink(item),
+    link,
     actions: homePendingActions(item),
+    handoff: homePendingWorkflowHandoff(item, link, workflowWorktree),
     confirmingAction: armedAction?.itemId === item.id ? armedAction.action : null,
     runningAction: homePendingRunningActions.value[item.id] ?? null,
   };
+}
+
+function homePendingWorkflowWorktree(item: HomePendingItem) {
+  const target = item.target;
+  if (target.kind !== "workflow" || !target.run || !isWorkflowFailureHandoffRun(target.run)) return null;
+  const branch = target.run.branch.trim();
+  return branch
+    ? findWorkflowFailureWorktree(workspace.state.repos, target.repoFullName, branch)
+    : null;
+}
+
+function homePendingWorkflowHandoff(
+  item: HomePendingItem,
+  link: HomePendingLink,
+  worktree: RepoSummary | null,
+): HomePendingWorkflowHandoff | null {
+  const target = item.target;
+  if (
+    target.kind !== "workflow" ||
+    !target.run ||
+    !isWorkflowFailureHandoffRun(target.run)
+  ) return null;
+
+  const branch = target.run.branch?.trim() ?? "";
+  const unavailableReason = !branch
+    ? "该运行没有可用分支，无法交接"
+    : !worktree
+      ? `请先在本地检出 ${branch} 分支`
+      : null;
+  const session = worktree ? workflowFailureHandoff.getSession(item.id) : null;
+  return {
+    worktree,
+    sourceRoute: link.kind === "route"
+      ? link.to
+      : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.run.id),
+    unavailableReason,
+    ...homePendingHandoffPresentation(session, unavailableReason),
+  };
+}
+
+function homePendingHandoffPresentation(
+  session: WorkflowFailureHandoffSession | null,
+  unavailableReason: string | null,
+) {
+  const status = session?.status?.status;
+  const accepted = status === "accepted" && Boolean(session?.status?.resultRoute);
+  const busy = Boolean(session?.busy);
+  const expanded = Boolean(session && (session.busy || session.draft || session.status || session.error));
+  let buttonLabel = "交给 LiliaCode";
+  if (session?.busy === "diagnostics") buttonLabel = "正在准备";
+  else if (session?.busy === "handoff") buttonLabel = "正在交接";
+  else if (session?.busy === "open") buttonLabel = "正在打开";
+  else if (accepted) buttonLabel = "查看任务";
+  else if (status === "pending") buttonLabel = "继续等待";
+  else if (session?.draft || session?.error) buttonLabel = "重试交接";
+
+  let statusText = unavailableReason;
+  if (!statusText && session?.busy === "diagnostics") statusText = "正在读取失败日志";
+  else if (!statusText && session?.busy === "handoff") statusText = "正在等待 LiliaCode";
+  else if (!statusText && session?.busy === "open") statusText = "正在打开任务";
+  else if (!statusText && status === "pending") statusText = "任务已保存";
+  else if (!statusText && status === "incompatible") statusText = "任务草稿已保留，可更新后重试";
+  else if (!statusText && status === "failed") statusText = "任务草稿已保留，可重试";
+  else if (!statusText && session?.error) {
+    statusText = status === "accepted" ? "打开任务失败，可重试" : "交接未完成，可重试";
+  } else if (!statusText && status === "accepted") statusText = "LiliaCode 已接收";
+  return { accepted, expanded, busy, error: session?.error ?? null, buttonLabel, statusText };
 }
 
 function homePendingItemRepoFullName(item: HomePendingItem) {
@@ -1496,7 +1587,10 @@ function homePendingItemRepoFullName(item: HomePendingItem) {
   return target.repoFullName;
 }
 
-function homePendingItemLink(item: HomePendingItem): HomePendingLink {
+function homePendingItemLink(
+  item: HomePendingItem,
+  workflowWorktree: RepoSummary | null,
+): HomePendingLink {
   const target = item.target;
   if (target.kind === "repo") {
     const href = target.view === "conflicts"
@@ -1516,8 +1610,9 @@ function homePendingItemLink(item: HomePendingItem): HomePendingLink {
       : remoteRepoProjectPath({ fullName: target.repoFullName }, "pulls", target.number);
     return homePendingRouteLink(href);
   }
-  const href = target.localRepoId
-    ? repoProjectPath({ id: target.localRepoId }, "actions", target.runId)
+  const localRepoId = workflowWorktree?.id ?? target.localRepoId;
+  const href = localRepoId
+    ? repoProjectPath({ id: localRepoId }, "actions", target.runId)
     : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.runId);
   return homePendingRouteLink(href);
 }
@@ -1597,6 +1692,35 @@ function homePendingItemAgentId(item: HomePendingItem) {
   return item.target.kind === "repo" && item.target.view === "conflicts"
     ? `home.pending.conflict.${item.target.repoId}`
     : `home.pending.${item.id}`;
+}
+
+function homePendingHandoffAgentId(item: HomePendingItem, target: "create" | "status" | "error" | "open-result") {
+  return `${homePendingItemAgentId(item)}.handoff.${target}`;
+}
+
+async function runHomeWorkflowHandoff(row: HomePendingRow) {
+  const handoff = row.handoff;
+  const target = row.item.target;
+  if (
+    !handoff ||
+    handoff.unavailableReason ||
+    !handoff.worktree ||
+    target.kind !== "workflow" ||
+    !target.run ||
+    row.runningAction
+  ) return;
+  await workflowFailureHandoff.handoff({
+    itemId: row.item.id,
+    repoFullName: target.repoFullName,
+    run: target.run,
+    worktree: handoff.worktree,
+    sourceRoute: handoff.sourceRoute,
+  });
+}
+
+async function openHomeWorkflowHandoffResult(row: HomePendingRow) {
+  if (!row.handoff?.accepted || row.runningAction) return;
+  await workflowFailureHandoff.openResult(row.item.id);
 }
 
 async function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
@@ -2566,14 +2690,13 @@ function bulkOperationDescription(operation: BulkOperation) {
               v-if="homePendingRows.length"
               class="home-pending-list"
               aria-label="待处理事项列表"
-              v-memo="[homePendingRows]"
             >
               <li
                 v-for="row in homePendingRows"
                 :key="row.item.id"
                 class="home-pending-row"
                 :class="{
-                  'has-hover-controls': row.actions.length || row.link.kind !== 'none',
+                  'has-hover-controls': row.actions.length || row.handoff || row.link.kind !== 'none',
                   'is-clickable': row.link.kind !== 'none',
                 }"
                 :role="row.link.kind === 'route' ? 'link' : undefined"
@@ -2592,19 +2715,46 @@ function bulkOperationDescription(operation: BulkOperation) {
                 </span>
                 <span class="home-pending-row__side">
                   <span
-                    class="home-pending-row__repo"
-                    :title="row.repoFullName"
+                    v-if="row.handoff?.statusText"
+                    class="home-pending-row__repo home-pending-row__handoff-status"
+                    :class="{ 'is-error': Boolean(row.handoff.error) }"
+                    :title="row.handoff.error || row.handoff.statusText"
+                    :role="row.handoff.error ? 'alert' : 'status'"
+                    :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.error ? 'error' : 'status')"
                   >
-                    {{ row.repoFullName }}
+                    {{ row.handoff.statusText }}
                   </span>
+                  <span v-else class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
                   <span
-                    v-if="row.actions.length || row.link.kind !== 'none'"
+                    v-if="row.actions.length || row.handoff || row.link.kind !== 'none'"
                     class="home-pending-row__actions"
                     :class="{
-                      'is-expanded': Boolean(row.confirmingAction || row.runningAction),
+                      'is-expanded': Boolean(row.confirmingAction || row.runningAction || row.handoff?.expanded),
                     }"
                     aria-label="快捷操作"
                   >
+                    <button
+                      v-if="row.handoff"
+                      type="button"
+                      class="home-pending-action"
+                      :class="{
+                        'is-expanded': row.handoff.expanded,
+                      }"
+                      :aria-label="row.handoff.unavailableReason || row.handoff.buttonLabel"
+                      :title="row.handoff.unavailableReason || row.handoff.error || row.handoff.buttonLabel"
+                      :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.accepted ? 'open-result' : 'create')"
+                      :disabled="Boolean(row.runningAction || row.handoff.unavailableReason || row.handoff.busy)"
+                      @click.stop="row.handoff.accepted ? openHomeWorkflowHandoffResult(row) : runHomeWorkflowHandoff(row)"
+                    >
+                      <LoaderCircle
+                        v-if="row.handoff.busy"
+                        :size="11"
+                        aria-hidden="true"
+                        class="sb-spin"
+                      />
+                      <Send v-else :size="13" aria-hidden="true" />
+                      <span v-if="row.handoff.expanded">{{ row.handoff.buttonLabel }}</span>
+                    </button>
                     <button
                       v-for="action in row.actions"
                       v-show="!row.runningAction || row.runningAction === action"
@@ -2620,7 +2770,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :aria-label="homePendingButtonLabel(row, action)"
                       :title="homePendingButtonLabel(row, action)"
                       :data-agent-id="`${homePendingActionAgentId(row.item, action)}${row.confirmingAction === action ? '.confirm' : ''}`"
-                      :disabled="Boolean(row.runningAction)"
+                      :disabled="Boolean(row.runningAction || row.handoff?.busy)"
                       @click.stop="requestHomePendingAction(row.item, action)"
                     >
                       <LoaderCircle
@@ -3585,6 +3735,10 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .home-pending-action--danger {
   --home-pending-action-state-bg: var(--err-soft);
+  color: var(--err);
+}
+
+.home-pending-row__handoff-status.is-error {
   color: var(--err);
 }
 
