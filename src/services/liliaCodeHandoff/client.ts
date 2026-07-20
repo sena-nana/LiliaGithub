@@ -9,6 +9,8 @@ import {
 const agentDebugMockWorkspace = typeof import.meta !== "undefined"
   && import.meta.env?.DEV === true
   && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE === "1";
+const agentDebugRealHandoff = agentDebugMockWorkspace
+  && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_REAL_HANDOFF === "1";
 
 export function createLiliaCodeTaskHandoff(
   handoff: LiliaCodeTaskHandoff,
@@ -21,7 +23,7 @@ export function createLiliaCodeTaskHandoff(
     taskId: agentDebugMockWorkspace ? `agent-debug-${handoff.id}` : null,
     resultRoute: agentDebugMockWorkspace ? `liliacode://tasks/agent-debug-${handoff.id}` : null,
     updatedAt: new Date().toISOString(),
-  }));
+  }), { requireTauri: agentDebugRealHandoff });
 }
 
 export function getLiliaCodeTaskHandoffStatus(
@@ -35,11 +37,16 @@ export function getLiliaCodeTaskHandoffStatus(
     taskId: agentDebugMockWorkspace ? `agent-debug-${handoffId}` : null,
     resultRoute: agentDebugMockWorkspace ? `liliacode://tasks/agent-debug-${handoffId}` : null,
     updatedAt: new Date().toISOString(),
-  }));
+  }), { requireTauri: agentDebugRealHandoff });
 }
 
 export function openLiliaCodeTaskHandoffResult(handoffId: string): Promise<void> {
-  return call("lilia_code_open_task_handoff_result", { handoffId }, async () => undefined);
+  return call(
+    "lilia_code_open_task_handoff_result",
+    { handoffId },
+    async () => undefined,
+    { requireTauri: agentDebugRealHandoff },
+  );
 }
 
 export async function waitForLiliaCodeTaskHandoff(

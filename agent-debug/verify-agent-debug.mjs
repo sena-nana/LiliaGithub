@@ -6,6 +6,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertWorkflowHandoffPayload,
+  prepareLiliaCodeShim,
+  waitForLiliaCodeShimInvocations,
+  workflowHandoffFixturePaths,
+} from "./workflow-handoff-fixture.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -27,12 +33,32 @@ const replay = [];
 const observedSnapshots = [];
 const replayAssertions = [];
 const homePendingIssueTarget = "home.pending.issue:sena-nana/LiliaGithub:12.open";
+const scenarioArgIndex = process.argv.indexOf("--scenario");
+const scenario = (scenarioArgIndex >= 0 ? process.argv[scenarioArgIndex + 1] : null)
+  ?? process.env.LILIA_GITHUB_AGENT_DEBUG_SCENARIO
+  ?? "full";
+const focusedWorkflowHandoff = scenario === "workflow-handoff";
+const workflowHandoffFixture = workflowHandoffFixturePaths(runDir);
+
+if (!new Set(["full", "workflow-handoff"]).has(scenario)) {
+  throw new Error(`Unknown LILIA_GITHUB_AGENT_DEBUG_SCENARIO: ${scenario}`);
+}
 
 const agentDebugEnv = {
   LILIA_GITHUB_AGENT_DEBUG: "1",
   VITE_LILIA_AGENT_DEBUG: "1",
   VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
   VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE: "1",
+  ...(focusedWorkflowHandoff
+    ? {
+        VITE_LILIA_GITHUB_AGENT_DEBUG_REAL_HANDOFF: "1",
+        VITE_LILIA_GITHUB_AGENT_DEBUG_HANDOFF_WORKTREE_PATH: repoRoot,
+        PATH: `${workflowHandoffFixture.shimBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        TMPDIR: workflowHandoffFixture.tempDir,
+        TMP: workflowHandoffFixture.tempDir,
+        TEMP: workflowHandoffFixture.tempDir,
+      }
+    : {}),
   WEBVIEW2_USER_DATA_FOLDER: webviewDataDir,
   MSEDGEDRIVER_TELEMETRY_OPTOUT: "1",
   ...(process.platform === "win32"
@@ -896,6 +922,73 @@ async function openHomeOverview(sessionId) {
   await waitForAgentElement(sessionId, "home.overview.search");
 }
 
+async function runWorkflowHandoffFlow(sessionId) {
+  await waitForExactRoute(sessionId, "/");
+  const createTarget = await waitForVisibleAgentId(
+    sessionId,
+    `(ids) => ids.find((id) => /^home\\.pending\\.workflow-run:.+:\\d+\\.handoff\\.create$/.test(id))`,
+    [],
+    "No failed Workflow handoff action became available on the home page.",
+  );
+  const prefix = createTarget.slice(0, -".handoff.create".length);
+  const runIdMatch = prefix.match(/:(\d+)$/);
+  if (!runIdMatch) throw new Error(`Unable to read the Workflow run id from ${createTarget}.`);
+  const expectedRunId = Number(runIdMatch[1]);
+  const returnRoute = await readAgentLinkRoute(sessionId, `${prefix}.open`);
+
+  await clickAgentTarget(sessionId, createTarget);
+  let invocations = await waitForLiliaCodeShimInvocations(workflowHandoffFixture.invocationsPath, 1);
+  await waitForAgentElement(sessionId, `${prefix}.handoff.error`);
+  await waitForAgentElement(sessionId, createTarget, 30_000, true);
+  const first = invocations[0];
+  assertWorkflowHandoffPayload(first.payload, { repoRoot, expectedRoute: returnRoute, expectedRunId });
+  if (first.receipt?.status !== "incompatible") {
+    throw new Error("The first focused handoff did not exercise the incompatible recovery state.");
+  }
+  recordReplayAssertion("workflow-handoff-incompatible-recoverable", {
+    createTarget,
+    errorTarget: `${prefix}.handoff.error`,
+    handoffId: first.payload.id,
+    receiptStatus: first.receipt.status,
+  });
+
+  await clickAgentTarget(sessionId, createTarget);
+  invocations = await waitForLiliaCodeShimInvocations(workflowHandoffFixture.invocationsPath, 2);
+  await waitForAgentElement(sessionId, `${prefix}.handoff.open-result`, 30_000, true);
+  const second = invocations[1];
+  assertWorkflowHandoffPayload(second.payload, { repoRoot, expectedRoute: returnRoute, expectedRunId });
+  if (second.payload.id !== first.payload.id || second.receipt?.status !== "accepted") {
+    throw new Error("The focused handoff retry did not reuse its draft id and reach accepted.");
+  }
+  recordReplayAssertion("workflow-handoff-retry-accepted", {
+    handoffId: second.payload.id,
+    reusedDraftId: true,
+    receiptStatus: second.receipt.status,
+    resultRoute: second.receipt.resultRoute,
+  });
+
+  await clickAgentTarget(sessionId, `${prefix}.handoff.open-result`);
+  invocations = await waitForLiliaCodeShimInvocations(workflowHandoffFixture.invocationsPath, 3);
+  const third = invocations[2];
+  if (third.payload?.id !== first.payload.id || third.receipt?.status !== "accepted") {
+    throw new Error("Opening the focused handoff result did not relaunch the accepted task draft.");
+  }
+  recordReplayAssertion("workflow-handoff-open-result", {
+    openTarget: `${prefix}.handoff.open-result`,
+    handoffId: third.payload.id,
+    shimInvocationCount: invocations.length,
+  });
+
+  const evidencePath = await writeJson("workflow-handoff-evidence.json", {
+    createTarget,
+    returnRoute,
+    expectedRunId,
+    invocations,
+  });
+  replay.push({ type: "artifact", scenario, path: evidencePath });
+  return observeAgentStep(sessionId, "workflow-handoff-accepted");
+}
+
 async function runPullRequestReviewFlow(sessionId) {
   const pullTarget = "repo.pulls.7.open";
   const listRoute = await execute(
@@ -1212,6 +1305,7 @@ async function screenshot(sessionId, name) {
 
 async function main() {
   await mkdir(runDir, { recursive: true });
+  if (focusedWorkflowHandoff) await prepareLiliaCodeShim(workflowHandoffFixture);
   const defaultUrlReady = await isUrlReady(devUrl);
   let autoSelectedDevUrl = false;
   if (defaultUrlReady) {
@@ -1234,6 +1328,7 @@ async function main() {
 
   const preflight = {
     runId,
+    scenario,
     runDir,
     appBinary,
     debugAppIdentifier,
@@ -1347,7 +1442,10 @@ async function main() {
     await waitForDebugApi(sessionId);
     await waitForDebugUi(sessionId);
     const beforeScreenshotPath = await screenshot(sessionId, "before.png");
-    const { firstObserve: observe, profileScreenshotPath } = await runRegressionFlow(sessionId);
+    const replayResult = focusedWorkflowHandoff
+      ? { firstObserve: await runWorkflowHandoffFlow(sessionId), profileScreenshotPath: null }
+      : await runRegressionFlow(sessionId);
+    const { firstObserve: observe, profileScreenshotPath } = replayResult;
 
     await writeJson("observe.json", observe);
     await writeJson("missing-agent-ids.json", observe.missingAgentIds ?? []);
@@ -1373,6 +1471,7 @@ async function main() {
     await writeJson("summary.json", {
       status: "passed",
       runId,
+      scenario,
       preflight,
       beforeScreenshotPath,
       afterScreenshotPath,

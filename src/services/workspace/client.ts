@@ -196,9 +196,18 @@ export async function call<TCommand extends WorkspaceCommandName>(
   command: TCommand,
   args: WorkspaceCommandArgs<TCommand>,
   fallbackCall: () => Promise<WorkspaceCommandResult<TCommand>>,
+  options: { requireTauri?: boolean } = {},
 ): Promise<WorkspaceCommandResult<TCommand>> {
   const commandEntry = WORKSPACE_COMMAND_MANIFEST[command];
   const hasWindow = typeof window !== "undefined";
+  if (options.requireTauri) {
+    if (hasWindow && "__TAURI_INTERNALS__" in window && isDev && !isTest) {
+      return invoke<WorkspaceCommandResult<TCommand>>(commandEntry.command, args);
+    }
+    throw new Error(
+      `Tauri command ${commandEntry.command} is required by the focused Agent debug scenario.`,
+    );
+  }
   const runtime = resolveWorkspaceRuntimeForTests({
     hasWindow,
     hasTauriInternals: hasWindow && "__TAURI_INTERNALS__" in window,

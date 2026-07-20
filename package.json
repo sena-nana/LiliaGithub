@@ -33,7 +33,8 @@
     "liliaui:remote": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs remote",
     "liliaui:status": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs status",
     "verify": "yarn feature-status:check && yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
-    "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
+    "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs",
+    "agent-debug:verify:workflow-handoff": "node agent-debug/verify-agent-debug.mjs --scenario workflow-handoff"
   },
   "dependencies": {
     "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=634e355f50eaf492dd590c60c39bef558f91f303",
