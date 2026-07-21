@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use mutsuki_runtime_contracts::{
-    CompletionBatch, DispatchLane, EntryCompletion, ExecutionClass, OrderingRequirement,
-    ResourceAccessMode, ResourceRequirement, RunnerBatchCapability, RunnerDescriptor, RunnerMode,
-    RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle, TaskOutcome,
-    WorkBatch,
+    CompletionBatch, DispatchLane, EntryCompletion, ExecutionClass, InvocationMode,
+    OrderingRequirement, ResourceAccessMode, ResourceRequirement, RunnerBatchCapability,
+    RunnerConcurrency, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
+    RunnerStatus, Task, TaskHandle, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use serde_json::json;
@@ -666,6 +666,11 @@ impl OperationRunner {
                 accepted_protocol_ids: vec![protocol.into()],
                 purity: RunnerPurity::Effectful,
                 execution_class: ExecutionClass::Blocking,
+                invocation_mode: InvocationMode::SyncExclusive,
+                concurrency: RunnerConcurrency::Reentrant {
+                    max_inflight_batches: 1,
+                    max_inflight_entries: concurrency,
+                },
                 input_schema: json!({ "type": "object" }),
                 output_schema: json!({ "type": "object" }),
                 batch: RunnerBatchCapability {
