@@ -1053,19 +1053,45 @@ pub(super) fn keyring_entry(login: &str) -> Result<Entry, String> {
     Entry::new(GITHUB_SERVICE, login).map_err(|e| format!("创建 GitHub 凭证项失败：{e}"))
 }
 
+fn token_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn token_cache_key(login: &str) -> String {
+    login.trim().to_ascii_lowercase()
+}
+
 pub(super) fn read_token(login: &str) -> Result<Option<String>, String> {
-    let entry = keyring_entry(login)?;
-    match entry.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(err) => Err(format!("读取 GitHub 凭证失败：{err}")),
+    let key = token_cache_key(login);
+    if let Some(cached) = token_cache().lock().ok().and_then(|cache| cache.get(&key).cloned()) {
+        return Ok(cached);
     }
+    let token = match keyring_entry(login)?.get_password() {
+        Ok(token) => Some(token),
+        Err(KeyringError::NoEntry) => None,
+        Err(err) => return Err(format!("读取 GitHub 凭证失败：{err}")),
+    };
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.insert(key, token.clone());
+    }
+    Ok(token)
 }
 
 pub(super) fn write_token(login: &str, token: &str) -> Result<(), String> {
     keyring_entry(login)?
         .set_password(token)
-        .map_err(|e| format!("保存 GitHub 凭证失败：{e}"))
+        .map_err(|e| format!("保存 GitHub 凭证失败：{e}"))?;
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.insert(token_cache_key(login), Some(token.to_string()));
+    }
+    Ok(())
+}
+
+pub(super) fn invalidate_token(login: &str) {
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.remove(&token_cache_key(login));
+    }
 }
 
 pub(super) fn normalize_scope_list(scope: Option<&str>) -> Vec<String> {
@@ -9113,5 +9139,47 @@ pub(super) fn github_contribution_result(
     GitHubContributionResult {
         days: github_contribution_days(counts, end_day_index),
         meta: github_contribution_meta(repo_count, requested_repo_count, skipped_repo_count),
+    }
+}
+
+#[cfg(test)]
+mod token_cache_tests {
+    use super::*;
+
+    fn set_cache(login: &str, value: Option<String>) {
+        token_cache()
+            .lock()
+            .unwrap()
+            .insert(token_cache_key(login), value);
+    }
+
+    fn cache_contains(login: &str) -> bool {
+        token_cache()
+            .lock()
+            .unwrap()
+            .contains_key(&token_cache_key(login))
+    }
+
+    #[test]
+    fn read_token_serves_cached_value_without_keyring() {
+        set_cache("token-cache-hit-user", Some("secret".to_string()));
+        assert_eq!(
+            read_token("Token-Cache-Hit-User").unwrap(),
+            Some("secret".to_string())
+        );
+    }
+
+    #[test]
+    fn read_token_serves_cached_none_without_keyring() {
+        set_cache("token-cache-miss-user", None);
+        assert_eq!(read_token("token-cache-miss-user").unwrap(), None);
+    }
+
+    #[test]
+    fn invalidate_token_removes_cache_entry() {
+        set_cache("token-cache-invalidate-user", Some("secret".to_string()));
+        assert!(cache_contains("token-cache-invalidate-user"));
+        invalidate_token("TOKEN-CACHE-INVALIDATE-USER");
+        assert!(!cache_contains("token-cache-invalidate-user"));
     }
 }
