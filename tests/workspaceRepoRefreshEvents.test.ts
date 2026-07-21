@@ -3,6 +3,7 @@ import type { WorkspaceService } from "../src/composables/workspace/serviceLoade
 import {
   applyWorkspaceRepoRefreshed,
   applyWorkspaceTaskChanged,
+  ACTIVE_REMOTE_REPO_REFRESH_TTL_MS,
   ensureRepoRefreshEventsReady,
   hydrateRepoRemoteCheckedAt,
   markActiveRepoLocalReady,
@@ -65,12 +66,12 @@ describe("workspace repo refresh events", () => {
     });
   });
 
-  it("持久化远端时间命中十分钟 TTL 时只设置一次到期唤醒", async () => {
+  it("持久化远端时间命中活动仓 TTL 时只设置一次到期唤醒", async () => {
     hydrateRepoRemoteCheckedAt({ A: { remoteCheckedAt: Date.now() } });
     await setActiveRepoForRefresh("A");
     markActiveRepoLocalReady("A");
 
-    await vi.advanceTimersByTimeAsync(REMOTE_REPO_REFRESH_TTL_MS - 1);
+    await vi.advanceTimersByTimeAsync(ACTIVE_REMOTE_REPO_REFRESH_TTL_MS - 1);
     expect(service.enqueueRepoRefresh).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(service.enqueueRepoRefresh).toHaveBeenCalledTimes(1);
@@ -82,7 +83,7 @@ describe("workspace repo refresh events", () => {
     markActiveRepoLocalReady("A");
     setRepoRefreshLifecycleFocused(false);
 
-    await vi.advanceTimersByTimeAsync(REMOTE_REPO_REFRESH_TTL_MS);
+    await vi.advanceTimersByTimeAsync(ACTIVE_REMOTE_REPO_REFRESH_TTL_MS);
     expect(service.enqueueRepoRefresh).not.toHaveBeenCalled();
 
     setRepoRefreshLifecycleFocused(true);

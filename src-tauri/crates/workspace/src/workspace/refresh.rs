@@ -26,6 +26,7 @@ use serde_json::json;
 
 const REPO_REFRESHED_EVENT: &str = "workspace://repo-refreshed";
 const REMOTE_CACHE_TTL_MS: i64 = 10 * 60 * 1_000;
+const ACTIVE_REMOTE_CACHE_TTL_MS: i64 = 60 * 1_000;
 const REMOTE_BACKOFF_MS: [i64; 3] = [60 * 1_000, 5 * 60 * 1_000, 15 * 60 * 1_000];
 pub const LOCAL_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.local.v1";
 pub const REMOTE_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.remote.v1";
@@ -762,16 +763,21 @@ fn detail_scope_rank(scope: &str) -> usize {
     }
 }
 
-fn remote_cache_is_fresh(app: &AppHandle, repo_id: &str) -> bool {
+fn remote_cache_is_fresh(app: &AppHandle, request: &RepoRefreshRequest) -> bool {
     let now = now_millis();
+    let ttl = if request.trigger == "activeRepo" {
+        ACTIVE_REMOTE_CACHE_TTL_MS
+    } else {
+        REMOTE_CACHE_TTL_MS
+    };
     load_startup_cache(app)
         .and_then(|cache| {
             cache
                 .repos_by_id
-                .get(repo_id)
+                .get(&request.repo_id)
                 .and_then(|entry| entry.remote_checked_at)
         })
-        .is_some_and(|checked_at| now.saturating_sub(checked_at) < REMOTE_CACHE_TTL_MS)
+        .is_some_and(|checked_at| now.saturating_sub(checked_at) < ttl)
 }
 
 fn update_remote_backoff(state: &mut SchedulerState, repo_id: &str, success: bool) {
@@ -851,10 +857,7 @@ pub fn workspace_enqueue_repo_refresh(
     if let Some(existing) = existing {
         return finish_existing_merge(existing);
     }
-    if lane == RefreshLane::Remote
-        && !request.force
-        && remote_cache_is_fresh(&app, &request.repo_id)
-    {
+    if lane == RefreshLane::Remote && !request.force && remote_cache_is_fresh(&app, &request) {
         return Ok(record_skipped_remote_task(
             &app,
             &request,

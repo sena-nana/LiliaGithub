@@ -27,6 +27,7 @@ export { waitForWorkspaceTask };
 export const WORKSPACE_TASK_CHANGED_EVENT = "workspace://task-changed";
 export const WORKSPACE_REPO_REFRESHED_EVENT = "workspace://repo-refreshed";
 export const REMOTE_REPO_REFRESH_TTL_MS = 10 * 60 * 1000;
+export const ACTIVE_REMOTE_REPO_REFRESH_TTL_MS = 60 * 1000;
 const REMOTE_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 
 let activeRepoId: string | null = null;
@@ -213,7 +214,7 @@ export function scheduleAutoSyncRepoRefreshes(now = Date.now()) {
 function remoteRefreshDelay(repoId: string, now = Date.now()) {
   const checkedAt = state.repoRemoteCheckedAt[repoId];
   if (checkedAt == null) return 0;
-  return Math.max(0, checkedAt + REMOTE_REPO_REFRESH_TTL_MS - now);
+  return Math.max(0, checkedAt + ACTIVE_REMOTE_REPO_REFRESH_TTL_MS - now);
 }
 
 function scheduleActiveRepoRefresh(delay: number) {
