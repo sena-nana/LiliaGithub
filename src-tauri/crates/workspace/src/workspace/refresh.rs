@@ -183,6 +183,11 @@ impl RepoRefreshRunner {
                 accepted_protocol_ids: vec![protocol_id.into()],
                 purity: RunnerPurity::Pure,
                 execution_class: ExecutionClass::Blocking,
+                invocation_mode: mutsuki_runtime_contracts::InvocationMode::SyncExclusive,
+                concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Reentrant {
+                    max_inflight_batches: 1,
+                    max_inflight_entries: max_entries,
+                },
                 input_schema: json!({ "type": "object" }),
                 output_schema: json!({ "type": "object" }),
                 batch: RunnerBatchCapability {

@@ -12,11 +12,11 @@ libc = "0.2"
 lilia_github_contracts = { path = "../lilia_github_contracts" }
 lilia_github_git = { path = "../git" }
 lilia_github_github = { path = "../github" }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab" }
-mutsuki-tauri-bridge = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "712080085bd1b8be923448940002aa3af8337f1b" }
-mutsuki-tauri-host = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "712080085bd1b8be923448940002aa3af8337f1b" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1787ab5c6d9aee9982505d0686d6c2e03547275e" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1787ab5c6d9aee9982505d0686d6c2e03547275e" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1787ab5c6d9aee9982505d0686d6c2e03547275e" }
+mutsuki-tauri-bridge = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "af169aaf7f13c9da0cbbe1214ac97432f6a259e0" }
+mutsuki-tauri-host = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "af169aaf7f13c9da0cbbe1214ac97432f6a259e0" }
 notify = "6.1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }

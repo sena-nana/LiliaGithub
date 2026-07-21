@@ -19,13 +19,37 @@ pub async fn lilia_code_create_task_handoff(
     app: AppHandle,
     handoff: LiliaCodeTaskHandoff,
 ) -> Result<LiliaCodeTaskHandoffStatus, String> {
-    run_core_operation(
-        app.clone(),
-        OperationKind::LaunchControl,
-        "创建 LiliaCode 任务",
-        move || create_task_handoff(&app, handoff),
-    )
-    .await
+    validate_task_handoff(&handoff)?;
+    // Always keep a recoverable draft first; never mark it delivered.
+    let store = app.store(LILIA_CODE_HANDOFF_STORE)?;
+    store.set(
+        &format!("draft:{}", handoff.id),
+        serde_json::to_value(&handoff).map_err(|error| error.to_string())?,
+    );
+    store.save()?;
+
+    match crate::workspace::app_delivery_handoff::deliver_task_handoff_via_app(&handoff).await {
+        Ok(status) => {
+            persist_handoff_status(&app, &status)?;
+            Ok(status)
+        }
+        Err(direct_error) => {
+            let failed = LiliaCodeTaskHandoffStatus {
+                protocol: LILIA_CODE_HANDOFF_PROTOCOL.to_string(),
+                version: LILIA_CODE_HANDOFF_VERSION,
+                handoff_id: handoff.id.clone(),
+                status: "failed".to_string(),
+                task_id: None,
+                project_id: None,
+                result_route: None,
+                error: Some(direct_error.clone()),
+                updated_at: now_millis().to_string(),
+            };
+            persist_handoff_status(&app, &failed)?;
+            // File handoff remains recovery-only via open_task_handoff_result.
+            Err(direct_error)
+        }
+    }
 }
 
 pub fn lilia_code_get_task_handoff_status(
@@ -81,6 +105,7 @@ fn open_task_handoff_result(app: &AppHandle, handoff_id: &str) -> Result<(), Str
     open_lilia_code_handoff(&path)
 }
 
+#[allow(dead_code)]
 fn create_task_handoff(
     app: &AppHandle,
     handoff: LiliaCodeTaskHandoff,
