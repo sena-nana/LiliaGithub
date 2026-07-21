@@ -371,6 +371,7 @@ async function refreshCurrentPage() {
   display: grid;
   gap: 14px;
   min-height: 0;
+  padding: 20px 24px 0;
 }
 
 .repo-header {

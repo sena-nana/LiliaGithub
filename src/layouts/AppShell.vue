@@ -153,6 +153,7 @@ function toggleSidebar() {
         backdrop-effect="none"
         surface-level="base"
         surface-boundary
+        :style="{ '--lilia-primary-inset': route.path.startsWith('/repos/') ? '0' : undefined }"
       >
         <RouterView v-slot="{ Component }">
           <component :is="Component" :key="workspaceContextKey" />
