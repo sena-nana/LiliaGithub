@@ -6,8 +6,8 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
-    forget_remote_repo_shortcut, normalize_github_repo_input, remember_remote_repo_shortcut,
-    GITHUB_CONTRIBUTION_DAYS,
+    forget_remote_repo_shortcut, invalidate_token, normalize_github_repo_input,
+    remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
 };
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAccess};
@@ -593,9 +593,13 @@ pub(super) fn switch_github_binding(
     binding: lilia_github_contracts::workspace::GitHubBindingMetadata,
 ) -> Result<WorkspaceSettings, String> {
     let (mut document, _) = read_settings_document(app);
+    let previous_login = document.binding.as_ref().map(|existing| existing.login.clone());
     document.binding = Some(binding);
     write_settings_document(app, &document)?;
     reset_workspace_runtime_state(app);
+    if let Some(login) = previous_login {
+        invalidate_token(&login);
+    }
     Ok(visible_workspace_settings(settings_from_document(
         &document,
     )))
@@ -603,9 +607,13 @@ pub(super) fn switch_github_binding(
 
 pub(super) fn clear_github_binding(app: &AppHandle) -> Result<WorkspaceSettings, String> {
     let (mut document, _) = read_settings_document(app);
+    let previous_login = document.binding.as_ref().map(|binding| binding.login.clone());
     document.binding = None;
     write_settings_document(app, &document)?;
     reset_workspace_runtime_state(app);
+    if let Some(login) = previous_login {
+        invalidate_token(&login);
+    }
     Ok(visible_workspace_settings(settings_from_document(
         &document,
     )))
