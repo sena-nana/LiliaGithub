@@ -332,7 +332,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
           </RouterLink>
         </div>
 
-        <div class="repo-toolbar__group repo-toolbar__refresh-group">
+        <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
           <button
             type="button"
             class="repo-toolbar__btn"
@@ -345,9 +345,6 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             <LoaderCircle v-if="refreshingCurrentPage" :size="17" aria-hidden="true" class="sb-spin" />
             <RotateCw v-else :size="17" aria-hidden="true" />
           </button>
-        </div>
-
-        <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
           <template v-if="repoContext.capabilities.open.available">
           <RepoToolbarSettingsMenu
             :values="repoSettingValues"
