@@ -8,6 +8,7 @@ import {
 import {
   type LiliaSidebarConfigInput,
   type LiliaUiConfig,
+  type SidebarNavItem,
 } from "../ui";
 import {
   createLiliaSettingsModel,
@@ -20,7 +21,6 @@ import appConfig from "../../app.config.json";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
 export const APP_TITLE = appConfig.productTitle;
-type SidebarNavItems = NonNullable<LiliaSidebarConfigInput["nav"]>;
 
 export const SIDEBAR_CONFIG = {
   widthStorageKey: "lilia-github.sidebarWidth",
@@ -30,7 +30,7 @@ export const SIDEBAR_CONFIG = {
   defaultWidth: 220,
 } as const;
 
-export const SIDEBAR_NAV: SidebarNavItems = [
+export const SIDEBAR_NAV: SidebarNavItem[] = [
   {
     key: "overview",
     to: "/",
@@ -123,8 +123,6 @@ export const LILIA_UI_CONFIG = {
     },
   },
   sidebar: {
-    ...SIDEBAR_CONFIG,
-    nav: SIDEBAR_NAV,
     footerStatuses: [footerStatus],
   },
 } satisfies LiliaUiConfig;

@@ -1,9 +1,5 @@
 <script setup lang="ts">
-import type { LiliaSidebarConfigInput } from "../../ui";
-
-type SidebarActionItem = NonNullable<
-  NonNullable<LiliaSidebarConfigInput["nav"]>[number]["tools"]
->[number];
+import type { SidebarActionItem } from "../../ui";
 
 defineProps<{
   tools: SidebarActionItem[];
