@@ -122,7 +122,7 @@ describe("初始化覆盖界面", () => {
     pickWorkspaceRoot.mockImplementation(() => picker.promise);
     await renderSetupHome();
 
-    const button = screen.getByRole("button", { name: "创建工作区" });
+    const button = await screen.findByRole("button", { name: "创建工作区" });
     await fireEvent.click(button);
 
     await waitFor(() => expect(button).toBeDisabled());

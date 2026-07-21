@@ -91,7 +91,7 @@ function toggleSidebar() {
 
 <template>
   <LiliaAppShell :title="APP_TITLE">
-    <template #titlebar-leading>
+    <template #header-leading>
       <UiIconButton
         class="app-shell__sidebar-toggle"
         :icon="sidebarToggleIcon"

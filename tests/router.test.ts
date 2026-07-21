@@ -71,11 +71,22 @@ async function renderAt(path: string) {
   mountedApp = app;
   mountedContainer = container;
   await flushFakeTimersIfNeeded();
+  await waitForWorkspaceRegions();
 
   return {
     router,
     container,
   };
+}
+
+async function waitForWorkspaceRegions(root: ParentNode = document) {
+  await Promise.resolve();
+  await waitFor(() => {
+    const main = root.querySelector('[data-region-id="main"]');
+    expect(main).toBeTruthy();
+    expect(main).not.toHaveAttribute("hidden");
+    expect(main).toHaveAttribute("data-region-visible", "true");
+  });
 }
 
 function deferred<T>() {
@@ -367,11 +378,11 @@ describe("基础路由", () => {
     expect(screen.queryByRole("heading", { level: 2, name: "提交" })).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: "快速启动" })).toBeNull();
     expect(await screen.findByText("当前仓库没有 README.md。")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Issues" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Settings" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "变更" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "历史" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "历史" })).toBeInTheDocument();
   });
 
   it("GitHub 仓库直取遇到可重试错误时保留远程深链", async () => {
@@ -1189,7 +1200,7 @@ describe("基础路由", () => {
       expect(screen.getByLabelText("Stash 内容")).toHaveTextContent("On main: WIP toolbar");
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
     expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
 
     await router.push("/repos/github%3Asena-nana%2FEmptyRemote/stash");
@@ -1371,12 +1382,12 @@ describe("基础路由", () => {
     expect(await screen.findByLabelText("提交详情卡片")).toBeInTheDocument();
     expect(await screen.findByLabelText("提交元数据")).toHaveTextContent("1234567");
     expect(screen.getByLabelText("提交元数据")).not.toHaveTextContent("1234567890abcdef");
-    await fireEvent.click(screen.getByRole("button", { name: "复制完整 hash 1234567" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "复制完整 hash 1234567" }));
     expect(writeText).toHaveBeenCalledWith("1234567890abcdef");
     expect(await screen.findByText("完整 hash 已复制")).toBeInTheDocument();
     expect(await screen.findByLabelText("改动文件列表")).toHaveTextContent("src/pages/Home.vue");
     const diffPanel = await screen.findByLabelText("改动文件 diff");
-    const collapseToggle = within(diffPanel).getByRole("button", { name: "折叠 diff" });
+    const collapseToggle = await within(diffPanel).findByRole("button", { name: "折叠 diff" });
     expect(collapseToggle).toHaveAttribute("aria-pressed", "true");
     expect(diffPanel).toHaveTextContent("@@ -1,3 +1,4 @@");
     expect(diffPanel).toHaveTextContent("<h1>LiliaGithub</h1>");
@@ -1402,7 +1413,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "提交详情" })).toBeInTheDocument();
     expect(await screen.findByText("改动文件")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "折叠 diff" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("button", { name: "折叠 diff" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("+42")).toBeInTheDocument();
     expect(screen.getByText("-3")).toBeInTheDocument();
     expect(screen.getByText("@@ -1,3 +1,4 @@")).toBeInTheDocument();

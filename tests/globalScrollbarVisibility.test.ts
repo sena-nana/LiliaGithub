@@ -97,6 +97,11 @@ describe("global scrollbar visibility", () => {
     installGlobalScrollbarVisibility();
     const { element } = createScroller();
 
+    element.dispatchEvent(new MouseEvent("pointerover", {
+      bubbles: true,
+      clientX: 204,
+      clientY: 50,
+    }));
     element.dispatchEvent(new MouseEvent("pointermove", {
       bubbles: true,
       clientX: 204,
