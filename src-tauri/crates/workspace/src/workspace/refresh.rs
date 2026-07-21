@@ -184,10 +184,7 @@ impl RepoRefreshRunner {
                 purity: RunnerPurity::Pure,
                 execution_class: ExecutionClass::Blocking,
                 invocation_mode: mutsuki_runtime_contracts::InvocationMode::SyncExclusive,
-                concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Reentrant {
-                    max_inflight_batches: 1,
-                    max_inflight_entries: max_entries,
-                },
+                concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Exclusive,
                 input_schema: json!({ "type": "object" }),
                 output_schema: json!({ "type": "object" }),
                 batch: RunnerBatchCapability {
@@ -197,7 +194,7 @@ impl RepoRefreshRunner {
                     max_entry_concurrency: max_entries,
                     max_inflight_batches: 1,
                     scalar_thread_safe: true,
-                    scalar_reentrant: true,
+                    scalar_reentrant: false,
                     partial_failure: true,
                     preserve_order: false,
                     side_effect: RunnerSideEffect::External,
