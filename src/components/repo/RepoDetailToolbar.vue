@@ -68,6 +68,7 @@ const props = defineProps<{
   branchActionRunning: boolean;
   activeBranchName: string;
   actionRunning: boolean;
+  pushRunning: boolean;
   launchRunning: boolean;
   launchCommandOptions: readonly DropdownOption[];
   activeLaunchValue: string;
@@ -444,13 +445,14 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
               'repo-toolbar__btn--counted': aheadCount || remotesNeedingPush,
               'repo-toolbar__btn--push-ready': pushRemoteNames.length && (aheadCount || remotesNeedingPush || needsPublish),
             }"
-            :title="pushTargetLabel"
+            :title="pushRunning ? '正在推送' : pushTargetLabel"
             aria-label="推送"
             data-agent-id="repo.toolbar.push"
-            :disabled="Boolean(remoteSyncUnavailableReason) || !pushRemoteNames.length || (!aheadCount && !remotesNeedingPush && !needsPublish)"
+            :disabled="pushRunning || Boolean(remoteSyncUnavailableReason) || !pushRemoteNames.length || (!aheadCount && !remotesNeedingPush && !needsPublish)"
             @click="emit('push')"
           >
-            <CloudUpload :size="17" aria-hidden="true" />
+            <LoaderCircle v-if="pushRunning" :size="17" aria-hidden="true" class="sb-spin" />
+            <CloudUpload v-else :size="17" aria-hidden="true" />
             <span v-if="pushRemoteNames.length" class="repo-toolbar__sync-label">
               {{ pushRemoteNames.length === 1 ? pushRemoteNames[0] : `${pushRemoteNames.length} 个远端` }}
             </span>
