@@ -79,6 +79,7 @@ const props = defineProps<{
   openTargetLabel: string;
   summaryPath?: string | null;
   hasConflicts: boolean;
+  hasConflictFiles: boolean;
   needsPublish: boolean;
   aheadCount: number;
   behindCount: number;
@@ -423,7 +424,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             />
           </div>
           <button
-            v-if="hasConflicts"
+            v-if="hasConflictFiles"
             type="button"
             class="repo-toolbar__btn repo-toolbar__btn--status"
             title="处理未解决冲突"

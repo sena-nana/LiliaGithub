@@ -215,6 +215,7 @@ async function refreshCurrentPage() {
         :open-target-label="openTargetLabel"
         :summary-path="summary?.path"
         :has-conflicts="hasConflicts"
+        :has-conflict-files="conflicts.files.length > 0"
         :needs-publish="needsPublish"
         :ahead-count="aheadCount"
         :behind-count="behindCount"
