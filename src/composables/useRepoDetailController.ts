@@ -111,7 +111,7 @@ export function useRepoDetailController() {
   const remoteSyncDialogOpen = ref(false);
   const syncOperationResult = ref<RepoSyncOperationResult | null>(null);
   const conflictDialogOpen = ref(false);
-  const failedPushRetrying = ref(false);
+  const pushRunning = ref(false);
   const componentEpoch = useComponentEpoch();
   const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
   const githubBranchesLoader = createLatestAsyncLoader({ componentEpoch });
@@ -445,7 +445,7 @@ export function useRepoDetailController() {
     remoteSyncDialogOpen.value = false;
     syncOperationResult.value = null;
     conflictDialogOpen.value = false;
-    failedPushRetrying.value = false;
+    pushRunning.value = false;
     void load();
   });
 
@@ -852,6 +852,7 @@ export function useRepoDetailController() {
   function invalidateActions() {
     actionGeneration += 1;
     actionTracker.reset();
+    pushRunning.value = false;
   }
 
   function isActionCurrent(generation: number, targetRepoId: string) {
@@ -944,12 +945,7 @@ export function useRepoDetailController() {
     if (!targetRepoId || !targetPaths.length || !message) return;
     commitMessage.value = "";
     void runAction(async () => {
-      const commitAction = () =>
-        workspace.commit(targetRepoId, targetPaths, message, pushAfter);
-      const result = pushAfter
-        ? await runPushWithFallback(targetRepoId, commitAction)
-        : await commitAction();
-      captureSyncOperationResult(result);
+      await workspace.commit(targetRepoId, targetPaths, message, false);
     }).then((success) => {
       if (
         !success &&
@@ -958,6 +954,10 @@ export function useRepoDetailController() {
         !commitMessage.value.trim()
       ) {
         commitMessage.value = message;
+        return;
+      }
+      if (success && pushAfter && repoId.value === targetRepoId) {
+        void runPushAction(targetRepoId, () => workspace.push(targetRepoId));
       }
     });
   }
@@ -1038,7 +1038,7 @@ export function useRepoDetailController() {
   }
 
   function closeSyncResultDialog() {
-    if (!failedPushRetrying.value) syncOperationResult.value = null;
+    if (!pushRunning.value) syncOperationResult.value = null;
   }
 
   function openConflictDialog() {
@@ -1092,18 +1092,22 @@ export function useRepoDetailController() {
 
   async function retryFailedRemotePush(remoteNames: string[]) {
     const targetRepoId = repoId.value;
-    const currentResult = syncOperationResult.value;
-    if (!targetRepoId || !currentResult || failedPushRetrying.value) return;
-    failedPushRetrying.value = true;
+    if (!targetRepoId || !syncOperationResult.value) return;
+    await runPushAction(targetRepoId, () => workspace.push(targetRepoId, remoteNames));
+  }
+
+  async function runPushAction(targetRepoId: string, pushAction: () => Promise<unknown>) {
+    if (!targetRepoId || pushRunning.value) return;
+    const generation = actionGeneration;
+    pushRunning.value = true;
     actionError.value = null;
     try {
-      const result = await workspace.push(targetRepoId, remoteNames);
-      if (repoId.value !== targetRepoId) return;
-      captureSyncOperationResult(result);
+      const result = await runPushWithFallback(targetRepoId, pushAction);
+      if (isActionCurrent(generation, targetRepoId)) captureSyncOperationResult(result);
     } catch (err) {
-      if (repoId.value === targetRepoId) actionError.value = String(err);
+      if (isActionCurrent(generation, targetRepoId)) actionError.value = String(err);
     } finally {
-      if (repoId.value === targetRepoId) failedPushRetrying.value = false;
+      if (isActionCurrent(generation, targetRepoId)) pushRunning.value = false;
     }
   }
 
@@ -1149,22 +1153,16 @@ export function useRepoDetailController() {
   function push() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
-    void runAction(async () => {
-      const result = await runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId));
-      captureSyncOperationResult(result);
-    });
+    void runPushAction(targetRepoId, () => workspace.push(targetRepoId));
   }
 
   function pushCurrentBranchWithUpstream() {
     const targetRepoId = repoId.value;
     const branch = summary.value?.currentBranch ?? null;
     if (!targetRepoId || !branch) return;
-    void runAction(async () => {
-      const result = await runPushWithFallback(targetRepoId, () =>
-        workspace.pushNewBranch(targetRepoId, null, branch)
-      );
-      captureSyncOperationResult(result);
-    });
+    void runPushAction(targetRepoId, () =>
+      workspace.pushNewBranch(targetRepoId, null, branch),
+    );
   }
 
   function setCurrentBranchUpstream() {
@@ -1429,7 +1427,7 @@ export function useRepoDetailController() {
       remoteSyncConfigError,
       remoteSyncDialogOpen,
       syncOperationResult,
-      failedPushRetrying,
+      pushRunning,
       focusChange,
       stageUnstagedChanges,
       unstageStagedChanges,

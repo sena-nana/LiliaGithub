@@ -79,7 +79,7 @@ const {
   remoteSyncConfigError,
   remoteSyncDialogOpen,
   syncOperationResult,
-  failedPushRetrying,
+  pushRunning,
   focusChange,
   stageUnstagedChanges,
   unstageStagedChanges,
@@ -204,6 +204,7 @@ async function refreshCurrentPage() {
         :branch-action-running="branchActionRunning"
         :active-branch-name="activeBranchName"
         :action-running="actionRunning"
+        :push-running="pushRunning"
         :launch-running="launchRunning"
         :launch-command-options="launchCommandOptions"
         :active-launch-value="activeLaunchValue"
@@ -335,7 +336,7 @@ async function refreshCurrentPage() {
     <RepoSyncResultDialog
       v-if="syncOperationResult"
       :result="syncOperationResult"
-      :retrying="failedPushRetrying"
+      :retrying="pushRunning"
       @close="closeSyncResultDialog"
       @retry-push="retryFailedRemotePush"
       @resolve-conflicts="openConflictDialogFromSyncResult"
