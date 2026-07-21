@@ -667,10 +667,7 @@ impl OperationRunner {
                 purity: RunnerPurity::Effectful,
                 execution_class: ExecutionClass::Blocking,
                 invocation_mode: InvocationMode::SyncExclusive,
-                concurrency: RunnerConcurrency::Reentrant {
-                    max_inflight_batches: 1,
-                    max_inflight_entries: concurrency,
-                },
+                concurrency: RunnerConcurrency::Exclusive,
                 input_schema: json!({ "type": "object" }),
                 output_schema: json!({ "type": "object" }),
                 batch: RunnerBatchCapability {
@@ -680,7 +677,7 @@ impl OperationRunner {
                     max_entry_concurrency: concurrency,
                     max_inflight_batches: 1,
                     scalar_thread_safe: true,
-                    scalar_reentrant: true,
+                    scalar_reentrant: false,
                     partial_failure: true,
                     preserve_order: false,
                     side_effect: RunnerSideEffect::External,

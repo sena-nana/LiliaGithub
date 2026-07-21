@@ -2684,7 +2684,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-bridge"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=6f1512e9c34d9577784e7afbe1acce4f6c6c92fc#6f1512e9c34d9577784e7afbe1acce4f6c6c92fc"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=af169aaf7f13c9da0cbbe1214ac97432f6a259e0#af169aaf7f13c9da0cbbe1214ac97432f6a259e0"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -2697,7 +2697,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=6f1512e9c34d9577784e7afbe1acce4f6c6c92fc#6f1512e9c34d9577784e7afbe1acce4f6c6c92fc"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=af169aaf7f13c9da0cbbe1214ac97432f6a259e0#af169aaf7f13c9da0cbbe1214ac97432f6a259e0"
 dependencies = [
  "dirs",
  "mutsuki-link-core",
@@ -2720,7 +2720,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-resource"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=6f1512e9c34d9577784e7afbe1acce4f6c6c92fc#6f1512e9c34d9577784e7afbe1acce4f6c6c92fc"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=af169aaf7f13c9da0cbbe1214ac97432f6a259e0#af169aaf7f13c9da0cbbe1214ac97432f6a259e0"
 dependencies = [
  "mime_guess",
  "mutsuki-runtime-contracts",
@@ -4712,7 +4712,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-mutsuki"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=6f1512e9c34d9577784e7afbe1acce4f6c6c92fc#6f1512e9c34d9577784e7afbe1acce4f6c6c92fc"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=af169aaf7f13c9da0cbbe1214ac97432f6a259e0#af169aaf7f13c9da0cbbe1214ac97432f6a259e0"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-tauri-bridge",
