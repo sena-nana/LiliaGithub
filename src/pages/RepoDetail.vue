@@ -432,12 +432,8 @@ async function refreshCurrentPage() {
   background: var(--bg-hover);
 }
 
-.repo-toolbar__refresh-group,
 .repo-toolbar__actions {
   flex: 0 0 auto;
-}
-
-.repo-toolbar__refresh-group {
   margin-left: auto;
 }
 
@@ -1125,7 +1121,7 @@ async function refreshCurrentPage() {
     max-width: 100%;
   }
 
-  .repo-toolbar__refresh-group {
+  .repo-toolbar__actions {
     margin-left: 0;
   }
 

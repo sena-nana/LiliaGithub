@@ -1014,7 +1014,7 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "处理冲突" })).toBeNull();
   });
 
-  it("仓库详情页右上角独立刷新当前 Issues 页面", async () => {
+  it("仓库详情页右上角项目操作区刷新当前 Issues 页面", async () => {
     workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
         githubIssue("sena-nana/LiliaGithub", 11, "2026-06-18T08:00:00Z"),
@@ -1031,10 +1031,9 @@ describe("基础路由", () => {
     });
     expect(await screen.findByText("#11 sena-nana/LiliaGithub issue 11")).toBeInTheDocument();
     const initialIssueRequestCount = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;
-    const refresh = screen.getByRole("button", { name: "刷新当前页" });
     const actions = screen.getByRole("group", { name: "项目操作" });
+    const refresh = within(actions).getByRole("button", { name: "刷新当前页" });
     expect(refresh).toHaveAttribute("data-agent-id", "repo.toolbar.refresh-page");
-    expect(within(actions).queryByRole("button", { name: "刷新当前页" })).toBeNull();
     expect(within(screen.getByLabelText("右侧面板工具栏")).queryByRole("button", { name: "刷新当前页" })).toBeNull();
 
     workspaceFallback.setFallbackGitHubIssuesForTests({
