@@ -69,7 +69,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 
 <!-- 由 docs/feature-status.json 通过 scripts/sync-feature-status.mjs 生成。请修改数据源后运行 yarn feature-status:generate。 -->
 
-以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-19。
+以下内容由项目的 Feature Status 单一真值生成。只有当前 main 分支上可用的用户功能才会标记为完成。最近核对时间：2026-07-22。
 
 ### 本地 Git 和仓库管理
 
@@ -104,8 +104,8 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [x] 个人与组织仓库浏览、仓库创建和克隆到工作区流程。
 - [x] 关注仓库和仓库通知偏好。
 - [x] 本地仓库收藏和仓库分组。
-- [x] 首页待处理 Attention 汇总 Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和既有协作信号，并提供仓库直达入口。
-- [x] 从完整 Pull Request Review 发起结构化 LiliaCode 修复任务交接，包含来源上下文、验收条件和结果返回路径。
+- [x] 首页 Attention / Today / Continue 决策视图，提供原因、下一步、项目 Momentum 信号、Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和可恢复工作区上下文。
+- [x] 从完整 Pull Request Review 和失败 Workflow 发起结构化 LiliaCode 修复任务交接，包含来源上下文、验收条件和结果返回路径。
 - [x] 支持多个根目录和工作区独立偏好的多个命名工作区。
 - [ ] 支持类型、仓库和所有者范围筛选的应用内账号活动时间线。 `P1`
 

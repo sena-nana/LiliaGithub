@@ -101,18 +101,21 @@ import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
 } from "../utils/repoFavorites";
+import { buildHomeContinueItems, type HomeContinueItem } from "../utils/homeContinueItems";
 import {
   buildHomePendingItems,
   cloneGitHubIssue,
   cloneGitHubPullRequest,
   groupAccountIssuesByRepo,
   groupActionNotificationsByRepo,
+  groupHomePendingItemsByBucket,
   replaceReposByFullName,
   shouldLoadHomePendingAccountIssues,
   shouldLoadHomePendingActionNotifications,
   type HomePendingItem,
   type HomePendingRepoSource,
 } from "../utils/homePendingItems";
+import { buildProjectMomentum, type ProjectMomentum } from "../utils/projectMomentum";
 import {
   repoCalculatesHomeTimeline,
   repoIncludedInHomeCodeStats,
@@ -229,6 +232,7 @@ type RepoStatusRow = {
   localRepo: RepoSummary | null;
   action: RepoAction | null;
   syncIssue: RepoSyncIssueDisplay | null;
+  momentum: ProjectMomentum;
 };
 
 type LanguageChartMode = "language" | "project";
@@ -287,6 +291,13 @@ type HomePendingRow = {
   handoff: HomePendingWorkflowHandoff | null;
   confirmingAction: HomePendingAction | null;
   runningAction: HomePendingAction | null;
+};
+
+type HomePendingSection = {
+  id: "attention" | "today" | "continue";
+  title: string;
+  rows?: HomePendingRow[];
+  continueItems?: HomeContinueItem[];
 };
 
 type HomePendingWorkflowHandoff = {
@@ -763,14 +774,36 @@ const repoStatusSortLabel = computed(() =>
   repoSortDisplayLabel(activeRepoStatusSortOption.value, repoStatusSort.value.direction),
 );
 
+const homePendingItems = computed(() =>
+  buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT),
+);
+
+const pendingItemsByRepo = computed(() => {
+  const grouped = new Map<string, HomePendingItem[]>();
+  for (const item of homePendingItems.value) {
+    const key = githubRepositoryIdentityKey(homePendingItemRepoFullName(item));
+    const list = grouped.get(key);
+    if (list) list.push(item);
+    else grouped.set(key, [item]);
+  }
+  return grouped;
+});
+
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   overviewGitHubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
     const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
+    const syncIssue = localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
     return {
       githubRepo,
       localRepo,
       action: localRepo ? repoAction(localRepo) : null,
-      syncIssue: localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null,
+      syncIssue,
+      momentum: buildProjectMomentum({
+        githubRepo,
+        localRepo,
+        syncIssue,
+        pendingItems: pendingItemsByRepo.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? [],
+      }),
     };
   }).sort(compareRepoStatusRows),
 );
@@ -840,10 +873,29 @@ function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
   return [...remoteSources, ...localSources];
 }
 
-const homePendingRows = computed<HomePendingRow[]>(() =>
-  buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT)
-    .map(toHomePendingRow),
+const homeContinueItems = computed(() =>
+  buildHomeContinueItems({
+    recentContext: activeNamedWorkspace.value?.recentContext ?? null,
+    recentLocalRepos: activeNamedWorkspace.value?.recentLocalRepos ?? [],
+    repos: overviewStatusRepos.value,
+    currentRoute: route.fullPath,
+  }),
 );
+const homePendingSections = computed<HomePendingSection[]>(() => {
+  const { attention, today } = groupHomePendingItemsByBucket(homePendingItems.value);
+  const sections: HomePendingSection[] = [];
+  if (attention.length) {
+    sections.push({ id: "attention", title: "Attention", rows: attention.map(toHomePendingRow) });
+  }
+  if (today.length) {
+    sections.push({ id: "today", title: "Today", rows: today.map(toHomePendingRow) });
+  }
+  if (homeContinueItems.value.length) {
+    sections.push({ id: "continue", title: "Continue", continueItems: homeContinueItems.value });
+  }
+  return sections;
+});
+const homeDecisionEmpty = computed(() => homePendingSections.value.length === 0);
 const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
   githubAccountIssuesLoading.value ||
@@ -1640,6 +1692,10 @@ async function openHomePendingLink(event: MouseEvent | KeyboardEvent, link: Home
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
   await router.push(link.to);
+}
+
+async function openHomeContinueItem(event: MouseEvent | KeyboardEvent, item: HomeContinueItem) {
+  await openHomePendingLink(event, { kind: "route", to: item.route });
 }
 
 async function openHomePendingLinkFromKeyboard(event: KeyboardEvent, link: HomePendingLink) {
@@ -2652,7 +2708,7 @@ function bulkOperationDescription(operation: BulkOperation) {
         <div class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>
-              待处理事项
+              现在处理
               <LoaderCircle
                 v-if="githubTimelineBusy"
                 :size="13"
@@ -2680,130 +2736,180 @@ function bulkOperationDescription(operation: BulkOperation) {
               </button>
             </p>
             <p
-              v-if="githubTimelineBusy && !homePendingRows.length && !homePendingError"
+              v-if="githubTimelineBusy && homeDecisionEmpty && !homePendingError"
               class="repo-status-empty"
             >
               正在加载待处理事项...
             </p>
-            <p v-else-if="!homePendingRows.length && !homePendingError" class="repo-status-empty">暂无待处理事项</p>
-            <ol
-              v-if="homePendingRows.length"
-              class="home-pending-list"
-              aria-label="待处理事项列表"
+            <p v-else-if="homeDecisionEmpty && !homePendingError" class="repo-status-empty">暂无需要处理的事项</p>
+            <div
+              v-for="section in homePendingSections"
+              :key="section.id"
+              class="home-pending-section"
+              :data-agent-id="`home.pending.section.${section.id}`"
             >
-              <li
-                v-for="row in homePendingRows"
-                :key="row.item.id"
-                class="home-pending-row"
-                :class="{
-                  'has-hover-controls': row.actions.length || row.handoff || row.link.kind !== 'none',
-                  'is-clickable': row.link.kind !== 'none',
-                }"
-                :role="row.link.kind === 'route' ? 'link' : undefined"
-                :data-agent-id="row.link.kind === 'route' ? homePendingItemAgentId(row.item) : undefined"
-                :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
-                :tabindex="row.link.kind === 'route' ? 0 : undefined"
-                @click="openHomePendingLink($event, row.link)"
-                @keydown.self="openHomePendingLinkFromKeyboard($event, row.link)"
+              <h3 class="home-pending-section__title">
+                {{ section.title }}
+                <span class="home-pending-section__count">{{ section.rows?.length || section.continueItems?.length }}</span>
+              </h3>
+              <ol
+                v-if="section.rows?.length"
+                class="home-pending-list"
+                :aria-label="`${section.title} 列表`"
               >
-                <span class="home-pending-row__icon" :class="row.item.tone ? `is-${row.item.tone}` : null" aria-hidden="true">
-                  <component :is="row.icon" :size="14" aria-hidden="true" />
-                </span>
-                <span class="home-pending-row__main">
-                  <strong>{{ row.item.title }}</strong>
-                  <span>{{ row.item.detail }}</span>
-                </span>
-                <span class="home-pending-row__side">
-                  <span
-                    v-if="row.handoff?.statusText"
-                    class="home-pending-row__repo home-pending-row__handoff-status"
-                    :class="{ 'is-error': Boolean(row.handoff.error) }"
-                    :title="row.handoff.error || row.handoff.statusText"
-                    :role="row.handoff.error ? 'alert' : 'status'"
-                    :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.error ? 'error' : 'status')"
-                  >
-                    {{ row.handoff.statusText }}
+                <li
+                  v-for="row in section.rows"
+                  :key="row.item.id"
+                  class="home-pending-row"
+                  :class="{
+                    'has-hover-controls': row.actions.length || row.handoff || row.link.kind !== 'none',
+                    'is-clickable': row.link.kind !== 'none',
+                  }"
+                  :role="row.link.kind === 'route' ? 'link' : undefined"
+                  :data-agent-id="row.link.kind === 'route' ? homePendingItemAgentId(row.item) : undefined"
+                  :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
+                  :tabindex="row.link.kind === 'route' ? 0 : undefined"
+                  @click="openHomePendingLink($event, row.link)"
+                  @keydown.self="openHomePendingLinkFromKeyboard($event, row.link)"
+                >
+                  <span class="home-pending-row__icon" :class="row.item.tone ? `is-${row.item.tone}` : null" aria-hidden="true">
+                    <component :is="row.icon" :size="14" aria-hidden="true" />
                   </span>
-                  <span v-else class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
-                  <span
-                    v-if="row.actions.length || row.handoff || row.link.kind !== 'none'"
-                    class="home-pending-row__actions"
-                    :class="{
-                      'is-expanded': Boolean(row.confirmingAction || row.runningAction || row.handoff?.expanded),
-                    }"
-                    aria-label="快捷操作"
-                  >
-                    <button
-                      v-if="row.handoff"
-                      type="button"
-                      class="home-pending-action"
-                      :class="{
-                        'is-expanded': row.handoff.expanded,
-                      }"
-                      :aria-label="row.handoff.unavailableReason || row.handoff.buttonLabel"
-                      :title="row.handoff.unavailableReason || row.handoff.error || row.handoff.buttonLabel"
-                      :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.accepted ? 'open-result' : 'create')"
-                      :disabled="Boolean(row.runningAction || row.handoff.unavailableReason || row.handoff.busy)"
-                      @click.stop="row.handoff.accepted ? openHomeWorkflowHandoffResult(row) : runHomeWorkflowHandoff(row)"
+                  <span class="home-pending-row__main">
+                    <strong>{{ row.item.title }}</strong>
+                    <span>{{ row.item.detail }}</span>
+                    <small v-if="row.item.reason && row.item.reason !== row.item.detail">{{ row.item.reason }}</small>
+                  </span>
+                  <span class="home-pending-row__side">
+                    <span
+                      v-if="row.handoff?.statusText"
+                      class="home-pending-row__repo home-pending-row__handoff-status"
+                      :class="{ 'is-error': Boolean(row.handoff.error) }"
+                      :title="row.handoff.error || row.handoff.statusText"
+                      :role="row.handoff.error ? 'alert' : 'status'"
+                      :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.error ? 'error' : 'status')"
                     >
-                      <LoaderCircle
-                        v-if="row.handoff.busy"
-                        :size="11"
-                        aria-hidden="true"
-                        class="sb-spin"
-                      />
-                      <Send v-else :size="13" aria-hidden="true" />
-                      <span v-if="row.handoff.expanded">{{ row.handoff.buttonLabel }}</span>
-                    </button>
-                    <button
-                      v-for="action in row.actions"
-                      v-show="!row.runningAction || row.runningAction === action"
-                      :key="action"
-                      type="button"
-                      class="home-pending-action"
+                      {{ row.handoff.statusText }}
+                    </span>
+                    <span v-else class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
+                    <span
+                      v-if="row.actions.length || row.handoff || row.link.kind !== 'none'"
+                      class="home-pending-row__actions"
                       :class="{
-                        'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
-                        'home-pending-action--danger': action === 'issue-close' || action === 'pull-close' || action === 'workflow-cancel',
-                        'is-confirming': row.confirmingAction === action,
-                        'is-expanded': row.confirmingAction === action || row.runningAction === action,
+                        'is-expanded': Boolean(row.confirmingAction || row.runningAction || row.handoff?.expanded),
                       }"
-                      :aria-label="homePendingButtonLabel(row, action)"
-                      :title="homePendingButtonLabel(row, action)"
-                      :data-agent-id="`${homePendingActionAgentId(row.item, action)}${row.confirmingAction === action ? '.confirm' : ''}`"
-                      :disabled="Boolean(row.runningAction || row.handoff?.busy)"
-                      @click.stop="requestHomePendingAction(row.item, action)"
+                      aria-label="快捷操作"
                     >
-                      <LoaderCircle
-                        v-if="row.runningAction === action"
-                        :size="11"
-                        aria-hidden="true"
-                        class="sb-spin"
-                      />
-                      <component
-                        v-else
-                        :is="homePendingActionIcon(action)"
-                        :size="row.confirmingAction === action ? 12 : 13"
-                        aria-hidden="true"
-                      />
-                      <span v-if="row.runningAction === action || row.confirmingAction === action">
-                        {{ homePendingButtonLabel(row, action) }}
-                      </span>
-                    </button>
+                      <button
+                        v-if="row.handoff"
+                        type="button"
+                        class="home-pending-action"
+                        :class="{
+                          'is-expanded': row.handoff.expanded,
+                        }"
+                        :aria-label="row.handoff.unavailableReason || row.handoff.buttonLabel"
+                        :title="row.handoff.unavailableReason || row.handoff.error || row.handoff.buttonLabel"
+                        :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.accepted ? 'open-result' : 'create')"
+                        :disabled="Boolean(row.runningAction || row.handoff.unavailableReason || row.handoff.busy)"
+                        @click.stop="row.handoff.accepted ? openHomeWorkflowHandoffResult(row) : runHomeWorkflowHandoff(row)"
+                      >
+                        <LoaderCircle
+                          v-if="row.handoff.busy"
+                          :size="11"
+                          aria-hidden="true"
+                          class="sb-spin"
+                        />
+                        <Send v-else :size="13" aria-hidden="true" />
+                        <span v-if="row.handoff.expanded">{{ row.handoff.buttonLabel }}</span>
+                      </button>
+                      <button
+                        v-for="action in row.actions"
+                        v-show="!row.runningAction || row.runningAction === action"
+                        :key="action"
+                        type="button"
+                        class="home-pending-action"
+                        :class="{
+                          'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
+                          'home-pending-action--danger': action === 'issue-close' || action === 'pull-close' || action === 'workflow-cancel',
+                          'is-confirming': row.confirmingAction === action,
+                          'is-expanded': row.confirmingAction === action || row.runningAction === action,
+                        }"
+                        :aria-label="homePendingButtonLabel(row, action)"
+                        :title="homePendingButtonLabel(row, action)"
+                        :data-agent-id="`${homePendingActionAgentId(row.item, action)}${row.confirmingAction === action ? '.confirm' : ''}`"
+                        :disabled="Boolean(row.runningAction || row.handoff?.busy)"
+                        @click.stop="requestHomePendingAction(row.item, action)"
+                      >
+                        <LoaderCircle
+                          v-if="row.runningAction === action"
+                          :size="11"
+                          aria-hidden="true"
+                          class="sb-spin"
+                        />
+                        <component
+                          v-else
+                          :is="homePendingActionIcon(action)"
+                          :size="row.confirmingAction === action ? 12 : 13"
+                          aria-hidden="true"
+                        />
+                        <span v-if="row.runningAction === action || row.confirmingAction === action">
+                          {{ homePendingButtonLabel(row, action) }}
+                        </span>
+                      </button>
+                      <a
+                        v-if="row.link.kind !== 'none'"
+                        class="home-pending-row__jump"
+                        :href="homePendingItemHref(row.link)"
+                        :aria-label="`打开 ${row.item.title}`"
+                        title="打开"
+                        :data-agent-id="`${homePendingItemAgentId(row.item)}.open`"
+                        @click.stop="openHomePendingLink($event, row.link)"
+                      >
+                        <ArrowRight :size="13" aria-hidden="true" />
+                      </a>
+                    </span>
+                  </span>
+                </li>
+              </ol>
+              <ol
+                v-else-if="section.continueItems?.length"
+                class="home-pending-list home-continue-list"
+                :aria-label="`${section.title} 列表`"
+              >
+                <li
+                  v-for="item in section.continueItems"
+                  :key="item.id"
+                  class="home-pending-row is-clickable"
+                  role="link"
+                  tabindex="0"
+                  :data-agent-id="`home.continue.${item.id}`"
+                  :aria-label="`${item.title}，${item.detail}`"
+                  @click="openHomeContinueItem($event, item)"
+                  @keydown.enter.self.prevent="openHomeContinueItem($event, item)"
+                  @keydown.space.self.prevent="openHomeContinueItem($event, item)"
+                >
+                  <span class="home-pending-row__icon is-muted" aria-hidden="true">
+                    <Clock :size="14" aria-hidden="true" />
+                  </span>
+                  <span class="home-pending-row__main">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.detail }}</span>
+                  </span>
+                  <span class="home-pending-row__side">
                     <a
-                      v-if="row.link.kind !== 'none'"
                       class="home-pending-row__jump"
-                      :href="homePendingItemHref(row.link)"
-                      :aria-label="`打开 ${row.item.title}`"
-                      title="打开"
-                      :data-agent-id="`${homePendingItemAgentId(row.item)}.open`"
-                      @click.stop="openHomePendingLink($event, row.link)"
+                      :href="item.route"
+                      :aria-label="`继续 ${item.title}`"
+                      title="继续"
+                      :data-agent-id="`home.continue.${item.id}.open`"
+                      @click.stop="openHomeContinueItem($event, item)"
                     >
                       <ArrowRight :size="13" aria-hidden="true" />
                     </a>
                   </span>
-                </span>
-              </li>
-            </ol>
+                </li>
+              </ol>
+            </div>
           </div>
         </div>
 
@@ -2875,7 +2981,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :message="githubRepositoryScope.kind === 'all' ? '没有可见仓库。' : '当前范围没有可见仓库。'"
               />
               <div
-                v-for="{ githubRepo, localRepo, action, syncIssue } in visibleRepoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue, momentum } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -2892,6 +2998,14 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <strong class="repo-status-row__name">
                     {{ githubRepo.fullName }}
                   </strong>
+                  <span
+                    class="repo-status-row__badge"
+                    :class="`repo-status-row__badge--momentum-${momentum.state}`"
+                    :title="momentum.reason"
+                    :data-agent-id="`home.repo-status.${githubRepo.fullName}.momentum`"
+                  >
+                    {{ momentum.label }}
+                  </span>
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
                   <span
@@ -3553,6 +3667,36 @@ function bulkOperationDescription(operation: BulkOperation) {
   overflow: hidden;
 }
 
+.home-pending-section + .home-pending-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.home-pending-section__title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.home-pending-section__count {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.home-pending-row__main small {
+  display: block;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .github-timeline-card,
 .repo-status-card {
   display: flex;
@@ -3913,6 +4057,26 @@ function bulkOperationDescription(operation: BulkOperation) {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.repo-status-row__badge--momentum-healthy {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.repo-status-row__badge--momentum-attention {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.repo-status-row__badge--momentum-blocked {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.repo-status-row__badge--momentum-inactive {
+  background: var(--bg-subtle);
+  color: var(--text-faint);
 }
 
 .repo-status-row__badge--archived {

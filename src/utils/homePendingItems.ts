@@ -23,6 +23,8 @@ import { workflowRunCancelAvailability } from "./workflowActions";
 
 export type HomePendingItemKind = "operation" | "issue" | "pull" | "review" | "workflow";
 
+export type HomePendingItemBucket = "attention" | "today";
+
 export type HomePendingItemTarget = {
   kind: "repo";
   repoId: string;
@@ -52,9 +54,11 @@ export type HomePendingItemTarget = {
 export type HomePendingItem = {
   id: string;
   kind: HomePendingItemKind;
+  bucket: HomePendingItemBucket;
   title: string;
   detail: string;
   summary: string;
+  reason?: string;
   timestamp: number;
   priority: number;
   target: HomePendingItemTarget;
@@ -105,6 +109,29 @@ export function buildHomePendingItems(sources: readonly HomePendingRepoSource[],
   return items;
 }
 
+function homePendingItemBucket(item: Pick<HomePendingItem, "kind" | "priority" | "tone">): HomePendingItemBucket {
+  if (item.kind === "review" || item.kind === "workflow") return "attention";
+  if (item.kind === "operation") {
+    return item.priority >= PRIORITY_LOCAL_CHANGES ? "attention" : "today";
+  }
+  if (item.kind === "pull") {
+    return item.tone === "error" || item.tone === "warn" || item.priority >= PRIORITY_ASSIGNED_PULL
+      ? "attention"
+      : "today";
+  }
+  return "today";
+}
+
+export function groupHomePendingItemsByBucket(items: readonly HomePendingItem[]) {
+  const attention: HomePendingItem[] = [];
+  const today: HomePendingItem[] = [];
+  for (const item of items) {
+    if (item.bucket === "attention") attention.push(item);
+    else today.push(item);
+  }
+  return { attention, today };
+}
+
 function normalizePendingItemLimit(limit: number | undefined) {
   if (limit == null || !Number.isFinite(limit)) return null;
   return Math.max(0, Math.floor(limit));
@@ -127,7 +154,7 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
   const items: HomePendingItem[] = [];
 
   if (localRepo && source.syncIssue) {
-    items.push({
+    items.push(createHomePendingItem({
       id: `operation-error:${localRepo.id}:${source.syncIssue.updatedAt}`,
       kind: "operation",
       title: source.syncIssue.label,
@@ -137,22 +164,23 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       priority: PRIORITY_OPERATION_ERROR,
       target: { kind: "repo", repoId: localRepo.id },
       tone: source.syncIssue.label.includes("跳过") ? "warn" : "error",
-    });
+    }));
   }
 
   if (localRepo && localRepo.conflictCount > 0) {
     const dirty = localRepoDirtyCount(localRepo);
-    items.push({
+    items.push(createHomePendingItem({
       id: `operation-conflict:${localRepo.id}:${localRepo.conflictCount}`,
       kind: "operation",
       title: "冲突待处理",
       detail: `${localRepo.conflictCount} 个冲突文件${dirty ? `，另有 ${dirty} 项本地改动` : ""}`,
       summary: githubRepo.fullName,
+      reason: "Git 冲突阻塞后续同步与提交",
       timestamp: repoPendingTimestamp(githubRepo, localRepo),
       priority: PRIORITY_CONFLICT,
       target: { kind: "repo", repoId: localRepo.id, view: "conflicts" },
       tone: "error",
-    });
+    }));
   }
 
   const workflowRunIds = new Set(source.workflowRuns.map(({ run }) => run.id));
@@ -160,12 +188,13 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     const priority = workflowPendingPriority(run);
     if (priority == null) continue;
     const statusText = workflowRunStatusText(run);
-    items.push({
+    items.push(createHomePendingItem({
       id: `workflow-run:${githubRepo.fullName}:${run.id}`,
       kind: "workflow",
       title: statusText,
       detail: run.displayTitle || run.name,
       summary: `${githubRepo.fullName} · ${run.branch || "默认分支"} · ${statusText}`,
+      reason: `${run.branch || "默认分支"} 的运行结果为 ${statusText}`,
       timestamp: parseGitHubTime(run.updatedAt || run.createdAt),
       priority,
       target: {
@@ -177,19 +206,20 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
         permissions: githubRepo.permissions,
       },
       tone: workflowRunStatusTone(run),
-    });
+    }));
   }
 
   for (const notification of source.actionNotifications) {
     const tone = actionNotificationTone(notification);
     const runId = actionNotificationRunId(notification);
     if (runId != null && workflowRunIds.has(runId)) continue;
-    items.push({
+    items.push(createHomePendingItem({
       id: `workflow-notification:${notification.id}`,
       kind: "workflow",
       title: tone === "error" ? "Actions 报错" : "Actions 通知",
       detail: notification.title,
       summary: `${githubRepo.fullName} · ${notification.reason}`,
+      reason: notification.reason || "Actions 通知需要关注",
       timestamp: parseGitHubTime(notification.updatedAt),
       priority: PRIORITY_WORKFLOW_ERROR,
       target: {
@@ -201,7 +231,7 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
         permissions: githubRepo.permissions,
       },
       tone,
-    });
+    }));
   }
 
   const attentionPullRequests = new Map(
@@ -210,12 +240,15 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
   for (const { pullRequest, reasons } of attentionPullRequests.values()) {
     if (!isOpenActionablePullRequest(pullRequest)) continue;
     const reviewRequested = reasons.includes("review_requested");
-    items.push({
+    items.push(createHomePendingItem({
       id: `${reviewRequested ? "review-request" : "assigned-pull"}:${githubRepo.fullName}:${pullRequest.number}`,
       kind: reviewRequested ? "review" : "pull",
       title: `${reviewRequested ? "Review 请求" : "已分配"} · PR #${pullRequest.number}`,
       detail: pullRequest.title,
       summary: `${githubRepo.fullName} · ${reviewRequested ? "等待你的 Review" : "已分配给你"}`,
+      reason: reviewRequested
+        ? `#${pullRequest.number} 请求你的审查${reasons.includes("assigned") ? "，并已分配给你" : ""}`
+        : `#${pullRequest.number} 已分配给你`,
       timestamp: parseGitHubTime(pullRequest.updatedAt),
       priority: reviewRequested ? PRIORITY_REVIEW_REQUEST : PRIORITY_ASSIGNED_PULL,
       target: {
@@ -227,7 +260,7 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
         merged: pullRequest.merged,
       },
       tone: reviewRequested ? "warn" : undefined,
-    });
+    }));
   }
 
   for (const pullRequest of source.pullRequests) {
@@ -235,12 +268,13 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     if (attentionPullRequests.has(pullRequest.number)) continue;
     const checks = source.pullRequestChecksByPull?.[pullRequest.number] ?? [];
     const checksOverview = pullRequestChecksOverview(checks);
-    items.push({
+    items.push(createHomePendingItem({
       id: `pull-request:${githubRepo.fullName}:${pullRequest.number}`,
       kind: "pull",
       title: `PR #${pullRequest.number}`,
       detail: pullRequest.title,
       summary: `${githubRepo.fullName} · ${checksOverview.detail}`,
+      reason: checksOverview.detail,
       timestamp: parseGitHubTime(pullRequest.updatedAt),
       priority: pullRequestPriority(checksOverview.tone),
       target: {
@@ -252,29 +286,30 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
         merged: pullRequest.merged,
       },
       tone: checksOverview.tone,
-    });
+    }));
   }
 
   if (localRepo && localRepo.conflictCount === 0) {
     const dirty = localRepoDirtyCount(localRepo);
     if (dirty > 0) {
-      items.push({
+      items.push(createHomePendingItem({
         id: `operation-local-changes:${localRepo.id}:${localRevision(localRepo)}`,
         kind: "operation",
         title: "本地改动待处理",
         detail: `${dirty} 项未提交改动`,
         summary: githubRepo.fullName,
+        reason: "本地未提交工作会阻塞同步与交接",
         timestamp: repoPendingTimestamp(githubRepo, localRepo),
         priority: PRIORITY_LOCAL_CHANGES,
         target: { kind: "repo", repoId: localRepo.id, view: "changes" },
         tone: "warn",
-      });
+      }));
     }
   }
 
   for (const issue of source.issues) {
     if (issue.state !== "open") continue;
-    items.push({
+    items.push(createHomePendingItem({
       id: `issue:${githubRepo.fullName}:${issue.number}`,
       kind: "issue",
       title: `Issue #${issue.number}`,
@@ -289,11 +324,11 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
         number: issue.number,
         state: issue.state,
       },
-    });
+    }));
   }
 
   if (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0)) {
-    items.push({
+    items.push(createHomePendingItem({
       id: `operation-sync-state:${localRepo.id}:${localRepo.ahead}:${localRepo.behind}`,
       kind: "operation",
       title: "仓库同步状态",
@@ -303,10 +338,14 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       priority: PRIORITY_SYNC_STATE,
       target: { kind: "repo", repoId: localRepo.id },
       tone: "warn",
-    });
+    }));
   }
 
   return items;
+}
+
+function createHomePendingItem(item: Omit<HomePendingItem, "bucket">): HomePendingItem {
+  return { ...item, bucket: homePendingItemBucket(item) };
 }
 
 function isUsableHomePendingItem(item: HomePendingItem) {

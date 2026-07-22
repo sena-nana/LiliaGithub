@@ -9,7 +9,7 @@ import type {
   RepoSummary,
 } from "../src/services/workspace";
 import type { HomeAttentionPendingPullRequest } from "../src/services/homeAttention";
-import { buildHomePendingItems, type HomePendingRepoSource } from "../src/utils/homePendingItems";
+import { buildHomePendingItems, groupHomePendingItemsByBucket, type HomePendingRepoSource } from "../src/utils/homePendingItems";
 
 const repoFullName = "sena-nana/LiliaGithub";
 
@@ -373,6 +373,25 @@ describe("buildHomePendingItems", () => {
 
     expect(buildHomePendingItems(sources, 5).map((item) => item.id)).toEqual(fullTopIds);
     expect(buildHomePendingItems(sources, 0)).toEqual([]);
+  });
+
+  it("buckets risk items into Attention and ordinary work into Today", () => {
+    const review = pullRequest(7, { updatedAt: "2026-06-25T08:00:00Z" });
+    const items = buildHomePendingItems([
+      source({
+        localRepo: localRepo({ conflictCount: 1 }),
+        issues: [issue(3, "open", "2026-06-25T07:00:00Z")],
+        attentionPullRequests: [{ repoFullName, pullRequest: review, reasons: ["review_requested"] }],
+      }),
+    ]);
+
+    expect(items.map((item) => [item.id, item.bucket])).toEqual([
+      [`review-request:${repoFullName}:7`, "attention"],
+      ["operation-conflict:repo-1:1", "attention"],
+      [`issue:${repoFullName}:3`, "today"],
+    ]);
+    expect(groupHomePendingItemsByBucket(items).attention).toHaveLength(2);
+    expect(groupHomePendingItemsByBucket(items).today).toHaveLength(1);
   });
 });
 
