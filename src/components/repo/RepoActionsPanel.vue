@@ -121,19 +121,21 @@ function runToneClass(run: GitHubWorkflowRun) {
   gap: 10px;
   min-width: 0;
   min-height: 34px;
-  padding: 0 2px 6px;
+  padding: 0 0 6px;
   border-bottom: 1px solid var(--border-soft);
 }
 
 .actions-panel__runs-head div {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
 .actions-panel__runs-head strong {
   color: var(--text);
   font-size: 13px;
+  font-weight: 650;
 }
 
 .actions-panel__runs-head span {

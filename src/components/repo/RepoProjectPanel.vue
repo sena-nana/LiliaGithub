@@ -3617,7 +3617,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         <main
           ref="projectMainRef"
           class="project-main"
-          :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'release' || activeSection === 'settings' }"
+          :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'actions' || activeSection === 'release' || activeSection === 'settings' }"
         >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
@@ -3987,7 +3987,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
         </section>
 
-        <section v-else-if="activeSection === 'actions'" class="project-section project-github-section">
+        <section v-else-if="activeSection === 'actions'" class="project-section project-github-section project-section--flush">
           <RepoGitHubUnavailableNotice
             v-if="actionsAccessUnavailable"
             :title="actionsAccessUnavailable.title"
@@ -4840,7 +4840,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-section--flush {
-  padding: 0;
+  padding: 14px 16px;
 }
 
 .project-empty {

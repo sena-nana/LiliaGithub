@@ -116,9 +116,10 @@ async function submitReply(thread: PullRequestReviewThread) {
 .review-threads > header > div { align-items: baseline; }
 .review-threads h4 { margin: 0; font-size: 13px; }
 .review-threads > header span, .review-thread__head span, .review-threads__empty { color: var(--text-muted); font-size: 11px; }
-.review-thread { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.review-thread { min-width: 0; overflow: hidden; padding-bottom: 10px; border-bottom: 1px solid var(--border-soft); }
+.review-thread:last-of-type { border-bottom: 0; padding-bottom: 0; }
 .review-thread.is-resolved { opacity: .72; }
-.review-thread__head { justify-content: space-between; min-height: 36px; padding: 0 9px; background: var(--bg-subtle); }
+.review-thread__head { justify-content: space-between; min-height: 36px; padding: 0; }
 .review-thread__head > div { min-width: 0; }
 .review-thread__head strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .review-thread__diff { max-height: 150px; margin: 0; padding: 7px 9px; overflow: auto; border-bottom: 1px solid var(--border-soft); color: var(--text-muted); background: var(--bg-subtle); font-size: 10px; }

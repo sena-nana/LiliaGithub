@@ -492,7 +492,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   gap: 8px;
   width: 100%;
   min-width: 0;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
@@ -518,7 +518,6 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 
 .actions-artifact.is-active,
 .actions-artifact-file-row.is-active .actions-artifact-file-select {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
   background: var(--accent-soft);
 }
 
@@ -548,10 +547,8 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 
 .actions-artifact-detail {
   margin: 0;
-  padding: var(--repo-sidebar-card-padding);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  padding: var(--repo-sidebar-card-padding) 0 0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .actions-artifact-browser {
@@ -612,7 +609,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 }
 
 .actions-artifact-release-target {
-  padding: var(--repo-sidebar-card-padding);
+  padding: 0 0 var(--repo-sidebar-card-padding);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -638,9 +635,6 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   min-width: 0;
   max-height: 360px;
   overflow: auto;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
 }
 
 .actions-artifact-preview pre {

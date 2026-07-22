@@ -528,12 +528,8 @@ defineExpose({
 .release-list {
   gap: 0;
   margin: 0;
-  padding: 12px 14px;
+  padding: 0;
   overflow: visible;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
   list-style: none;
 }
 
@@ -629,7 +625,7 @@ defineExpose({
   display: block;
   width: 13px;
   height: 13px;
-  border: 2px solid var(--bg-elev);
+  border: 2px solid var(--bg);
   border-radius: 50%;
   background: var(--release-tone);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--release-tone) 22%, transparent);
@@ -741,7 +737,7 @@ defineExpose({
   height: 34px;
   content: "";
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--bg-elev));
+  background: linear-gradient(to bottom, transparent, var(--bg));
 }
 
 .release-card__markdown :deep(.markdown-readme) {
@@ -799,9 +795,6 @@ defineExpose({
 .release-assets__list {
   display: grid;
   overflow: hidden;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
 }
 
 .release-asset {
@@ -811,7 +804,7 @@ defineExpose({
   gap: 12px;
   min-width: 0;
   min-height: 24px;
-  padding: 3px 8px;
+  padding: 3px 0;
   border-bottom: 1px solid var(--border-soft);
   background: transparent;
   color: var(--text-muted);

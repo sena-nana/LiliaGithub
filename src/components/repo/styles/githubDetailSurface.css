@@ -1,0 +1,154 @@
+/* Flat detail surface: title block → section head → divider rows. No nested cards. */
+
+.github-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.github-detail__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  height: 32px;
+  white-space: nowrap;
+}
+
+.github-detail__title-block {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.github-detail__title-block h3,
+.github-detail__title-block p {
+  margin: 0;
+}
+
+.github-detail__title-block h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.github-detail__title-block p {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.github-detail__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.github-detail__status.is-closed,
+.github-detail__status.is-muted {
+  color: var(--text-muted);
+}
+
+.github-detail__status.is-accent {
+  color: var(--accent);
+}
+
+.github-detail__section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.github-detail__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.github-detail__section-head h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.github-detail__section-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.github-detail__rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.github-detail__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  min-width: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.github-detail__row:last-child {
+  border-bottom: 0;
+}
+
+.github-detail__row > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-detail__row button,
+.github-detail__row em {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.github-detail__row button:hover {
+  color: var(--text);
+}
+
+.github-detail__divider {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.github-detail__form-block {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.github-detail__form-block summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.github-detail__muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}

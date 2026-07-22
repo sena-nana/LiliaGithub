@@ -303,32 +303,32 @@ watch(
 </template>
 
 <style scoped>
-.code-review { display: grid; gap: 13px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-subtle); }
+.code-review { display: grid; gap: 14px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--border-soft); }
 .code-review__header, .code-review__header > div, .review-summary > div, .handoff, .merge-gate, .merge-gate__actions { display: flex; align-items: center; gap: 8px; }
 .code-review__header, .handoff, .merge-gate { justify-content: space-between; }
 .code-review__header > div, .review-summary > div { align-items: baseline; }
-.code-review h4 { margin: 0; font-size: 13px; }
+.code-review h4 { margin: 0; font-size: 13px; font-weight: 650; }
 .code-review__header span, .review-summary > div span, .handoff p, .merge-gate span { color: var(--text-muted); font-size: 11px; }
 .code-review__header button, .handoff button, .merge-gate__actions > button { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.code-review__state { display: flex; min-height: 90px; align-items: center; justify-content: center; gap: 7px; color: var(--text-muted); font-size: 12px; }
+.code-review__state { display: flex; min-height: 72px; align-items: center; justify-content: center; gap: 7px; color: var(--text-muted); font-size: 12px; }
 .code-review__state.is-error { flex-direction: column; color: var(--err); }
-.code-review__refresh-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; border: 1px solid var(--err); border-radius: var(--radius-sm); color: var(--err); font-size: 11px; }
-.review-summary { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg); }
+.code-review__refresh-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; color: var(--err); font-size: 11px; }
+.review-summary { display: grid; gap: 7px; min-width: 0; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
 .review-summary ul { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .review-summary li { display: inline-flex; gap: 5px; padding: 3px 6px; border-radius: var(--radius-sm); background: var(--bg-subtle); font-size: 11px; }
 .review-summary li em { color: var(--text-muted); font-style: normal; }
 .review-summary p { margin: 0; color: var(--text-muted); font-size: 11px; }
-.requested-changes { display: grid !important; gap: 6px !important; margin-top: 3px !important; }
-.requested-changes li { display: grid; gap: 3px; background: var(--warn-soft); }
+.requested-changes { display: grid !important; gap: 6px !important; margin: 3px 0 0; padding: 0; list-style: none; }
+.requested-changes li { display: grid; gap: 3px; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--warn-soft); }
 .requested-changes strong { color: var(--warn); font-size: 11px; }
 .requested-changes p { color: var(--text) !important; line-height: 1.45; white-space: pre-wrap; }
-.handoff, .merge-gate { align-items: flex-start; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.handoff, .merge-gate { align-items: flex-start; gap: 10px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--border-soft); }
 .handoff > div, .merge-gate__summary { display: grid; gap: 4px; min-width: 0; }
 .handoff p, .merge-gate p { margin: 0; }
 .handoff__status { color: var(--ok) !important; }
 .handoff__error { color: var(--err) !important; }
 .handoff__result { width: fit-content; padding: 0; color: var(--accent); font-size: 11px; }
-.merge-gate.is-blocked { border-color: var(--warn); }
+.merge-gate.is-blocked { padding: 10px 8px; border-top: 0; border-radius: var(--radius-sm); background: var(--warn-soft); }
 .merge-gate__summary > div { display: flex; align-items: baseline; gap: 7px; }
 .merge-gate ul { display: grid; gap: 3px; margin: 4px 0 0; padding-left: 18px; color: var(--warn); font-size: 11px; }
 .merge-gate p { color: var(--warn); font-size: 11px; }

@@ -56,7 +56,7 @@ async function submit() {
 </template>
 
 <style scoped>
-.review-composer { display: grid; grid-template-columns: minmax(150px, .35fr) minmax(0, 1fr) auto; align-items: end; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.review-composer { display: grid; grid-template-columns: minmax(150px, .35fr) minmax(0, 1fr) auto; align-items: end; gap: 9px; padding: 12px 0 0; border-top: 1px solid var(--border-soft); }
 .review-composer header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; }
 .review-composer h4 { margin: 0; font-size: 13px; }
 .review-composer header span, .review-composer label > span { color: var(--text-muted); font-size: 11px; }

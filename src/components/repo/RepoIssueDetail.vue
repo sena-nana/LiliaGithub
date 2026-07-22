@@ -11,6 +11,7 @@ import type {
 } from "../../services/workspace/types";
 import RepoIssueConversation from "./RepoIssueConversation.vue";
 import { updateGitHubIssue } from "../../services/workspace/client";
+import "./styles/githubDetailSurface.css";
 
 const props = defineProps<{
   issue: GitHubIssue;
@@ -62,16 +63,14 @@ function formatDateTime(value: string) {
 </script>
 
 <template>
-  <article class="issue-detail" aria-label="Issue 详情">
-    <div class="issue-detail__head">
-      <button type="button" class="ghost issue-detail__back" data-agent-id="repo.issues.detail.back" @click="emit('back')">
-        <ArrowLeft :size="14" aria-hidden="true" />
-        Issues
-      </button>
-    </div>
+  <article class="github-detail issue-detail" aria-label="Issue 详情">
+    <button type="button" class="ghost github-detail__back" data-agent-id="repo.issues.detail.back" @click="emit('back')">
+      <ArrowLeft :size="14" aria-hidden="true" />
+      Issues
+    </button>
 
-    <header class="issue-detail__title-block">
-      <div class="issue-detail__status" :class="{ 'is-closed': issue.state !== 'open' }">
+    <header class="github-detail__title-block">
+      <div class="github-detail__status" :class="issue.state === 'open' ? 'is-accent' : 'is-closed'">
         <CircleDot v-if="issue.state === 'open'" :size="16" aria-hidden="true" />
         <CircleOff v-else :size="16" aria-hidden="true" />
         <span>{{ statusText }}</span>
@@ -107,78 +106,8 @@ function formatDateTime(value: string) {
 </template>
 
 <style scoped>
-.issue-detail {
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-}
-
-.issue-detail__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.issue-detail__head {
-  justify-content: space-between;
-}
-
-.issue-detail__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  white-space: nowrap;
-}
-
-.issue-detail__title-block {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.issue-detail__title-block h3,
-.issue-detail__title-block p {
-  margin: 0;
-}
-
-.issue-detail__title-block h3 {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 18px;
-}
-
-.issue-detail__title-block p {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.issue-detail__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.issue-detail__status.is-closed {
-  color: var(--text-muted);
-}
-
 .issue-detail__milestone { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .issue-detail__milestone label { font-size: 12px; font-weight: 650; }
 .issue-detail__milestone input { width: 120px; }
 .issue-detail__milestone p { flex-basis: 100%; margin: 0; }
-
-@media (max-width: 760px) {
-  .issue-detail__head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
 </style>
