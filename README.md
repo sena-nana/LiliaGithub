@@ -69,7 +69,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 
 <!-- Generated from docs/feature-status.json by scripts/sync-feature-status.mjs. Edit the source, then run yarn feature-status:generate. -->
 
-The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-19.
+The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-22.
 
 ### Local Git And Repository Management
 
@@ -104,8 +104,8 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Account and organization repository browsing, repository creation, and clone-to-workspace flow.
 - [x] Watched repositories and repository notification preferences.
 - [x] Local repository favorites and repository groups.
-- [x] Home pending Attention for review requests, assigned pull requests, failed workflows, local blockers, and existing collaboration signals, with direct repository routes.
-- [x] Structured LiliaCode fix-task handoff from full pull request reviews, with source context, acceptance criteria, and result return path.
+- [x] Home Attention / Today / Continue decisions with reasons, next actions, project momentum signals, review requests, assigned pull requests, failed workflows, local blockers, and recoverable workspace context.
+- [x] Structured LiliaCode fix-task handoff from full pull request reviews and failed workflows, with source context, acceptance criteria, and result return path.
 - [x] Multiple named workspaces with multiple roots and workspace-specific preferences.
 - [ ] In-app account activity timeline with type, repository, and owner-scope filters. `P1`
 
