@@ -50,12 +50,12 @@ pub async fn deliver_task_handoff_via_app(
     let capability = CapabilityDescriptor::new(LILIA_CODE_CAPABILITY, 1, 1);
     let payload = serde_json::to_value(handoff).map_err(|error| error.to_string())?;
     let receipt = service
-        .deliver_to_app(
-            handoff.id.clone(),
+        .request_app(
             target,
             capability,
             payload,
             AppDeliveryOptions {
+                request_id: Some(handoff.id.clone()),
                 activate_if_offline: executable.is_some(),
                 ready_timeout: Duration::from_secs(45),
                 request_timeout: Duration::from_secs(30),
