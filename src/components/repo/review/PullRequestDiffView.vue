@@ -217,8 +217,9 @@ async function openChangedFile(file: PullRequestChangedFile) {
 .review-diff__modes { height: 30px; }
 .review-diff__modes button { height: 28px; padding: 0 9px; font-size: 11px; }
 .review-diff__error, .line-comment p { margin: 0; color: var(--err); font-size: 11px; }
-.review-file { min-width: 0; overflow: hidden; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg); }
-.review-file__header { min-height: 38px; padding: 0 9px; background: var(--bg-subtle); }
+.review-file { min-width: 0; overflow: hidden; border-bottom: 1px solid var(--border-soft); }
+.review-file:last-of-type { border-bottom: 0; }
+.review-file__header { min-height: 38px; padding: 0; }
 .review-file__toggle { display: flex; min-width: 0; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--text); }
 .review-file__toggle strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .review-file__stats { display: flex; gap: 6px; font-size: 11px; }
@@ -242,7 +243,7 @@ async function openChangedFile(file: PullRequestChangedFile) {
 .split-cell { display: grid; grid-template-columns: 25px 42px minmax(0, 1fr); min-width: 0; }
 .split-cell:first-of-type { border-right: 1px solid var(--border); }
 .split-cell.is-empty { background: var(--bg-subtle); }
-.line-comment { display: grid; gap: 7px; margin: 8px; padding: 9px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg-elev); }
+.line-comment { display: grid; gap: 7px; margin: 8px 0; padding: 9px 0; border-top: 1px solid var(--border-soft); }
 .line-comment label { color: var(--text-muted); font-size: 11px; }
 .line-comment textarea { width: 100%; resize: vertical; }
 .line-comment > div { display: flex; justify-content: flex-end; gap: 6px; }

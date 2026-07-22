@@ -322,7 +322,6 @@ async function rerunJob(job: GitHubWorkflowJob) {
 
 .actions-failure-summary {
   padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--err) 38%, var(--border));
   border-radius: var(--radius-sm);
   background: var(--err-soft);
   color: var(--text);
@@ -364,9 +363,10 @@ async function rerunJob(job: GitHubWorkflowJob) {
   width: 100%;
   min-width: 0;
   min-height: 42px;
-  padding: 6px 7px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -377,7 +377,6 @@ async function rerunJob(job: GitHubWorkflowJob) {
 }
 
 .actions-job-row.is-active {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
   background: var(--accent-soft);
 }
 
@@ -413,10 +412,8 @@ async function rerunJob(job: GitHubWorkflowJob) {
 }
 
 .actions-job-detail {
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elev);
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .actions-job-actions {
@@ -446,7 +443,10 @@ async function rerunJob(job: GitHubWorkflowJob) {
 
 .actions-log-button {
   width: 100%;
-  border: 1px solid var(--border-soft);
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
 }
 
 .actions-error-excerpt,
@@ -454,14 +454,15 @@ async function rerunJob(job: GitHubWorkflowJob) {
   display: grid;
   gap: 5px;
   min-width: 0;
-  padding: 7px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  padding: 7px 0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .actions-error-excerpt {
-  border-color: color-mix(in srgb, var(--err) 35%, var(--border));
+  background: var(--err-soft);
+  padding: 7px 8px;
+  border-top: 0;
+  border-radius: var(--radius-sm);
 }
 
 .actions-error-excerpt strong {
