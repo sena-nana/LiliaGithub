@@ -4780,6 +4780,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-layout {
   gap: 14px;
+  padding: 0 0 14px 24px;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -4857,7 +4858,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   --repo-sidebar-label-width: 72px;
 
   margin: 0;
-  padding: var(--repo-sidebar-card-padding);
+  padding: var(--repo-sidebar-card-padding) 0 var(--repo-sidebar-card-padding) var(--repo-sidebar-card-padding);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--repo-sidebar-card-gap);
