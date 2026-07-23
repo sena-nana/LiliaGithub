@@ -246,6 +246,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_rename_repo_group,
         settings::workspace_delete_repo_group,
         settings::workspace_move_repo_to_group,
+        settings::workspace_relocate_local_repo,
         settings::workspace_reconcile_organization_repo_groups,
         settings::workspace_set_local_repo_favorite,
         settings::workspace_delete_local_repo,

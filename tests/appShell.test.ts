@@ -320,6 +320,11 @@ async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, grou
   await fireEvent.contextMenu(sidebarRowForText(view.container, repoName));
   await fireEvent.mouseEnter(await view.findByRole("menuitem", { name: "移动到分组" }));
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
+  const dialog = await view.findByRole("dialog", { name: "移动到分组" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+  await waitFor(() => {
+    expect(view.queryByRole("dialog", { name: "移动到分组" })).toBeNull();
+  });
 }
 
 beforeEach(async () => {

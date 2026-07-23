@@ -12,6 +12,7 @@ pub(crate) mod operations;
 pub(crate) mod readme;
 pub(crate) mod refresh;
 pub(crate) mod repo_guard;
+mod path_relocation;
 pub mod repos;
 pub mod settings;
 mod shared;

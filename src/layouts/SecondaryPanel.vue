@@ -29,17 +29,19 @@ import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import {
   LiliaSidebarFrame,
   SidebarCollapse,
+  UiButton,
+  UiDialog,
   openContextMenuAt,
   type ContextMenuItem,
   type ContextMenuProvider,
 } from "../ui";
+import { repoRoute } from "../utils/repoRoutes";
 import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
 import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
 } from "../utils/repoFavorites";
 import { githubRepositoryIdentityKey, parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
-import { repoRoute } from "../utils/repoRoutes";
 import {
   type GitHubRepoOwner,
   type RepoSummary,
@@ -83,6 +85,11 @@ const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
 const favoritePendingKeys = ref<Set<string>>(new Set());
 const favoriteError = ref<string | null>(null);
+const movePathDialogOpen = ref(false);
+const movePathBusy = ref(false);
+const movePathError = ref<string | null>(null);
+const movePathMode = ref<"keep" | "move" | "link">("keep");
+const pendingMove = ref<{ repoId: string; groupId: string | null; label: string } | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
 const SIDEBAR_REPO_SORT_STORAGE_KEY = "lilia-github.sidebar.repoSort.v1";
@@ -689,8 +696,8 @@ function repoContextMenu(repoId: string): ContextMenuItem[] {
       label: "移到未分组",
       icon: FolderGit2,
       disabled: currentGroupId === null,
-      async onSelect() {
-        await workspace.moveRepoToGroup(repoId, null);
+      onSelect() {
+        openMovePathDialog(repoId, null, "未分组");
       },
     },
     ...repoGroups.value.map((group) => ({
@@ -698,8 +705,8 @@ function repoContextMenu(repoId: string): ContextMenuItem[] {
       label: group.name,
       icon: FolderInput,
       disabled: currentGroupId === group.id,
-      async onSelect() {
-        await workspace.moveRepoToGroup(repoId, group.id);
+      onSelect() {
+        openMovePathDialog(repoId, group.id, group.name);
       },
     })),
   ];
@@ -732,6 +739,46 @@ function repoContextMenu(repoId: string): ContextMenuItem[] {
       },
     },
   ];
+}
+
+function openMovePathDialog(repoId: string, groupId: string | null, label: string) {
+  pendingMove.value = { repoId, groupId, label };
+  movePathMode.value = "keep";
+  movePathError.value = null;
+  movePathDialogOpen.value = true;
+}
+
+function closeMovePathDialog() {
+  if (movePathBusy.value) return;
+  movePathDialogOpen.value = false;
+  pendingMove.value = null;
+  movePathError.value = null;
+}
+
+async function confirmMovePathDialog() {
+  const pending = pendingMove.value;
+  if (!pending || movePathBusy.value) return;
+  movePathBusy.value = true;
+  movePathError.value = null;
+  try {
+    const result = await workspace.moveRepoToGroup(pending.repoId, pending.groupId, movePathMode.value);
+    if (result.pathChanged) {
+      await workspace.refreshRepos();
+    }
+    if (
+      result.previousRepoId !== result.repo.id
+      && route.path.startsWith("/repos/")
+      && String(route.params.repoId ?? "") === result.previousRepoId
+    ) {
+      await router.replace(repoRoute(result.repo.id));
+    }
+    movePathDialogOpen.value = false;
+    pendingMove.value = null;
+  } catch (err) {
+    movePathError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    movePathBusy.value = false;
+  }
 }
 
 async function retryRepoPush(repoId: string) {
@@ -1111,12 +1158,126 @@ async function deleteGroup(group: { id: string }) {
       />
     </template>
   </LiliaSidebarFrame>
+
+  <UiDialog
+    :open="movePathDialogOpen"
+    title="移动到分组"
+    :close-disabled="movePathBusy"
+    @close="closeMovePathDialog"
+  >
+    <div class="sb-move-dialog" data-agent-id="sidebar.repo.move-path">
+      <p>将仓库移到「{{ pendingMove?.label }}」。可选同步调整本地目录。</p>
+      <label class="sb-move-dialog__option">
+        <input
+          v-model="movePathMode"
+          type="radio"
+          value="keep"
+          data-agent-id="sidebar.repo.move-path.mode.keep"
+          :disabled="movePathBusy"
+        />
+        <span>
+          <strong>仅更改分组</strong>
+          <em>不移动本地目录</em>
+        </span>
+      </label>
+      <label class="sb-move-dialog__option">
+        <input
+          v-model="movePathMode"
+          type="radio"
+          value="move"
+          data-agent-id="sidebar.repo.move-path.mode.move"
+          :disabled="movePathBusy"
+        />
+        <span>
+          <strong>同步移动目录</strong>
+          <em>移动到与分组对应的本地路径</em>
+        </span>
+      </label>
+      <label class="sb-move-dialog__option">
+        <input
+          v-model="movePathMode"
+          type="radio"
+          value="link"
+          data-agent-id="sidebar.repo.move-path.mode.link"
+          :disabled="movePathBusy"
+        />
+        <span>
+          <strong>在目标位置创建链接</strong>
+          <em>保留原目录，并在分组路径创建链接</em>
+        </span>
+      </label>
+      <p v-if="movePathError" class="sb-move-dialog__error" role="alert">{{ movePathError }}</p>
+      <div class="sb-move-dialog__actions">
+        <UiButton size="sm" :disabled="movePathBusy" @click="closeMovePathDialog">取消</UiButton>
+        <UiButton
+          variant="primary"
+          size="sm"
+          agent-id="sidebar.repo.move-path.confirm"
+          :busy="movePathBusy"
+          @click="confirmMovePathDialog"
+        >
+          确认
+        </UiButton>
+      </div>
+    </div>
+  </UiDialog>
 </template>
 
 <style scoped>
 .sidebar-sections {
   min-height: 0;
   min-width: 0;
+}
+
+.sb-move-dialog {
+  display: grid;
+  gap: 12px;
+}
+
+.sb-move-dialog p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sb-move-dialog__option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.sb-move-dialog__option span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sb-move-dialog__option strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.sb-move-dialog__option em {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.sb-move-dialog__error {
+  color: var(--danger, #c23);
+}
+
+.sb-move-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .sidebar-sections > .sb-section + .sb-section {

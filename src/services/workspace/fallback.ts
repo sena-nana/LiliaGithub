@@ -122,6 +122,8 @@ import type {
   WorkspaceCloneResult,
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
+  WorkspaceRepoPathMode,
+  WorkspaceRepoRelocationResult,
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
@@ -5077,17 +5079,24 @@ export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
   });
 }
 
-export function moveRepoToGroup(repoId: string, groupId: string | null): Promise<WorkspaceSettings> {
-  return call("workspace_move_repo_to_group", { repoId, groupId }, () => {
+export function moveRepoToGroup(
+  repoId: string,
+  groupId: string | null,
+  pathMode: WorkspaceRepoPathMode | null = "keep",
+): Promise<WorkspaceRepoRelocationResult> {
+  return call("workspace_move_repo_to_group", { repoId, groupId, pathMode }, () => {
     const normalizedRepoId = repoId.trim();
     if (!normalizedRepoId) throw new Error("仓库 ID 不能为空");
-    if (!allFallbackRepos().some((repo) => repo.id === normalizedRepoId)) {
+    const repo = allFallbackRepos().find((item) => item.id === normalizedRepoId);
+    if (!repo) {
       throw new Error(`未找到 Git 仓库：${normalizedRepoId}`);
     }
     const normalizedGroupId = groupId?.trim() || null;
     if (normalizedGroupId && !fallbackSettings.repoGroups.some((group) => group.id === normalizedGroupId)) {
       throw new Error("未找到仓库分组");
     }
+    const mode: WorkspaceRepoPathMode =
+      pathMode === "move" || pathMode === "link" ? pathMode : "keep";
     fallbackSettings = {
       ...fallbackSettings,
       repoGroups: moveFallbackRepoToGroup(fallbackSettings.repoGroups, normalizedRepoId, normalizedGroupId),
@@ -5096,7 +5105,87 @@ export function moveRepoToGroup(repoId: string, groupId: string | null): Promise
         normalizedRepoId,
       ])).sort(),
     };
-    return visibleFallbackSettings();
+    return {
+      settings: visibleFallbackSettings(),
+      previousRepoId: normalizedRepoId,
+      repo,
+      pathChanged: false,
+      pathMode: mode,
+    } satisfies WorkspaceRepoRelocationResult;
+  });
+}
+
+export function relocateLocalRepo(
+  repoId: string,
+  targetPath: string | null = null,
+): Promise<WorkspaceRepoRelocationResult> {
+  return call("workspace_relocate_local_repo", { repoId, targetPath }, () => {
+    const normalizedRepoId = repoId.trim();
+    if (!normalizedRepoId) throw new Error("仓库 ID 不能为空");
+    const selectedPath = targetPath?.trim() || allFallbackRepos()[0]?.path || null;
+    if (!selectedPath) throw new Error("已取消选择仓库");
+    const existing = allFallbackRepos().find((item) => item.id === normalizedRepoId);
+    const leaf = selectedPath.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || "repo";
+    const nextId = `local:fallback/${leaf}`;
+    const nextRepo: RepoSummary = {
+      ...(existing ?? {
+        id: nextId,
+        name: leaf,
+        path: selectedPath,
+        relativePath: leaf,
+        currentBranch: "main",
+        remoteUrl: null,
+        githubFullName: null,
+        ahead: 0,
+        behind: 0,
+        remoteBranchStates: [],
+        remotesNeedingPull: 0,
+        remotesNeedingPush: 0,
+        stagedCount: 0,
+        unstagedCount: 0,
+        untrackedCount: 0,
+        conflictCount: 0,
+        lastCommitAt: null,
+        lastCommitMessage: null,
+        languageStats: [],
+        languageStatsUpdatedAt: 0,
+        worktree: {
+          role: "standalone",
+          sharedRepoKey: selectedPath,
+          mainRepoId: null,
+        },
+      }),
+      id: nextId,
+      name: leaf,
+      path: selectedPath,
+      relativePath: leaf,
+    };
+    const remapId = (id: string) => (id === normalizedRepoId ? nextId : id);
+    fallbackSettings = {
+      ...fallbackSettings,
+      managedRepoIds: Array.from(new Set([
+        ...fallbackSettings.managedRepoIds.filter((id) => id !== normalizedRepoId),
+        nextId,
+      ])).sort(),
+      favoriteRepoIds: fallbackSettings.favoriteRepoIds.map(remapId),
+      hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== normalizedRepoId && id !== nextId),
+      repoGroups: fallbackSettings.repoGroups.map((group) => ({
+        ...group,
+        repoIds: Array.from(new Set(group.repoIds.map(remapId))).sort(),
+      })),
+      organizationGroupingResolvedRepoIds: Array.from(new Set(
+        (fallbackSettings.organizationGroupingResolvedRepoIds ?? []).map(remapId),
+      )).sort(),
+    };
+    fallbackRepoOverrides[nextId] = nextRepo;
+    delete fallbackRepoOverrides[normalizedRepoId];
+    return {
+      settings: visibleFallbackSettings(),
+      previousRepoId: normalizedRepoId,
+      repo: nextRepo,
+      pathChanged: existing?.path !== selectedPath,
+      pathMode: "move",
+    } satisfies WorkspaceRepoRelocationResult;
   });
 }
 

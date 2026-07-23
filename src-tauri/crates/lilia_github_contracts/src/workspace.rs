@@ -1551,6 +1551,25 @@ pub struct WorkspaceCloneResult {
     pub settings: WorkspaceSettings,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceRepoPathMode {
+    #[default]
+    Keep,
+    Move,
+    Link,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRepoRelocationResult {
+    pub settings: WorkspaceSettings,
+    pub previous_repo_id: String,
+    pub repo: RepoSummary,
+    pub path_changed: bool,
+    pub path_mode: WorkspaceRepoPathMode,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceCreateLocalRepoRequest {

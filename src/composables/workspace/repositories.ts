@@ -39,6 +39,8 @@ import type {
   RepoSyncOperationResult,
   WorkspaceCreateLocalRepoRequest,
   WorkspaceCloneRepoRequest,
+  WorkspaceRepoPathMode,
+  WorkspaceRepoRelocationResult,
   BulkSyncPreview,
   BulkSyncResult,
   CommitDetail,
@@ -884,9 +886,27 @@ export async function deleteRepoGroup(groupId: string) {
   return updateWorkspaceSettings(() => service.deleteRepoGroup(groupId));
 }
 
-export async function moveRepoToGroup(repoId: string, groupId: string | null) {
+export async function moveRepoToGroup(
+  repoId: string,
+  groupId: string | null,
+  pathMode: WorkspaceRepoPathMode | null = "keep",
+) {
   const service = await loadWorkspaceService();
-  return updateWorkspaceSettings(() => service.moveRepoToGroup(repoId, groupId));
+  return applyRelocationResult(await service.moveRepoToGroup(repoId, groupId, pathMode));
+}
+
+export async function relocateLocalRepo(repoId: string, targetPath: string | null = null) {
+  const service = await loadWorkspaceService();
+  return applyRelocationResult(await service.relocateLocalRepo(repoId, targetPath));
+}
+
+function applyRelocationResult(result: WorkspaceRepoRelocationResult) {
+  state.settings = result.settings;
+  if (result.previousRepoId !== result.repo.id) {
+    removeRepo(result.previousRepoId);
+  }
+  upsertRepo(result.repo);
+  return result;
 }
 
 export async function reconcileOrganizationRepoGroups(organizationLogins: string[]) {

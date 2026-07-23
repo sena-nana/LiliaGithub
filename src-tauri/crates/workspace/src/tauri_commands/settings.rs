@@ -28,7 +28,8 @@ delegate_command!(settings; fn workspace_hide_repo(app: AppHandle, repo_id: Stri
 delegate_command!(settings; fn workspace_create_repo_group(app: AppHandle, name: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_rename_repo_group(app: AppHandle, group_id: String, name: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_delete_repo_group(app: AppHandle, group_id: String,) -> Result<WorkspaceSettings, String>);
-delegate_command!(settings; fn workspace_move_repo_to_group(app: AppHandle, repo_id: String, group_id: Option<String>,) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn workspace_move_repo_to_group(app: AppHandle, repo_id: String, group_id: Option<String>, path_mode: Option<WorkspaceRepoPathMode>,) -> Result<WorkspaceRepoRelocationResult, String>);
+delegate_dialog_command!(settings; fn workspace_relocate_local_repo(app: AppHandle, repo_id: String, target_path: Option<String>,) -> Result<WorkspaceRepoRelocationResult, String>);
 delegate_command!(settings; fn workspace_reconcile_organization_repo_groups(app: AppHandle, organization_logins: Vec<String>,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_set_local_repo_favorite(app: AppHandle, repo_id: String, favorite: bool,) -> Result<WorkspaceSettings, String>);
 delegate_command!(async settings; fn workspace_delete_local_repo(app: AppHandle, repo_id: String,) -> Result<WorkspaceSettings, String>);

@@ -44,6 +44,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "workspace_rename_repo_group",
     "workspace_delete_repo_group",
     "workspace_move_repo_to_group",
+    "workspace_relocate_local_repo",
     "workspace_set_local_repo_favorite",
     "workspace_delete_local_repo",
     "workspace_remember_remote_repo",

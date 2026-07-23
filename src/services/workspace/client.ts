@@ -142,6 +142,8 @@ import type {
   WorkspaceStartupContributions,
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
+  WorkspaceRepoPathMode,
+  WorkspaceRepoRelocationResult,
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
@@ -589,8 +591,27 @@ export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_repo_group", { groupId }, () => workspaceFallback().deleteRepoGroup(groupId));
 }
 
-export function moveRepoToGroup(repoId: string, groupId: string | null): Promise<WorkspaceSettings> {
-  return call("workspace_move_repo_to_group", { repoId, groupId }, () => workspaceFallback().moveRepoToGroup(repoId, groupId));
+export function moveRepoToGroup(
+  repoId: string,
+  groupId: string | null,
+  pathMode: WorkspaceRepoPathMode | null = "keep",
+): Promise<WorkspaceRepoRelocationResult> {
+  return call(
+    "workspace_move_repo_to_group",
+    { repoId, groupId, pathMode },
+    () => workspaceFallback().moveRepoToGroup(repoId, groupId, pathMode),
+  );
+}
+
+export function relocateLocalRepo(
+  repoId: string,
+  targetPath: string | null = null,
+): Promise<WorkspaceRepoRelocationResult> {
+  return call(
+    "workspace_relocate_local_repo",
+    { repoId, targetPath },
+    () => workspaceFallback().relocateLocalRepo(repoId, targetPath),
+  );
 }
 
 export function setLocalRepoFavorite(repoId: string, favorite: boolean): Promise<WorkspaceSettings> {
