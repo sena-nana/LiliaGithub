@@ -7,6 +7,7 @@ import { useWorkspace } from "../../../composables/useWorkspace";
 import { useWorkspaceRecentContext } from "../../../composables/useWorkspaceRecentContext";
 import type { HiddenRepo, WorkspaceRoot } from "../../../services/workspace";
 import { Dropdown, SettingsRow, UiButton, UiCard, UiDialog } from "../../../ui";
+import { repoRoute } from "../../../utils/repoRoutes";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -17,6 +18,8 @@ const hiddenRepos = ref<HiddenRepo[]>([]);
 const loadingHiddenRepos = ref(false);
 const restoringRepoId = ref<string | null>(null);
 const addingRepo = ref(false);
+const relocatingRepo = ref(false);
+const relocateRepoId = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
 const notice = ref<string | null>(null);
@@ -30,6 +33,14 @@ const deleteDialogOpen = ref(false);
 const rootToRemove = ref<WorkspaceRoot | null>(null);
 
 const activeWorkspace = computed(() => workspace.activeWorkspace.value);
+const localRepoOptions = computed(() =>
+  workspace.state.repos.map((repo) => ({
+    value: repo.id,
+    label: repo.name,
+    hint: repo.relativePath || repo.path,
+    agentId: `settings.repositories.relocate.option.${repo.id}`,
+  })),
+);
 const catalogOptions = computed(() => workspace.workspaceCatalog.value.map((item) => ({
   value: item.id,
   label: item.name,
@@ -204,6 +215,29 @@ async function addLocalRepo() {
   }
 }
 
+async function relocateLocalRepoLocation() {
+  const repoId = relocateRepoId.value.trim() || localRepoOptions.value[0]?.value || "";
+  if (!repoId || relocatingRepo.value) return;
+  relocatingRepo.value = true;
+  error.value = null;
+  notice.value = null;
+  try {
+    const result = await workspace.relocateLocalRepo(repoId);
+    relocateRepoId.value = result.repo.id;
+    notice.value = result.pathChanged
+      ? `已将仓库位置更新为 ${result.repo.path}`
+      : "仓库位置未变化。";
+    if (result.previousRepoId !== result.repo.id) {
+      await router.push(repoRoute(result.repo.id));
+    }
+  } catch (nextError) {
+    const message = cleanError(nextError);
+    if (!message.includes("已取消")) error.value = message;
+  } finally {
+    relocatingRepo.value = false;
+  }
+}
+
 async function restoreRepo(repoId: string) {
   if (restoringRepoId.value) return;
   restoringRepoId.value = repoId;
@@ -219,6 +253,11 @@ async function restoreRepo(repoId: string) {
 }
 
 watch(() => activeWorkspace.value?.id, () => void loadHiddenRepos(), { immediate: true });
+watch(localRepoOptions, (options) => {
+  if (!options.some((option) => option.value === relocateRepoId.value)) {
+    relocateRepoId.value = options[0]?.value ?? "";
+  }
+}, { immediate: true });
 
 onUnmounted(() => hiddenReposLoader.invalidate());
 </script>
@@ -291,6 +330,31 @@ onUnmounted(() => hiddenReposLoader.invalidate());
       <UiButton size="sm" agent-id="settings.repositories.add-local" :busy="addingRepo" :disabled="busy" @click="addLocalRepo">
         {{ addingRepo ? "添加中" : "添加本地仓库" }}
       </UiButton>
+    </SettingsRow>
+
+    <SettingsRow
+      v-if="activeWorkspace && localRepoOptions.length"
+      label="移动本地仓库位置"
+      hint="为已管理的本地仓库重新选择目录；新位置必须仍在当前工作区根目录内。"
+      divided
+    >
+      <div class="workspace-card__actions">
+        <Dropdown
+          v-model="relocateRepoId"
+          :options="localRepoOptions"
+          agent-id="settings.repositories.relocate.select"
+          :disabled="busy || relocatingRepo"
+        />
+        <UiButton
+          size="sm"
+          agent-id="settings.repositories.relocate"
+          :busy="relocatingRepo"
+          :disabled="busy || !relocateRepoId"
+          @click="relocateLocalRepoLocation"
+        >
+          {{ relocatingRepo ? "移动中" : "选择新位置" }}
+        </UiButton>
+      </div>
     </SettingsRow>
 
     <section v-if="hiddenRepos.length" class="workspace-card__hidden" aria-labelledby="workspace-hidden-repositories-title">

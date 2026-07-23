@@ -88,6 +88,7 @@ export function useRepoDetailController() {
   const activeRemoteRef = computed<string | null>(() => normalizeStringQuery(route.query.ref));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
+  const relocatingMissingRepo = ref(false);
   const repoDetailLoading = ref(false);
   const repoDetailError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
@@ -401,9 +402,28 @@ export function useRepoDetailController() {
     }, 1500);
   });
 
-  watch(localRepoConfirmedMissing, (missing) => {
-    if (missing) void workspaceRecentContext.replaceAfterConfirmedMissing("/");
-  }, { immediate: true });
+  async function selectMissingLocalRepo() {
+    const previousId = repoId.value;
+    if (!previousId || relocatingMissingRepo.value) return;
+    relocatingMissingRepo.value = true;
+    actionError.value = null;
+    try {
+      const result = await workspace.relocateLocalRepo(previousId);
+      await workspace.refreshRepos();
+      if (result.repo.id !== previousId) {
+        await router.replace(repoRoute(result.repo.id));
+      } else {
+        await load();
+      }
+    } catch (reason) {
+      const message = String(reason).replace(/^Error:\s*/, "");
+      if (!message.includes("已取消")) {
+        actionError.value = message || "选择仓库失败";
+      }
+    } finally {
+      relocatingMissingRepo.value = false;
+    }
+  }
 
   onUnmounted(() => {
     void setActiveRepoForRefresh(null);
@@ -1370,6 +1390,9 @@ export function useRepoDetailController() {
       actionError,
       repoDetailLoading,
       repoDetailError,
+      localRepoConfirmedMissing,
+      relocatingMissingRepo,
+      selectMissingLocalRepo,
       launchError,
       actionRunning,
       launchTerminalVisible,

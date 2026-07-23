@@ -551,6 +551,16 @@ export interface WorkspaceCloneResult {
   settings: WorkspaceSettings;
 }
 
+export type WorkspaceRepoPathMode = "keep" | "move" | "link";
+
+export interface WorkspaceRepoRelocationResult {
+  settings: WorkspaceSettings;
+  previousRepoId: string;
+  repo: RepoSummary;
+  pathChanged: boolean;
+  pathMode: WorkspaceRepoPathMode;
+}
+
 export interface GitHubCreateRepoRequest {
   owner: string;
   ownerKind: GitHubOwnerKind | "org" | string;

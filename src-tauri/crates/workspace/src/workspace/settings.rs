@@ -15,13 +15,17 @@ use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAcces
 use crate::workspace::repos::managed_repo_paths;
 use crate::workspace::repos::{
     canonical_repo_path, git_command, git_command_lossy, git_common_dir, is_git_repo, repo_id,
-    resolve_remote_sync_config, resolve_repo_worktree, run_repo_visible_blocking,
+    resolve_remote_sync_config, resolve_repo_worktree, run_repo_visible_blocking, summarize_repo,
     ResolvedRepoWorktree,
 };
 use crate::workspace::shared::{
-    contribution_identity_key, contribution_identity_matches, current_utc_day_index,
-    format_day_index, local_contribution_identities, now_millis, remove_local_contribution_cache,
-    repo_git_identity,
+    compatible_path_text, contribution_identity_key, contribution_identity_matches,
+    current_utc_day_index, format_day_index, local_contribution_identities, now_millis,
+    remove_local_contribution_cache, repo_git_identity,
+};
+use crate::workspace::path_relocation::{
+    ensure_git_repo_path, path_already_matches_group, relocate_directory, remap_repo_id_in_settings,
+    target_path_for_group,
 };
 use lilia_github_contracts::workspace::{
     AccountPreferences, CachedContributionResult, CachedRepoSummary, ContributionIdentity,
@@ -31,8 +35,9 @@ use lilia_github_contracts::workspace::{
     RecentLocalRepoVisit, RemoteRepoShortcut, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
     RepoSummary, RepoSyncPreference, WorkspaceBootstrap, WorkspaceCatalogEntry,
     WorkspaceCloneRepositoryRef, WorkspaceProfile, WorkspaceRecentContextV1, WorkspaceRepoGroup,
-    WorkspaceRepoPlacement, WorkspaceRoot, WorkspaceSettings, WorkspaceStartupCache,
-    WorkspaceStartupContributions, WorkspaceViewPreferences,
+    WorkspaceRepoPathMode, WorkspaceRepoPlacement, WorkspaceRepoRelocationResult, WorkspaceRoot,
+    WorkspaceSettings, WorkspaceStartupCache, WorkspaceStartupContributions,
+    WorkspaceViewPreferences,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -2526,19 +2531,119 @@ pub fn workspace_move_repo_to_group(
     app: AppHandle,
     repo_id: String,
     group_id: Option<String>,
-) -> Result<WorkspaceSettings, String> {
+    path_mode: Option<WorkspaceRepoPathMode>,
+) -> Result<WorkspaceRepoRelocationResult, String> {
     let normalized = repo_id.trim();
     if normalized.is_empty() {
         return Err("仓库 ID 不能为空".to_string());
     }
-    repo_path_by_id(&app, normalized)?;
+    let (root, current_path) = repo_root_and_path_by_id(&app, normalized)?;
+    let path_mode = path_mode.unwrap_or_default();
     let _guard = settings_write_lock()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
-    move_repo_to_group(&mut settings, normalized, group_id.as_deref())?;
+    let requested_group_id = group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let target_group = requested_group_id.and_then(|id| {
+        settings
+            .repo_groups
+            .iter()
+            .find(|group| group.id == id)
+            .cloned()
+    });
+    if requested_group_id.is_some() && target_group.is_none() {
+        return Err("未找到仓库分组".to_string());
+    }
+
+    let effective_mode = if path_already_matches_group(&root, &current_path, target_group.as_ref())
+    {
+        WorkspaceRepoPathMode::Keep
+    } else {
+        path_mode
+    };
+
+    let mut active_repo_id = normalized.to_string();
+    let mut active_path = current_path.clone();
+    let mut path_changed = false;
+
+    if effective_mode != WorkspaceRepoPathMode::Keep {
+        let destination = target_path_for_group(&root, &current_path, target_group.as_ref())?;
+        relocate_directory(&current_path, &destination, effective_mode)?;
+        path_changed = true;
+        if effective_mode == WorkspaceRepoPathMode::Move {
+            active_path = ensure_git_repo_path(&destination)?;
+            let new_id = crate::workspace::repos::repo_id(&root, &active_path);
+            let new_path_text = compatible_path_text(&active_path);
+            remap_repo_id_in_settings(&mut settings, &active_repo_id, &new_id, Some(&new_path_text));
+            active_repo_id = new_id;
+        }
+    }
+
+    move_repo_to_group(&mut settings, &active_repo_id, requested_group_id)?;
     save_settings(&app, &settings)?;
-    Ok(visible_workspace_settings(settings))
+    Ok(WorkspaceRepoRelocationResult {
+        settings: visible_workspace_settings(settings),
+        previous_repo_id: normalized.to_string(),
+        repo: summarize_repo(&root, &active_path),
+        path_changed,
+        path_mode: effective_mode,
+    })
+}
+
+pub fn workspace_relocate_local_repo(
+    app: AppHandle,
+    repo_id: String,
+    target_path: Option<String>,
+) -> Result<WorkspaceRepoRelocationResult, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+
+    let selected_path = match target_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(path) => path.to_string(),
+        None => workspace_pick_repo(app.clone())?
+            .ok_or_else(|| "已取消选择仓库".to_string())?,
+    };
+
+    let new_path = ensure_git_repo_path(Path::new(&selected_path))?;
+    let (_, root) = workspace_roots(&app)?
+        .into_iter()
+        .find(|(_, root)| {
+            new_path.starts_with(root)
+                || canonical_repo_path(&new_path).starts_with(&canonical_repo_path(root))
+        })
+        .ok_or_else(|| "仓库必须位于当前工作区的某个根目录内".to_string())?;
+    let new_id = crate::workspace::repos::repo_id(&root, &new_path);
+    let new_path_text = compatible_path_text(&new_path);
+
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut settings = load_settings(&app);
+    let path_changed = repo_path_by_id(&app, normalized)
+        .map(|previous| canonical_repo_path(&previous) != canonical_repo_path(&new_path))
+        .unwrap_or(true);
+
+    remap_repo_id_in_settings(&mut settings, normalized, &new_id, Some(&new_path_text));
+    add_managed_repo_id(&mut settings, new_id.clone());
+    settings.hidden_repo_ids.retain(|id| id != &new_id);
+    save_settings(&app, &settings)?;
+    crate::workspace::watcher::sync_repo_watchers(&app);
+    Ok(WorkspaceRepoRelocationResult {
+        settings: visible_workspace_settings(settings),
+        previous_repo_id: normalized.to_string(),
+        repo: summarize_repo(&root, &new_path),
+        path_changed,
+        path_mode: WorkspaceRepoPathMode::Move,
+    })
 }
 
 pub fn workspace_reconcile_organization_repo_groups(

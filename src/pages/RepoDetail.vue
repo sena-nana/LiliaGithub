@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
+import { UiButton } from "../ui";
 
 const repoProjectPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoProjectPanel.vue"));
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
@@ -22,6 +23,9 @@ const {
   actionError,
   repoDetailLoading,
   repoDetailError,
+  localRepoConfirmedMissing,
+  relocatingMissingRepo,
+  selectMissingLocalRepo,
   launchError,
   actionRunning,
   launchTerminalVisible,
@@ -192,7 +196,7 @@ async function refreshCurrentPage() {
 </script>
 <template>
   <section class="repo-workbench">
-    <div class="repo-workbench__top">
+    <div v-if="!localRepoConfirmedMissing" class="repo-workbench__top">
       <RepoDetailToolbar
         :active-tab="activeTab"
         :repo-id="repoId"
@@ -255,7 +259,35 @@ async function refreshCurrentPage() {
     </div>
 
     <div class="repo-workbench__body">
-      <main class="workbench-main workbench-main--project">
+      <main v-if="localRepoConfirmedMissing" class="workbench-main workbench-main--project">
+        <div class="repo-workbench__empty" data-agent-id="repo.missing.local">
+          <div class="repo-missing">
+            <h2>找不到本地仓库</h2>
+            <p class="muted">当前工作区中找不到该仓库目录。可以选择新的本地位置，或返回首页。</p>
+            <p v-if="actionError" class="error-line">{{ actionError }}</p>
+            <div class="repo-missing__actions">
+              <UiButton
+                variant="primary"
+                size="sm"
+                agent-id="repo.missing.select"
+                :busy="relocatingMissingRepo"
+                @click="selectMissingLocalRepo"
+              >
+                选择仓库
+              </UiButton>
+              <UiButton
+                size="sm"
+                agent-id="repo.missing.go-home"
+                :disabled="relocatingMissingRepo"
+                @click="$router.push('/')"
+              >
+                返回首页
+              </UiButton>
+            </div>
+          </div>
+        </div>
+      </main>
+      <main v-else class="workbench-main workbench-main--project">
         <RepoStashPanel
           v-if="activeTab === 'stash'"
           ref="repoStashPanel"
@@ -780,6 +812,26 @@ async function refreshCurrentPage() {
   min-height: 100%;
   padding: 24px;
   text-align: center;
+}
+
+.repo-missing {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  max-width: 420px;
+}
+
+.repo-missing h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.repo-missing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
 }
 
 .section-toolbar {
