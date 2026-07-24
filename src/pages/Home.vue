@@ -1539,7 +1539,9 @@ function repoAction(repo: RepoSummary): RepoAction | null {
     return {
       kind: "sync",
       label: "待同步",
-      title: `远端领先 ${repo.behind} 个提交`,
+      title: repo.ahead > 0
+        ? "本地与远端已分叉，需要合并"
+        : `远端领先 ${repo.behind} 个提交`,
     };
   }
   return null;

@@ -101,6 +101,7 @@ const {
   saveRemoteSyncPolicy,
   closeSyncResultDialog,
   retryFailedRemotePush,
+  mergePullFromSyncResult,
   openConflictDialog,
   closeConflictDialog,
   openConflictDialogFromSyncResult,
@@ -368,10 +369,11 @@ async function refreshCurrentPage() {
     <RepoSyncResultDialog
       v-if="syncOperationResult"
       :result="syncOperationResult"
-      :retrying="pushRunning"
+      :retrying="pushRunning || actionRunning"
       @close="closeSyncResultDialog"
       @retry-push="retryFailedRemotePush"
       @resolve-conflicts="openConflictDialogFromSyncResult"
+      @merge-pull="mergePullFromSyncResult"
     />
     <RepoConflictDialog
       v-if="conflictDialogOpen"
