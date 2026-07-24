@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { AlertCircle, CheckCircle2, GitMerge, LoaderCircle, XCircle } from "@lucide/vue";
 import type { RepoRemoteOperationStep, RepoSyncOperationResult } from "../../services/workspace";
+import { isFastForwardPullFailure } from "../../utils/recoveryGuidance";
 import RepoSyncDialogShell from "./RepoSyncDialogShell.vue";
 
 const props = defineProps<{
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   close: [];
   retryPush: [remoteNames: string[]];
   resolveConflicts: [];
+  mergePull: [];
 }>();
 
 const failedPushRemotes = computed(() =>
@@ -23,9 +25,16 @@ const failedPushRemotes = computed(() =>
   )],
 );
 
+const canOfferMergePull = computed(() => {
+  if (props.result?.status !== "error" || failedPushRemotes.value.length) return false;
+  const texts = [props.result.message, ...(props.result.steps ?? []).map((step) => step.message)];
+  return texts.some((text) => isFastForwardPullFailure(text));
+});
+
 const title = computed(() => {
   if (props.result?.status === "conflicts") return "同步遇到冲突";
   if (props.result?.status === "partial") return "部分远端同步失败";
+  if (canOfferMergePull.value) return "需要合并上游";
   return "远端同步失败";
 });
 
@@ -98,6 +107,18 @@ function stepAgentId(step: RepoRemoteOperationStep) {
             >
               <LoaderCircle v-if="retrying" class="sync-result-dialog__spinner" :size="15" aria-hidden="true" />
               {{ retrying ? "重试中…" : `重试失败推送（${failedPushRemotes.length}）` }}
+            </button>
+            <button
+              v-if="canOfferMergePull"
+              type="button"
+              class="primary"
+              data-agent-id="repo.remote-sync.retry-merge-pull"
+              :disabled="retrying"
+              @click="emit('mergePull')"
+            >
+              <LoaderCircle v-if="retrying" class="sync-result-dialog__spinner" :size="15" aria-hidden="true" />
+              <GitMerge v-else :size="15" aria-hidden="true" />
+              {{ retrying ? "合并中…" : "改用合并拉取" }}
             </button>
             <button
               v-if="result.status === 'conflicts'"

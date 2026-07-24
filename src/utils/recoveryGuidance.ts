@@ -66,6 +66,15 @@ const guidanceRules: Array<{
     },
   },
   {
+    match: /Not possible to fast-forward|Diverging branches|无法快进/i,
+    guidance: {
+      title: "需要合并上游",
+      tone: "warn",
+      summary: "本地与远端已分叉，快进拉取不可用，需要先合并或变基上游。",
+      steps: ["改用合并拉取或抓取后变基", "如出现冲突，先在冲突对话框处理文件", "合并完成后再推送本地提交"],
+    },
+  },
+  {
     match: /rejected|failed to push some refs|non-fast-forward|fetch first|pre-receive hook declined|protected branch|remote rejected|GH006|GH013/i,
     guidance: {
       title: "远端拒绝同步",
@@ -75,6 +84,10 @@ const guidanceRules: Array<{
     },
   },
 ];
+
+export function isFastForwardPullFailure(message: string | null | undefined): boolean {
+  return /Not possible to fast-forward|Diverging branches|无法快进/i.test(message?.trim() ?? "");
+}
 
 export function recoveryGuidanceForMessage(message: string | null | undefined): RecoveryGuidance {
   const normalized = message?.trim() ?? "";

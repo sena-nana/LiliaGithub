@@ -1153,6 +1153,15 @@ export function useRepoDetailController() {
   function runSelectedPullStrategy() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
+    if (
+      aheadCount.value > 0
+      && behindCount.value > 0
+      && pullStrategy.value === "pull"
+      && pullRemoteCount.value <= 1
+    ) {
+      if (!window.confirm("本地与远端已分叉，无法快进。是否改为合并上游？")) return;
+      pullStrategy.value = "merge";
+    }
     void runAction(async () => {
       if (pullRemoteCount.value > 1) {
         captureSyncOperationResult(await workspace.mergePull(targetRepoId, "stash"));
@@ -1168,6 +1177,12 @@ export function useRepoDetailController() {
       }
       captureSyncOperationResult(await workspace.mergePull(targetRepoId, "stash"));
     });
+  }
+
+  function mergePullFromSyncResult() {
+    if (!repoId.value || actionRunning.value) return;
+    pullStrategy.value = "merge";
+    mergePull();
   }
 
   function push() {
@@ -1467,6 +1482,7 @@ export function useRepoDetailController() {
       saveRemoteSyncPolicy,
       closeSyncResultDialog,
       retryFailedRemotePush,
+      mergePullFromSyncResult,
       openConflictDialog,
       closeConflictDialog,
       openConflictDialogFromSyncResult,

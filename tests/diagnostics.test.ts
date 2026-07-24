@@ -42,6 +42,7 @@ describe("diagnostics helpers", () => {
       ["存在未提交变更，已阻止 pull", "未提交变更阻塞同步"],
       ["HTTP 403 permission denied", "认证或权限失效"],
       ["remote: Repository not found", "认证或权限失效"],
+      ["Not possible to fast-forward, aborting.", "需要合并上游"],
       ["failed to push some refs: non-fast-forward", "远端拒绝同步"],
     ] as const;
 

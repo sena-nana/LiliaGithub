@@ -126,6 +126,12 @@ const launchPickerOpen = ref(false);
 
 const launchCommandDisabled = computed(() => props.actionRunning || props.launchRunning);
 const usesMultiplePullRemotes = computed(() => props.pullRemoteCount > 1);
+const pullButtonLabel = computed(() => {
+  if (props.remoteSyncUnavailableReason) return props.remoteSyncUnavailableReason;
+  if (usesMultiplePullRemotes.value) return `合并 ${props.pullRemoteCount} 个远端`;
+  if (props.aheadCount > 0 && props.behindCount > 0) return "分支已分叉，需要合并";
+  return "拉取";
+});
 const pushTargetLabel = computed(() => {
   if (props.remoteSyncUnavailableReason) return props.remoteSyncUnavailableReason;
   if (!props.pushRemoteNames.length) return "未配置推送目标";
@@ -396,8 +402,8 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
               type="button"
               class="repo-toolbar__btn repo-toolbar__pull-main"
               :class="{ 'repo-toolbar__btn--counted': behindCount || remotesNeedingPull }"
-              :title="remoteSyncUnavailableReason || (usesMultiplePullRemotes ? `合并 ${pullRemoteCount} 个远端` : '拉取')"
-              :aria-label="remoteSyncUnavailableReason || (usesMultiplePullRemotes ? '合并多个远端' : '拉取')"
+              :title="pullButtonLabel"
+              :aria-label="pullButtonLabel"
               data-agent-id="repo.toolbar.pull.selected"
               :disabled="actionRunning || hasConflicts || Boolean(remoteSyncUnavailableReason)"
               @click="emit('runSelectedPullStrategy')"
