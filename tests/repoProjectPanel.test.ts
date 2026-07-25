@@ -3796,8 +3796,21 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("button", { name: "删除仓库" }));
     const dialog = await view.findByRole("dialog", { name: "删除 GitHub 仓库" });
-    await fireEvent.update(within(dialog).getByPlaceholderText("sena-nana/remote-repo"), "sena-nana/remote-repo");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    const confirmInput = within(dialog).getByPlaceholderText("sena-nana/remote-repo");
+    const confirmButton = within(dialog).getByRole("button", { name: "确认删除" });
+
+    await fireEvent.update(confirmInput, "sena-nana/another-repo");
+    expect(confirmButton).toBeDisabled();
+    await fireEvent.click(confirmButton);
+    expect(deleteGitHubRepo).not.toHaveBeenCalled();
+
+    await fireEvent.update(confirmInput, "  sena-nana/remote-repo  ");
+    expect(confirmButton).toBeEnabled();
+    await fireEvent.update(confirmInput, "sena-nana/Remote-repo");
+    expect(confirmButton).toBeDisabled();
+
+    await fireEvent.update(confirmInput, "  sena-nana/remote-repo  ");
+    await fireEvent.click(confirmButton);
     expect(deleteGitHubRepo).toHaveBeenCalledWith("sena-nana/remote-repo");
 
     await view.rerender({
