@@ -1260,21 +1260,31 @@ describe("基础路由", () => {
     });
   });
 
-  it("仓库设置删除本地仓库需要输入仓库 ID 确认并返回首页", async () => {
+  it("仓库设置删除本地仓库使用仓库名确认并按内部 ID 删除", async () => {
     const service = await import("../src/services/workspace");
-    const { router } = await renderAt("/repos/LiliaGithub");
+    const repo = repoSummary("local:root-9de7877d8f4657fb/LiliaCodeCli", {
+      name: "LiliaCodeCli",
+      path: "D:\\PROJECT\\workspace\\LiliaCodeCli",
+      relativePath: "LiliaCodeCli",
+    });
+    workspaceFallback.setFallbackRepoOverridesForTests({
+      [repo.id]: repo,
+    });
+    const { router } = await renderAt(`/repos/${repo.id}`);
 
-    await waitForRepoTitle("LiliaGithub");
+    await waitForRepoTitle(repo.name);
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     const deleteLocalButton = await screen.findByRole("button", { name: "删除本地" });
     await fireEvent.click(deleteLocalButton);
     expect(await screen.findByRole("dialog", { name: "删除本地仓库" })).toBeInTheDocument();
+    expect(screen.getByText(repo.path)).toBeInTheDocument();
+    expect(screen.getByText("输入仓库名以确认")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
 
-    await fireEvent.update(screen.getByPlaceholderText("LiliaGithub"), "sena-nana/LiliaGithub");
+    await fireEvent.update(screen.getByPlaceholderText(repo.name), repo.id);
     expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
 
-    await fireEvent.update(screen.getByPlaceholderText("LiliaGithub"), "LiliaGithub");
+    await fireEvent.update(screen.getByPlaceholderText(repo.name), repo.name);
     expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
     await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
 
@@ -1282,7 +1292,7 @@ describe("基础路由", () => {
       expect(screen.queryByRole("dialog", { name: "删除本地仓库" })).toBeNull();
       expect(router.currentRoute.value.fullPath).toBe("/");
     });
-    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(false);
+    expect((await service.refreshRepos()).some((item) => item.id === repo.id)).toBe(false);
   });
 
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
