@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../src/composables/useWorkspace";
@@ -193,7 +193,7 @@ describe("Home workflow failure handoff", () => {
 
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
     await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(1));
-    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toBeVisible();
+    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only");
 
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
     await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(2));
@@ -258,7 +258,7 @@ describe("Home workflow failure handoff", () => {
     await waitFor(() => expect(
       container.querySelector(`[data-agent-id="${workflowAgentId}.handoff.error"]`),
     ).not.toBeNull());
-    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toBeVisible();
+    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only");
     expect(agentButton(container, `${workflowAgentId}.handoff.create`)).toBeEnabled();
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute("href", failureRoute);
 
@@ -276,7 +276,7 @@ describe("Home workflow failure handoff", () => {
 
     await waitFor(() => expect(workflowMocks.detail).toHaveBeenCalledOnce());
     expect(handoffMocks.create).not.toHaveBeenCalled();
-    await waitFor(() => expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toBeVisible());
+    await waitFor(() => expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only"));
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute("href", failureRoute);
   });
 
@@ -285,8 +285,18 @@ describe("Home workflow failure handoff", () => {
     const { container } = await renderHome();
     await screen.findByText("Actions 失败");
 
-    expect(agentButton(container, `${workflowAgentId}.handoff.create`)).toBeDisabled();
-    expect(agentElement(container, `${workflowAgentId}.handoff.status`)).toBeVisible();
+    const row = agentElement(container, workflowAgentId);
+    expect(within(row).getByText("CI failed")).toBeVisible();
+    expect(within(row).getByText(repoFullName)).toBeVisible();
+    expect(within(row).queryByText("missing-branch 的运行结果为 Actions 失败")).not.toBeInTheDocument();
+
+    const unavailableReason = "请先在本地检出 missing-branch 分支";
+    const handoffButton = within(row).getByRole("button", { name: unavailableReason });
+    expect(handoffButton).toBeDisabled();
+    expect(handoffButton).toHaveAttribute("title", unavailableReason);
+
+    const status = agentElement(container, `${workflowAgentId}.handoff.status`);
+    expect(status).toHaveClass("sr-only");
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute(
       "href",
       `/repos/${mainRepoId}?projectTab=actions&run=${runId}`,
