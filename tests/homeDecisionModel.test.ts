@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { buildHomeContinueItems } from "../src/utils/homeContinueItems";
-import { buildProjectMomentum } from "../src/utils/projectMomentum";
 import type { RepoSummary } from "../src/services/workspace";
 
 function repo(overrides: Partial<RepoSummary> = {}): RepoSummary {
@@ -46,24 +45,5 @@ describe("homeContinueItems", () => {
     });
 
     expect(items.map((item) => item.id)).toEqual(["context:/repos/repo-1/changes", "recent:repo-2"]);
-  });
-});
-
-describe("projectMomentum", () => {
-  it("marks conflicts as blocked and dirty work as attention", () => {
-    expect(buildProjectMomentum({
-      githubRepo: { fullName: "sena-nana/LiliaGithub", updatedAt: "2026-07-01T00:00:00Z", archived: false },
-      localRepo: repo({ conflictCount: 2 }),
-      syncIssue: null,
-    }).state).toBe("blocked");
-
-    expect(buildProjectMomentum({
-      githubRepo: { fullName: "sena-nana/LiliaGithub", updatedAt: "2026-07-01T00:00:00Z", archived: false },
-      localRepo: repo({ unstagedCount: 3 }),
-      syncIssue: null,
-    })).toMatchObject({
-      state: "attention",
-      reason: "3 项本地改动尚未提交",
-    });
   });
 });

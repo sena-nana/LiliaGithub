@@ -115,7 +115,6 @@ import {
   type HomePendingItem,
   type HomePendingRepoSource,
 } from "../utils/homePendingItems";
-import { buildProjectMomentum, type ProjectMomentum } from "../utils/projectMomentum";
 import {
   repoCalculatesHomeTimeline,
   repoIncludedInHomeCodeStats,
@@ -232,7 +231,6 @@ type RepoStatusRow = {
   localRepo: RepoSummary | null;
   action: RepoAction | null;
   syncIssue: RepoSyncIssueDisplay | null;
-  momentum: ProjectMomentum;
 };
 
 type LanguageChartMode = "language" | "project";
@@ -778,17 +776,6 @@ const homePendingItems = computed(() =>
   buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT),
 );
 
-const pendingItemsByRepo = computed(() => {
-  const grouped = new Map<string, HomePendingItem[]>();
-  for (const item of homePendingItems.value) {
-    const key = githubRepositoryIdentityKey(homePendingItemRepoFullName(item));
-    const list = grouped.get(key);
-    if (list) list.push(item);
-    else grouped.set(key, [item]);
-  }
-  return grouped;
-});
-
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   overviewGitHubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
     const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
@@ -798,12 +785,6 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       localRepo,
       action: localRepo ? repoAction(localRepo) : null,
       syncIssue,
-      momentum: buildProjectMomentum({
-        githubRepo,
-        localRepo,
-        syncIssue,
-        pendingItems: pendingItemsByRepo.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? [],
-      }),
     };
   }).sort(compareRepoStatusRows),
 );
@@ -2983,7 +2964,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :message="githubRepositoryScope.kind === 'all' ? '没有可见仓库。' : '当前范围没有可见仓库。'"
               />
               <div
-                v-for="{ githubRepo, localRepo, action, syncIssue, momentum } in visibleRepoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -3000,14 +2981,6 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <strong class="repo-status-row__name">
                     {{ githubRepo.fullName }}
                   </strong>
-                  <span
-                    class="repo-status-row__badge"
-                    :class="`repo-status-row__badge--momentum-${momentum.state}`"
-                    :title="momentum.reason"
-                    :data-agent-id="`home.repo-status.${githubRepo.fullName}.momentum`"
-                  >
-                    {{ momentum.label }}
-                  </span>
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
                   <span
@@ -4059,26 +4032,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.repo-status-row__badge--momentum-healthy {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.repo-status-row__badge--momentum-attention {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.repo-status-row__badge--momentum-blocked {
-  background: var(--err-soft);
-  color: var(--err);
-}
-
-.repo-status-row__badge--momentum-inactive {
-  background: var(--bg-subtle);
-  color: var(--text-faint);
 }
 
 .repo-status-row__badge--archived {
