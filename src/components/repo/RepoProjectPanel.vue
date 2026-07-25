@@ -3618,6 +3618,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           ref="projectMainRef"
           class="project-main"
           :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'actions' || activeSection === 'release' || activeSection === 'settings' }"
+          :style="{ borderColor: activeSection === 'readme' ? 'transparent' : undefined }"
         >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
