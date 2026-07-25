@@ -855,7 +855,7 @@ const deleteConfirmMatches = computed(() =>
   Boolean(deleteExpectedInput.value) && deleteConfirmInput.value.trim() === deleteExpectedInput.value,
 );
 const deleteExpectedInput = computed(() =>
-  deleteDialogTarget.value === "remote" ? props.repoFullName : props.repoId,
+  deleteDialogTarget.value === "remote" ? props.repoFullName : props.repoSummary?.name.trim(),
 );
 const localDeleteTitle = computed(() => linkedWorktree.value ? "删除工作树" : "删除本地仓库");
 const deleteDialogTitle = computed(() =>
@@ -4249,7 +4249,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   </p>
                   <p v-if="deleteError" class="error-line">{{ deleteError }}</p>
                   <label>
-                    <span>{{ deleteDialogTarget === "remote" ? "输入完整仓库名以确认" : "输入仓库 ID 以确认" }}</span>
+                    <span>{{ deleteDialogTarget === "remote" ? "输入完整仓库名以确认" : "输入仓库名以确认" }}</span>
                     <input
                       v-model="deleteConfirmInput"
                       type="text"
