@@ -1279,14 +1279,21 @@ describe("基础路由", () => {
     expect(await screen.findByRole("dialog", { name: "删除本地仓库" })).toBeInTheDocument();
     expect(screen.getByText(repo.path)).toBeInTheDocument();
     expect(screen.getByText("输入仓库名以确认")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+    const confirmInput = screen.getByPlaceholderText(repo.name);
+    const confirmButton = screen.getByRole("button", { name: "确认删除" });
 
-    await fireEvent.update(screen.getByPlaceholderText(repo.name), repo.id);
-    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+    await fireEvent.update(confirmInput, repo.id);
+    expect(confirmButton).toBeDisabled();
+    await fireEvent.click(confirmButton);
+    expect((await service.refreshRepos()).some((item) => item.id === repo.id)).toBe(true);
 
-    await fireEvent.update(screen.getByPlaceholderText(repo.name), repo.name);
-    expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
-    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+    await fireEvent.update(confirmInput, `  ${repo.name}  `);
+    expect(confirmButton).toBeEnabled();
+    await fireEvent.update(confirmInput, "LiliaCodeCLI");
+    expect(confirmButton).toBeDisabled();
+
+    await fireEvent.update(confirmInput, `  ${repo.name}  `);
+    await fireEvent.click(confirmButton);
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "删除本地仓库" })).toBeNull();
