@@ -104,7 +104,7 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Account and organization repository browsing, repository creation, and clone-to-workspace flow.
 - [x] Watched repositories and repository notification preferences.
 - [x] Local repository favorites and repository groups.
-- [x] Home Attention / Today / Continue decisions with reasons, next actions, project momentum signals, review requests, assigned pull requests, failed workflows, local blockers, and recoverable workspace context.
+- [x] Home Attention / Today / Continue decisions with reasons, next actions, review requests, assigned pull requests, failed workflows, local blockers, and recoverable workspace context.
 - [x] Structured LiliaCode fix-task handoff from full pull request reviews and failed workflows, with source context, acceptance criteria, and result return path.
 - [x] Multiple named workspaces with multiple roots and workspace-specific preferences.
 - [ ] In-app account activity timeline with type, repository, and owner-scope filters. `P1`

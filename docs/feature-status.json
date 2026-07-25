@@ -232,8 +232,8 @@
           "id": "home-pending-attention",
           "complete": true,
           "text": {
-            "en": "Home Attention / Today / Continue decisions with reasons, next actions, project momentum signals, review requests, assigned pull requests, failed workflows, local blockers, and recoverable workspace context.",
-            "zh-CN": "首页 Attention / Today / Continue 决策视图，提供原因、下一步、项目 Momentum 信号、Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和可恢复工作区上下文。"
+            "en": "Home Attention / Today / Continue decisions with reasons, next actions, review requests, assigned pull requests, failed workflows, local blockers, and recoverable workspace context.",
+            "zh-CN": "首页 Attention / Today / Continue 决策视图，提供原因、下一步、Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和可恢复工作区上下文。"
           }
         },
         {

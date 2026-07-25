@@ -104,7 +104,7 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [x] 个人与组织仓库浏览、仓库创建和克隆到工作区流程。
 - [x] 关注仓库和仓库通知偏好。
 - [x] 本地仓库收藏和仓库分组。
-- [x] 首页 Attention / Today / Continue 决策视图，提供原因、下一步、项目 Momentum 信号、Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和可恢复工作区上下文。
+- [x] 首页 Attention / Today / Continue 决策视图，提供原因、下一步、Review 请求、已分配 Pull Request、失败 Workflow、本地阻塞和可恢复工作区上下文。
 - [x] 从完整 Pull Request Review 和失败 Workflow 发起结构化 LiliaCode 修复任务交接，包含来源上下文、验收条件和结果返回路径。
 - [x] 支持多个根目录和工作区独立偏好的多个命名工作区。
 - [ ] 支持类型、仓库和所有者范围筛选的应用内账号活动时间线。 `P1`
