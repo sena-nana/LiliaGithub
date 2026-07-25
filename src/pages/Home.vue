@@ -2761,20 +2761,18 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <span class="home-pending-row__main">
                     <strong>{{ row.item.title }}</strong>
                     <span>{{ row.item.detail }}</span>
-                    <small v-if="row.item.reason && row.item.reason !== row.item.detail">{{ row.item.reason }}</small>
                   </span>
                   <span class="home-pending-row__side">
+                    <span class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
                     <span
                       v-if="row.handoff?.statusText"
-                      class="home-pending-row__repo home-pending-row__handoff-status"
-                      :class="{ 'is-error': Boolean(row.handoff.error) }"
+                      class="sr-only"
                       :title="row.handoff.error || row.handoff.statusText"
                       :role="row.handoff.error ? 'alert' : 'status'"
                       :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.error ? 'error' : 'status')"
                     >
                       {{ row.handoff.statusText }}
                     </span>
-                    <span v-else class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
                     <span
                       v-if="row.actions.length || row.handoff || row.link.kind !== 'none'"
                       class="home-pending-row__actions"
@@ -3665,13 +3663,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   font-weight: 500;
 }
 
-.home-pending-row__main small {
-  display: block;
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .github-timeline-card,
 .repo-status-card {
   display: flex;
@@ -3854,10 +3845,6 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .home-pending-action--danger {
   --home-pending-action-state-bg: var(--err-soft);
-  color: var(--err);
-}
-
-.home-pending-row__handoff-status.is-error {
   color: var(--err);
 }
 
