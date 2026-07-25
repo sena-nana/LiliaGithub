@@ -98,6 +98,13 @@ defineEmits<{
 
 <style scoped>
 .contribution-card {
+  --calendar-heatmap-level-default: var(--calendar-heatmap-level-0);
+  --calendar-heatmap-level-0: light-dark(#eff2f5, #151b23);
+  --calendar-heatmap-level-1: light-dark(#aceebb, #033a16);
+  --calendar-heatmap-level-2: light-dark(#4ac26b, #196c2e);
+  --calendar-heatmap-level-3: light-dark(#2da44e, #2ea043);
+  --calendar-heatmap-level-4: light-dark(#116329, #56d364);
+
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -201,6 +208,6 @@ defineEmits<{
   width: 11px;
   height: 11px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--ok) 14%, var(--bg-subtle));
+  background: var(--calendar-heatmap-level-1);
 }
 </style>
