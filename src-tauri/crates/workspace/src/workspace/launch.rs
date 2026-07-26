@@ -64,6 +64,18 @@ pub(super) fn has_running_launch_for_root(workspace_id: &str, root_id: &str) -> 
         })
 }
 
+pub(super) fn has_running_launch_for_repo(repo_id: &str) -> bool {
+    launch_runtime()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .values()
+        .any(|entry| entry.status.repo_id == repo_id && entry.status.state == "running")
+}
+
+pub(super) fn launch_resource_id(repo_id: &str) -> String {
+    format!("launch:{repo_id}")
+}
+
 pub(super) fn launch_logs() -> &'static Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>> {
     static LOGS: OnceLock<Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>>> = OnceLock::new();
     LOGS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -948,7 +960,7 @@ async fn run_launch_control(
     title: &'static str,
     control: fn(AppHandle, String) -> Result<ProjectLaunchStatus, String>,
 ) -> Result<ProjectLaunchStatus, String> {
-    let resource = format!("launch:{repo_id}");
+    let resource = launch_resource_id(&repo_id);
     let run_app = app.clone();
     let run_repo_id = repo_id.clone();
     run_operation(
