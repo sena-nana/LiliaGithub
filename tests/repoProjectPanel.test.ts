@@ -1230,6 +1230,54 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText("删除本地仓库")).toBeNull();
   });
 
+  it("纯远端仓库恢复授权后自动启用危险操作", async () => {
+    const repoFullName = "sena-nana/remote-repo";
+    const repoId = `github:${repoFullName}`;
+    const repoContext = (githubAuthorized: boolean) =>
+      resolveRepoContext({ repoId, settings: state.settings, githubAuthorized });
+    const view = await renderProjectPanel({
+      repoId,
+      repoFullName,
+      repoPath: "",
+      repoContext: repoContext(false),
+      projectTab: "settings",
+    });
+
+    expect(getGitHubRepoManagement).not.toHaveBeenCalled();
+
+    await view.rerender({ repoContext: repoContext(true) });
+
+    const dangerCard = await view.findByRole("region", { name: "危险操作" });
+    const archiveButton = within(dangerCard).getByRole("button", { name: "归档" });
+    const deleteButton = within(dangerCard).getByRole("button", { name: "删除仓库" });
+    expect(getGitHubRepoManagement).toHaveBeenCalledWith(repoFullName);
+    await waitFor(() => {
+      expect(archiveButton).toBeEnabled();
+      expect(deleteButton).toBeEnabled();
+    });
+    expect(within(dangerCard).queryByLabelText("本地危险操作")).toBeNull();
+
+    await fireEvent.click(archiveButton);
+    const archiveDialog = await view.findByRole("dialog", { name: "归档 GitHub 仓库" });
+    const archiveConfirm = within(archiveDialog).getByRole("button", { name: "确认归档" });
+    expect(archiveConfirm).toBeDisabled();
+    await fireEvent.update(within(archiveDialog).getByLabelText("输入完整仓库名以确认"), repoFullName);
+    await fireEvent.click(archiveConfirm);
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith(repoFullName, { archived: true });
+    });
+
+    await fireEvent.click(deleteButton);
+    const deleteDialog = await view.findByRole("dialog", { name: "删除 GitHub 仓库" });
+    const deleteConfirm = within(deleteDialog).getByRole("button", { name: "确认删除" });
+    expect(deleteConfirm).toBeDisabled();
+    await fireEvent.update(within(deleteDialog).getByLabelText("输入完整仓库名以确认"), repoFullName);
+    await fireEvent.click(deleteConfirm);
+    await waitFor(() => {
+      expect(deleteGitHubRepo).toHaveBeenCalledWith(repoFullName);
+    });
+  });
+
   it.each([false, true])("根据 hasDiscussions=%s 更新 Discussions 入口状态", async (hasDiscussions) => {
     vi.mocked(getGitHubRepoManagement).mockResolvedValue({ ...githubSettings, hasDiscussions });
     const view = await renderProjectPanel({
