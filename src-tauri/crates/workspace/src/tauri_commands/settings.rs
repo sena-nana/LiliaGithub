@@ -1,7 +1,7 @@
 use lilia_github_contracts::workspace::*;
 
-delegate_command!(settings; fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings);
-delegate_command!(settings; fn workspace_get_bootstrap(app: AppHandle) -> WorkspaceBootstrap);
+delegate_command!(settings; fn workspace_get_settings(app: AppHandle) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn workspace_get_bootstrap(app: AppHandle) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_create(app: AppHandle, name: String, root_path: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_rename(app: AppHandle, workspace_id: String, name: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_update_recent_context(app: AppHandle, workspace_id: String, context: Option<WorkspaceRecentContextV1>,) -> Result<(), String>);

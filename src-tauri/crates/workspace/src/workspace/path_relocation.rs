@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::Command;
 
-use crate::workspace::repos::{
-    canonical_repo_path, is_git_repo, sanitize_clone_path_segment,
-};
+use crate::workspace::repos::{canonical_repo_path, is_git_repo, sanitize_clone_path_segment};
 use lilia_github_contracts::workspace::{
     WorkspaceRepoGroup, WorkspaceRepoPathMode, WorkspaceSettings,
 };
@@ -21,6 +19,45 @@ pub(super) enum DirectoryRelocation {
         destination: PathBuf,
         created_parent: Option<PathBuf>,
     },
+}
+
+#[derive(Debug)]
+pub(super) struct PreparedDirectoryRelocation {
+    pub(super) source: PathBuf,
+    pub(super) destination: PathBuf,
+    pub(super) mode: WorkspaceRepoPathMode,
+    pub(super) destination_parent_existed: bool,
+}
+
+impl PreparedDirectoryRelocation {
+    pub(super) fn apply(&self) -> Result<DirectoryRelocation, String> {
+        let created_parent = create_parent_directory(&self.destination)?;
+        let result = match self.mode {
+            WorkspaceRepoPathMode::Keep => Err("仓库路径无需迁移".to_string()),
+            WorkspaceRepoPathMode::Move => fs::rename(&self.source, &self.destination)
+                .map_err(|error| format!("移动仓库目录失败：{error}")),
+            WorkspaceRepoPathMode::Link => create_directory_link(&self.source, &self.destination),
+        };
+        if let Err(error) = result {
+            let cleanup_error = remove_created_parent(created_parent.as_deref()).err();
+            return Err(match cleanup_error {
+                Some(cleanup_error) => format!("{error}；清理新建目录失败：{cleanup_error}"),
+                None => error,
+            });
+        }
+        Ok(match self.mode {
+            WorkspaceRepoPathMode::Move => DirectoryRelocation::Move {
+                source: self.source.clone(),
+                destination: self.destination.clone(),
+                created_parent,
+            },
+            WorkspaceRepoPathMode::Link => DirectoryRelocation::Link {
+                destination: self.destination.clone(),
+                created_parent,
+            },
+            WorkspaceRepoPathMode::Keep => unreachable!(),
+        })
+    }
 }
 
 impl DirectoryRelocation {
@@ -56,7 +93,8 @@ pub(super) fn remap_repo_id_in_settings(
     let old_id = old_id.trim();
     let new_id = new_id.trim();
     if old_id.is_empty() || new_id.is_empty() || old_id == new_id {
-        if let (Some(path), Some(binding)) = (new_local_path, settings.repo_bindings.get_mut(old_id))
+        if let (Some(path), Some(binding)) =
+            (new_local_path, settings.repo_bindings.get_mut(old_id))
         {
             binding.local_path = path.to_string();
         }
@@ -141,20 +179,20 @@ pub(super) fn path_already_matches_group(
     canonical_repo_path(current) == canonical_repo_path(&target)
 }
 
-pub(super) fn relocate_directory(
+pub(super) fn prepare_directory_relocation(
     source: &Path,
     destination: &Path,
     mode: WorkspaceRepoPathMode,
-) -> Result<DirectoryRelocation, String> {
-    relocate_directory_with_identity(source, destination, mode, filesystem_identity)
+) -> Result<PreparedDirectoryRelocation, String> {
+    prepare_directory_relocation_with_identity(source, destination, mode, filesystem_identity)
 }
 
-fn relocate_directory_with_identity<F>(
+fn prepare_directory_relocation_with_identity<F>(
     source: &Path,
     destination: &Path,
     mode: WorkspaceRepoPathMode,
     filesystem_identity: F,
-) -> Result<DirectoryRelocation, String>
+) -> Result<PreparedDirectoryRelocation, String>
 where
     F: Fn(&Path) -> Result<String, String>,
 {
@@ -172,36 +210,119 @@ where
     if fs::symlink_metadata(destination).is_ok() {
         return Err(format!("目标位置已存在：{}", destination.display()));
     }
+    ensure_relocation_permissions(&source, destination, mode)?;
     if mode == WorkspaceRepoPathMode::Move {
         ensure_same_filesystem(&source, destination, &filesystem_identity)?;
     }
-    let created_parent = create_parent_directory(destination)?;
-    let result = match mode {
-        WorkspaceRepoPathMode::Keep => Ok(()),
+    Ok(PreparedDirectoryRelocation {
+        source,
+        destination: destination.to_path_buf(),
+        mode,
+        destination_parent_existed: destination.parent().is_some_and(Path::exists),
+    })
+}
+
+pub(super) fn recover_directory_relocation(
+    source: &Path,
+    destination: &Path,
+    mode: WorkspaceRepoPathMode,
+    destination_parent_existed: bool,
+    keep_destination: bool,
+) -> Result<(), String> {
+    let source_exists = fs::symlink_metadata(source).is_ok();
+    let destination_exists = fs::symlink_metadata(destination).is_ok();
+    match mode {
+        WorkspaceRepoPathMode::Keep => Err("仓库路径无需恢复".to_string()),
         WorkspaceRepoPathMode::Move => {
-            fs::rename(&source, destination).map_err(|error| format!("移动仓库目录失败：{error}"))
+            match (source_exists, destination_exists, keep_destination) {
+                (true, false, false) => {
+                    remove_recovery_parent(destination, destination_parent_existed)
+                }
+                (false, true, true) => Ok(()),
+                (true, false, true) => {
+                    ensure_same_filesystem(source, destination, &filesystem_identity)?;
+                    apply_recovery_with_parent(destination, || {
+                        fs::rename(source, destination)
+                            .map_err(|error| format!("继续完成仓库移动失败：{error}"))
+                    })
+                }
+                (false, true, false) => {
+                    fs::rename(destination, source)
+                        .map_err(|error| format!("恢复仓库旧路径失败：{error}"))?;
+                    remove_recovery_parent(destination, destination_parent_existed)
+                }
+                (true, true, _) => Err(format!(
+                    "迁移恢复发现旧路径与新路径同时存在：旧路径 {}；新路径 {}",
+                    source.display(),
+                    destination.display()
+                )),
+                (false, false, _) => Err(format!(
+                    "迁移恢复找不到旧路径和新路径：旧路径 {}；新路径 {}",
+                    source.display(),
+                    destination.display()
+                )),
+            }
         }
-        WorkspaceRepoPathMode::Link => create_directory_link(&source, destination),
-    };
-    if let Err(error) = result {
-        let cleanup_error = remove_created_parent(created_parent.as_deref()).err();
-        return Err(match cleanup_error {
-            Some(cleanup_error) => format!("{error}；清理新建目录失败：{cleanup_error}"),
-            None => error,
+        WorkspaceRepoPathMode::Link => {
+            if !source_exists {
+                return Err(format!("迁移恢复找不到源目录：{}", source.display()));
+            }
+            if keep_destination {
+                if destination_exists {
+                    ensure_directory_link_target(source, destination)
+                } else {
+                    apply_recovery_with_parent(destination, || {
+                        create_directory_link(source, destination)
+                    })
+                }
+            } else if destination_exists {
+                ensure_directory_link_target(source, destination)?;
+                remove_directory_link(destination)?;
+                remove_recovery_parent(destination, destination_parent_existed)
+            } else {
+                remove_recovery_parent(destination, destination_parent_existed)
+            }
+        }
+    }
+}
+
+fn apply_recovery_with_parent(
+    destination: &Path,
+    apply: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let created_parent = create_parent_directory(destination)?;
+    if let Err(error) = apply() {
+        let cleanup = remove_created_parent(created_parent.as_deref());
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) => format!("{error}；清理新建目录失败：{cleanup_error}"),
         });
     }
-    Ok(match mode {
-        WorkspaceRepoPathMode::Move => DirectoryRelocation::Move {
-            source,
-            destination: destination.to_path_buf(),
-            created_parent,
-        },
-        WorkspaceRepoPathMode::Link => DirectoryRelocation::Link {
-            destination: destination.to_path_buf(),
-            created_parent,
-        },
-        WorkspaceRepoPathMode::Keep => unreachable!(),
-    })
+    Ok(())
+}
+
+fn ensure_directory_link_target(source: &Path, destination: &Path) -> Result<(), String> {
+    let source = canonical_repo_path(source);
+    let destination_target = dunce::canonicalize(destination)
+        .map(|path| canonical_repo_path(&path))
+        .map_err(|error| format!("读取目录链接目标失败：{error}"))?;
+    if destination_target == source {
+        return Ok(());
+    }
+    Err(format!(
+        "迁移恢复拒绝修改指向其它位置的目录链接：{}",
+        destination.display()
+    ))
+}
+
+fn remove_recovery_parent(
+    destination: &Path,
+    destination_parent_existed: bool,
+) -> Result<(), String> {
+    if destination_parent_existed {
+        return Ok(());
+    }
+    remove_created_parent(destination.parent())
 }
 
 fn create_parent_directory(destination: &Path) -> Result<Option<PathBuf>, String> {
@@ -260,6 +381,31 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
         current = candidate.parent();
     }
     None
+}
+
+fn ensure_relocation_permissions(
+    source: &Path,
+    destination: &Path,
+    mode: WorkspaceRepoPathMode,
+) -> Result<(), String> {
+    let source_parent = source
+        .parent()
+        .ok_or_else(|| format!("无法确定源目录父路径：{}", source.display()))?;
+    let destination_parent = destination
+        .parent()
+        .and_then(nearest_existing_ancestor)
+        .ok_or_else(|| format!("无法确定目标目录父路径：{}", destination.display()))?;
+    let mut paths = vec![destination_parent.as_path()];
+    if mode == WorkspaceRepoPathMode::Move {
+        paths.push(source_parent);
+    }
+    for path in paths {
+        let metadata = fs::metadata(path).map_err(|error| format!("读取目录权限失败：{error}"))?;
+        if metadata.permissions().readonly() {
+            return Err(format!("目录没有迁移写入权限：{}", path.display()));
+        }
+    }
+    Ok(())
 }
 
 fn ensure_same_filesystem<F>(
@@ -447,8 +593,14 @@ mod tests {
             "local:root/前端/demo",
             Some("/workspace/前端/demo"),
         );
-        assert_eq!(settings.managed_repo_ids, vec!["local:root/前端/demo".to_string()]);
-        assert_eq!(settings.favorite_repo_ids, vec!["local:root/前端/demo".to_string()]);
+        assert_eq!(
+            settings.managed_repo_ids,
+            vec!["local:root/前端/demo".to_string()]
+        );
+        assert_eq!(
+            settings.favorite_repo_ids,
+            vec!["local:root/前端/demo".to_string()]
+        );
         assert_eq!(
             settings.repo_groups[0].repo_ids,
             vec!["local:root/前端/demo".to_string()]
@@ -462,13 +614,13 @@ mod tests {
         let link = root.join("alias");
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("marker.txt"), "ok").unwrap();
-        relocate_directory(&source, &link, WorkspaceRepoPathMode::Link).unwrap();
+        prepare_directory_relocation(&source, &link, WorkspaceRepoPathMode::Link)
+            .unwrap()
+            .apply()
+            .unwrap();
         assert!(link.exists());
         assert!(source.exists());
-        assert_eq!(
-            fs::read_to_string(link.join("marker.txt")).unwrap(),
-            "ok"
-        );
+        assert_eq!(fs::read_to_string(link.join("marker.txt")).unwrap(), "ok");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -480,7 +632,7 @@ mod tests {
         let destination_parent = root.join("group");
         let destination = destination_parent.join("repo");
 
-        let error = relocate_directory_with_identity(
+        let error = prepare_directory_relocation_with_identity(
             &source,
             &destination,
             WorkspaceRepoPathMode::Move,
