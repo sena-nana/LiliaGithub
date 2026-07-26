@@ -10,6 +10,7 @@ use crate::workspace::bulk::repo_dirty_count;
 use crate::workspace::github::{
     github_auth_header, normalize_github_repo_input, normalize_optional_string, token_for_binding,
 };
+use crate::workspace::launch::launch_resource_id;
 use crate::workspace::operations::{
     run_operation, run_operation_with_completion, OperationKind, OperationSpec,
     OperationTaskCompletion, VisibleOperation,
@@ -90,6 +91,31 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     run_repo_blocking_as(app, repo_id, kind, Some(visible_kind), label, task).await
+}
+
+pub(super) async fn run_repo_visible_write_blocking_with_launch<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    visible_kind: &'static str,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (spec, common_dir, access) = repo_operation_setup(
+        &app,
+        &repo_id,
+        OperationKind::LocalWrite,
+        Some(visible_kind),
+        label,
+    )?;
+    let spec = spec.resource(
+        launch_resource_id(&repo_id),
+        ResourceAccessMode::ExclusiveWrite,
+    );
+    run_operation(app, spec, move || with_repo_guard(common_dir, access, task)).await
 }
 
 async fn run_repo_blocking_as<T, F>(

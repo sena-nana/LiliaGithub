@@ -10,6 +10,43 @@ use lilia_github_contracts::workspace::{
     WorkspaceRepoGroup, WorkspaceRepoPathMode, WorkspaceSettings,
 };
 
+#[derive(Debug)]
+pub(super) enum DirectoryRelocation {
+    Move {
+        source: PathBuf,
+        destination: PathBuf,
+        created_parent: Option<PathBuf>,
+    },
+    Link {
+        destination: PathBuf,
+        created_parent: Option<PathBuf>,
+    },
+}
+
+impl DirectoryRelocation {
+    pub(super) fn rollback(&self) -> Result<(), String> {
+        let created_parent = match self {
+            Self::Move {
+                source,
+                destination,
+                created_parent,
+            } => {
+                fs::rename(destination, source)
+                    .map_err(|error| format!("将仓库移回旧路径失败：{error}"))?;
+                created_parent
+            }
+            Self::Link {
+                destination,
+                created_parent,
+            } => {
+                remove_directory_link(destination)?;
+                created_parent
+            }
+        };
+        remove_created_parent(created_parent.as_deref())
+    }
+}
+
 pub(super) fn remap_repo_id_in_settings(
     settings: &mut WorkspaceSettings,
     old_id: &str,
@@ -108,9 +145,21 @@ pub(super) fn relocate_directory(
     source: &Path,
     destination: &Path,
     mode: WorkspaceRepoPathMode,
-) -> Result<(), String> {
+) -> Result<DirectoryRelocation, String> {
+    relocate_directory_with_identity(source, destination, mode, filesystem_identity)
+}
+
+fn relocate_directory_with_identity<F>(
+    source: &Path,
+    destination: &Path,
+    mode: WorkspaceRepoPathMode,
+    filesystem_identity: F,
+) -> Result<DirectoryRelocation, String>
+where
+    F: Fn(&Path) -> Result<String, String>,
+{
     if mode == WorkspaceRepoPathMode::Keep {
-        return Ok(());
+        return Err("仓库路径无需迁移".to_string());
     }
     let source = if source.exists() {
         canonical_repo_path(source)
@@ -120,22 +169,181 @@ pub(super) fn relocate_directory(
     if !source.exists() {
         return Err(format!("源目录不存在：{}", source.display()));
     }
-    if destination.exists() {
-        if canonical_repo_path(destination) == canonical_repo_path(&source) {
-            return Ok(());
-        }
+    if fs::symlink_metadata(destination).is_ok() {
         return Err(format!("目标位置已存在：{}", destination.display()));
     }
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建目标目录失败：{error}"))?;
+    if mode == WorkspaceRepoPathMode::Move {
+        ensure_same_filesystem(&source, destination, &filesystem_identity)?;
     }
-    match mode {
+    let created_parent = create_parent_directory(destination)?;
+    let result = match mode {
         WorkspaceRepoPathMode::Keep => Ok(()),
         WorkspaceRepoPathMode::Move => {
             fs::rename(&source, destination).map_err(|error| format!("移动仓库目录失败：{error}"))
         }
         WorkspaceRepoPathMode::Link => create_directory_link(&source, destination),
+    };
+    if let Err(error) = result {
+        let cleanup_error = remove_created_parent(created_parent.as_deref()).err();
+        return Err(match cleanup_error {
+            Some(cleanup_error) => format!("{error}；清理新建目录失败：{cleanup_error}"),
+            None => error,
+        });
     }
+    Ok(match mode {
+        WorkspaceRepoPathMode::Move => DirectoryRelocation::Move {
+            source,
+            destination: destination.to_path_buf(),
+            created_parent,
+        },
+        WorkspaceRepoPathMode::Link => DirectoryRelocation::Link {
+            destination: destination.to_path_buf(),
+            created_parent,
+        },
+        WorkspaceRepoPathMode::Keep => unreachable!(),
+    })
+}
+
+fn create_parent_directory(destination: &Path) -> Result<Option<PathBuf>, String> {
+    let Some(parent) = destination.parent() else {
+        return Ok(None);
+    };
+    if parent.exists() {
+        return Ok(None);
+    }
+    match fs::create_dir(parent) {
+        Ok(()) => Ok(Some(parent.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(format!("创建目标目录失败：{error}")),
+    }
+}
+
+fn remove_created_parent(path: Option<&Path>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(unix)]
+fn remove_directory_link(path: &Path) -> Result<(), String> {
+    fs::remove_file(path).map_err(|error| format!("删除新建目录链接失败：{error}"))
+}
+
+#[cfg(windows)]
+fn remove_directory_link(path: &Path) -> Result<(), String> {
+    fs::remove_dir(path).map_err(|error| format!("删除新建目录链接失败：{error}"))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn remove_directory_link(path: &Path) -> Result<(), String> {
+    fs::remove_file(path).map_err(|error| format!("删除新建目录链接失败：{error}"))
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if candidate.exists() {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn ensure_same_filesystem<F>(
+    source: &Path,
+    destination: &Path,
+    filesystem_identity: &F,
+) -> Result<(), String>
+where
+    F: Fn(&Path) -> Result<String, String>,
+{
+    let destination_anchor = destination
+        .parent()
+        .and_then(nearest_existing_ancestor)
+        .ok_or_else(|| format!("无法确定目标路径所在卷：{}", destination.display()))?;
+    if filesystem_identity(source)? == filesystem_identity(&destination_anchor)? {
+        return Ok(());
+    }
+    Err(format!(
+        "不支持跨卷移动仓库：旧路径 {}；新路径 {}",
+        source.display(),
+        destination.display()
+    ))
+}
+
+#[cfg(windows)]
+fn filesystem_identity(path: &Path) -> Result<String, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
+    };
+
+    let canonical =
+        dunce::canonicalize(path).map_err(|error| format!("读取路径所在卷失败：{error}"))?;
+    let path_wide = canonical
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut volume_path = vec![0_u16; 32_768];
+    let volume_path_ok = unsafe {
+        GetVolumePathNameW(
+            path_wide.as_ptr(),
+            volume_path.as_mut_ptr(),
+            volume_path.len() as u32,
+        )
+    };
+    if volume_path_ok == 0 {
+        return Err(format!("读取路径所在卷失败：{}", path.display()));
+    }
+    let mut volume_name = vec![0_u16; 32_768];
+    let volume_name_ok = unsafe {
+        GetVolumeNameForVolumeMountPointW(
+            volume_path.as_ptr(),
+            volume_name.as_mut_ptr(),
+            volume_name.len() as u32,
+        )
+    };
+    let value = if volume_name_ok == 0 {
+        &volume_path
+    } else {
+        &volume_name
+    };
+    let length = value
+        .iter()
+        .position(|item| *item == 0)
+        .unwrap_or(value.len());
+    Ok(String::from_utf16_lossy(&value[..length]).to_ascii_lowercase())
+}
+
+#[cfg(unix)]
+fn filesystem_identity(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path)
+        .map(|metadata| metadata.dev().to_string())
+        .map_err(|error| format!("读取路径所在文件系统失败：{error}"))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn filesystem_identity(path: &Path) -> Result<String, String> {
+    Ok(path
+        .components()
+        .next()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or_default())
 }
 
 fn create_directory_link(target: &Path, link_path: &Path) -> Result<(), String> {
@@ -261,6 +469,35 @@ mod tests {
             fs::read_to_string(link.join("marker.txt")).unwrap(),
             "ok"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cross_volume_move_is_rejected_before_creating_destination_parent() {
+        let root = temp_dir("cross-volume");
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        let destination_parent = root.join("group");
+        let destination = destination_parent.join("repo");
+
+        let error = relocate_directory_with_identity(
+            &source,
+            &destination,
+            WorkspaceRepoPathMode::Move,
+            |path| {
+                Ok(if path.file_name().is_some_and(|name| name == "source") {
+                    "source-volume"
+                } else {
+                    "destination-volume"
+                }
+                .to_string())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("跨卷"));
+        assert!(source.exists());
+        assert!(!destination_parent.exists());
         let _ = fs::remove_dir_all(&root);
     }
 }

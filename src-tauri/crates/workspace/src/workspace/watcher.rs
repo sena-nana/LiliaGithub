@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -144,12 +144,47 @@ fn watcher_manager() -> &'static Mutex<RepoWatcherManager> {
     MANAGER.get_or_init(|| Mutex::new(RepoWatcherManager::default()))
 }
 
+fn watcher_sync_gate() -> &'static Mutex<()> {
+    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(()))
+}
+
 pub(super) fn sync_repo_watchers(app: &AppHandle) {
+    let _gate = watcher_sync_gate()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    sync_repo_watchers_locked(app, None);
+}
+
+pub(super) struct SuspendedRepoWatcher {
+    app: AppHandle,
+    _gate: MutexGuard<'static, ()>,
+}
+
+impl Drop for SuspendedRepoWatcher {
+    fn drop(&mut self) {
+        sync_repo_watchers_locked(&self.app, None);
+    }
+}
+
+pub(super) fn suspend_repo_watcher(app: &AppHandle, repo_id: &str) -> SuspendedRepoWatcher {
+    let gate = watcher_sync_gate()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    sync_repo_watchers_locked(app, Some(repo_id));
+    SuspendedRepoWatcher {
+        app: app.clone(),
+        _gate: gate,
+    }
+}
+
+fn sync_repo_watchers_locked(app: &AppHandle, excluded_repo_id: Option<&str>) {
     let settings = load_settings(app);
     let repos = settings
         .managed_repo_ids
         .iter()
         .filter(|id| !settings.hidden_repo_ids.contains(id))
+        .filter(|id| excluded_repo_id != Some(id.as_str()))
         .filter_map(|id| {
             let path = repo_path_by_id(app, &id).ok()?;
             let root = id
@@ -161,7 +196,7 @@ pub(super) fn sync_repo_watchers(app: &AppHandle) {
         })
         .collect::<Vec<_>>();
     if repos.is_empty() {
-        clear_repo_watchers();
+        clear_repo_watchers_locked();
         return;
     }
     let watch_roots = watch_roots(&repos).into_iter().collect::<HashSet<_>>();
@@ -231,6 +266,13 @@ pub(super) fn sync_repo_watchers(app: &AppHandle) {
 }
 
 pub(super) fn clear_repo_watchers() {
+    let _gate = watcher_sync_gate()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_repo_watchers_locked();
+}
+
+fn clear_repo_watchers_locked() {
     let mut manager = watcher_manager()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -240,6 +282,25 @@ pub(super) fn clear_repo_watchers() {
         .index
         .write()
         .unwrap_or_else(|error| error.into_inner()) = WatchIndex::default();
+}
+
+#[cfg(test)]
+pub(super) fn repo_watch_snapshot_for_tests() -> Vec<(String, PathBuf)> {
+    let _gate = watcher_sync_gate()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let manager = watcher_manager()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let index = manager
+        .index
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    index
+        .repos
+        .iter()
+        .map(|repo| (repo.repo_id.clone(), repo.worktree_path.clone()))
+        .collect()
 }
 
 fn repo_watch_spec(root: &Path, path: PathBuf) -> RepoWatchSpec {

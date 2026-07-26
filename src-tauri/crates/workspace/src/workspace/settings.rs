@@ -10,13 +10,15 @@ use crate::workspace::github::{
     remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
 };
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
-use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAccess};
+use crate::workspace::repo_guard::{
+    canonical_repo_guard_key, repo_resource_id, with_repo_guard, with_repo_guards, RepoAccess,
+};
 #[cfg(test)]
 use crate::workspace::repos::managed_repo_paths;
 use crate::workspace::repos::{
     canonical_repo_path, git_command, git_command_lossy, git_common_dir, is_git_repo, repo_id,
-    resolve_remote_sync_config, resolve_repo_worktree, run_repo_visible_blocking, summarize_repo,
-    ResolvedRepoWorktree,
+    resolve_remote_sync_config, resolve_repo_worktree, run_repo_visible_blocking,
+    run_repo_visible_write_blocking_with_launch, summarize_repo, ResolvedRepoWorktree,
 };
 use crate::workspace::shared::{
     compatible_path_text, contribution_identity_key, contribution_identity_matches,
@@ -2527,15 +2529,35 @@ pub fn workspace_delete_repo_group(
     Ok(visible_workspace_settings(settings))
 }
 
-pub fn workspace_move_repo_to_group(
+pub async fn workspace_move_repo_to_group(
+    app: AppHandle,
+    repo_id: String,
+    group_id: Option<String>,
+    path_mode: Option<WorkspaceRepoPathMode>,
+) -> Result<WorkspaceRepoRelocationResult, String> {
+    let operation_repo_id = repo_id.trim().to_string();
+    if operation_repo_id.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    run_repo_visible_write_blocking_with_launch(
+        app.clone(),
+        operation_repo_id,
+        "workspace",
+        "迁移仓库路径",
+        move || workspace_move_repo_to_group_guarded(app, repo_id, group_id, path_mode),
+    )
+    .await
+}
+
+fn workspace_move_repo_to_group_guarded(
     app: AppHandle,
     repo_id: String,
     group_id: Option<String>,
     path_mode: Option<WorkspaceRepoPathMode>,
 ) -> Result<WorkspaceRepoRelocationResult, String> {
     let normalized = repo_id.trim();
-    if normalized.is_empty() {
-        return Err("仓库 ID 不能为空".to_string());
+    if crate::workspace::launch::has_running_launch_for_repo(normalized) {
+        return Err("该仓库有正在运行的启动任务，请先停止后再迁移".to_string());
     }
     let (root, current_path) = repo_root_and_path_by_id(&app, normalized)?;
     let path_mode = path_mode.unwrap_or_default();
@@ -2565,32 +2587,95 @@ pub fn workspace_move_repo_to_group(
         path_mode
     };
 
-    let mut active_repo_id = normalized.to_string();
+    let active_repo_id = normalized.to_string();
     let mut active_path = current_path.clone();
-    let mut path_changed = false;
-
-    if effective_mode != WorkspaceRepoPathMode::Keep {
-        let destination = target_path_for_group(&root, &current_path, target_group.as_ref())?;
-        relocate_directory(&current_path, &destination, effective_mode)?;
-        path_changed = true;
-        if effective_mode == WorkspaceRepoPathMode::Move {
-            active_path = ensure_git_repo_path(&destination)?;
-            let new_id = crate::workspace::repos::repo_id(&root, &active_path);
-            let new_path_text = compatible_path_text(&active_path);
-            remap_repo_id_in_settings(&mut settings, &active_repo_id, &new_id, Some(&new_path_text));
-            active_repo_id = new_id;
-        }
+    if effective_mode == WorkspaceRepoPathMode::Keep {
+        move_repo_to_group(&mut settings, &active_repo_id, requested_group_id)?;
+        save_settings(&app, &settings)?;
+        return Ok(WorkspaceRepoRelocationResult {
+            settings: visible_workspace_settings(settings),
+            previous_repo_id: normalized.to_string(),
+            repo: summarize_repo(&root, &active_path),
+            path_changed: false,
+            path_mode: effective_mode,
+        });
     }
 
+    let old_settings = settings.clone();
+    let old_common_dir =
+        git_common_dir(&current_path).unwrap_or_else(|| current_path.clone());
     move_repo_to_group(&mut settings, &active_repo_id, requested_group_id)?;
-    save_settings(&app, &settings)?;
-    Ok(WorkspaceRepoRelocationResult {
-        settings: visible_workspace_settings(settings),
-        previous_repo_id: normalized.to_string(),
-        repo: summarize_repo(&root, &active_path),
-        path_changed,
-        path_mode: effective_mode,
-    })
+    let destination = target_path_for_group(&root, &current_path, target_group.as_ref())?;
+    let watcher = crate::workspace::watcher::suspend_repo_watcher(&app, normalized);
+    let relocation = relocate_directory(&current_path, &destination, effective_mode)?;
+    if effective_mode == WorkspaceRepoPathMode::Move {
+        active_path = canonical_repo_path(&destination);
+        let new_id = crate::workspace::repos::repo_id(&root, &active_path);
+        let new_path_text = compatible_path_text(&active_path);
+        remap_repo_id_in_settings(&mut settings, &active_repo_id, &new_id, Some(&new_path_text));
+    }
+
+    let repo = summarize_repo(&root, &active_path);
+    let new_common_dir =
+        git_common_dir(&active_path).unwrap_or_else(|| active_path.clone());
+    let finish = move || {
+        if let Err(error) = save_settings(&app, &settings) {
+            let rollback = relocation.rollback();
+            let settings_restore = save_settings(&app, &old_settings);
+            return Err(relocation_rollback_error(
+                format!("保存工作区设置失败：{error}"),
+                rollback,
+                settings_restore,
+                &current_path,
+                &destination,
+            ));
+        }
+        let _ = remove_startup_cache_repo(&app, normalized);
+        drop(watcher);
+        Ok(WorkspaceRepoRelocationResult {
+            settings: visible_workspace_settings(settings),
+            previous_repo_id: normalized.to_string(),
+            repo,
+            path_changed: true,
+            path_mode: effective_mode,
+        })
+    };
+    if canonical_repo_guard_key(&old_common_dir) == canonical_repo_guard_key(&new_common_dir) {
+        finish()
+    } else {
+        with_repo_guard(new_common_dir, RepoAccess::Write, finish)
+    }
+}
+
+fn relocation_rollback_error(
+    error: String,
+    filesystem_rollback: Result<(), String>,
+    settings_restore: Result<(), String>,
+    old_path: &Path,
+    new_path: &Path,
+) -> String {
+    let filesystem_error = filesystem_rollback.err();
+    let settings_error = settings_restore.err();
+    if filesystem_error.is_none() && settings_error.is_none() {
+        return format!(
+            "{error}；迁移已回滚（旧路径：{}；新路径：{}）",
+            old_path.display(),
+            new_path.display()
+        );
+    }
+    let mut failures = Vec::new();
+    if let Some(error) = filesystem_error {
+        failures.push(format!("文件系统回滚失败：{error}"));
+    }
+    if let Some(error) = settings_error {
+        failures.push(format!("旧设置恢复失败：{error}"));
+    }
+    format!(
+        "{error}；迁移补偿不完整（旧路径：{}；新路径：{}；{}）",
+        old_path.display(),
+        new_path.display(),
+        failures.join("；")
+    )
 }
 
 pub fn workspace_relocate_local_repo(
@@ -2838,11 +2923,13 @@ mod account_profile_storage_tests {
         SortDirection,
     };
     use serde_json::Value;
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::sync::Arc;
 
     #[derive(Default)]
     struct MemoryRuntime {
         values: Mutex<HashMap<(String, String), Value>>,
+        fail_next_save: AtomicBool,
     }
 
     impl MemoryRuntime {
@@ -2859,6 +2946,10 @@ mod account_profile_storage_tests {
                 .unwrap()
                 .get(&(file.to_string(), key.to_string()))
                 .cloned()
+        }
+
+        fn fail_next_save(&self) {
+            self.fail_next_save.store(true, AtomicOrdering::SeqCst);
         }
     }
 
@@ -2881,6 +2972,9 @@ mod account_profile_storage_tests {
         }
 
         fn store_save(&self, _file: &str) -> Result<(), String> {
+            if self.fail_next_save.swap(false, AtomicOrdering::SeqCst) {
+                return Err("injected settings save failure".to_string());
+            }
             Ok(())
         }
 
@@ -2920,6 +3014,208 @@ mod account_profile_storage_tests {
             version: 1,
             route: route.to_string(),
         }
+    }
+
+    fn relocation_fixture(
+        label: &str,
+    ) -> (
+        Arc<MemoryRuntime>,
+        AppHandle,
+        PathBuf,
+        PathBuf,
+        String,
+        String,
+    ) {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime.clone());
+        let root = std::env::temp_dir().join(format!(
+            "lilia-relocation-{label}-{}",
+            now_millis()
+        ));
+        let source = root.join("repo");
+        fs::create_dir_all(&source).unwrap();
+        assert!(std::process::Command::new("git")
+            .arg("init")
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success());
+        workspace_create(
+            app.clone(),
+            "Relocation".to_string(),
+            root.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        let repo_id = crate::workspace::repos::repo_id(&root, &source);
+        let group_id = "relocation-group".to_string();
+        let mut settings = load_settings(&app);
+        settings.managed_repo_ids.push(repo_id.clone());
+        settings.repo_groups.push(WorkspaceRepoGroup {
+            id: group_id.clone(),
+            name: "group".to_string(),
+            organization_login: None,
+            repo_ids: Vec::new(),
+        });
+        save_settings(&app, &settings).unwrap();
+        (runtime, app, root, source, repo_id, group_id)
+    }
+
+    fn relocation_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn move_settings_save_failure_restores_filesystem_and_settings() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("move-save-failure");
+        fs::write(source.join("marker.txt"), "old").unwrap();
+        crate::workspace::watcher::clear_repo_watchers();
+        crate::workspace::watcher::sync_repo_watchers(&app);
+        runtime.fail_next_save();
+
+        let error = workspace_move_repo_to_group_guarded(
+            app.clone(),
+            repo_id.clone(),
+            Some(group_id.clone()),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap_err();
+
+        let destination = root.join("group").join("repo");
+        assert!(error.contains("保存工作区设置失败"));
+        assert!(error.contains("迁移已回滚"));
+        assert_eq!(fs::read_to_string(source.join("marker.txt")).unwrap(), "old");
+        assert!(!destination.exists());
+        assert!(!root.join("group").exists());
+        let restored = load_settings(&app);
+        assert!(restored.managed_repo_ids.contains(&repo_id));
+        assert!(restored
+            .repo_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .unwrap()
+            .repo_ids
+            .is_empty());
+        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests();
+        assert!(snapshot
+            .iter()
+            .any(|(id, path)| id == &repo_id && path == &canonical_repo_path(&source)));
+        crate::workspace::watcher::clear_repo_watchers();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn link_settings_save_failure_removes_alias_without_touching_source() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("link-save-failure");
+        fs::write(source.join("marker.txt"), "old").unwrap();
+        runtime.fail_next_save();
+
+        let error = workspace_move_repo_to_group_guarded(
+            app.clone(),
+            repo_id,
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Link),
+        )
+        .unwrap_err();
+
+        let destination = root.join("group").join("repo");
+        assert!(error.contains("保存工作区设置失败"));
+        assert!(fs::symlink_metadata(&destination).is_err());
+        assert!(!root.join("group").exists());
+        assert_eq!(fs::read_to_string(source.join("marker.txt")).unwrap(), "old");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn active_launch_rejects_move_before_filesystem_changes() {
+        let _test_guard = relocation_test_guard();
+        let (_runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("active-launch");
+        let launch_key = format!("relocation-{repo_id}");
+        crate::workspace::launch::launch_runtime()
+            .lock()
+            .unwrap()
+            .insert(
+                launch_key.clone(),
+                crate::workspace::launch::LaunchEntry {
+                    status: ProjectLaunchStatus {
+                        workspace_id: None,
+                        context_revision: current_context_revision(),
+                        repo_id: repo_id.clone(),
+                        state: "running".to_string(),
+                        pid: None,
+                        command: None,
+                        started_at: None,
+                        exit_code: None,
+                        error: None,
+                    },
+                },
+            );
+
+        let error = workspace_move_repo_to_group_guarded(
+            app,
+            repo_id,
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("启动任务"));
+        assert!(source.exists());
+        assert!(!root.join("group").exists());
+        crate::workspace::launch::launch_runtime()
+            .lock()
+            .unwrap()
+            .remove(&launch_key);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_success_rebinds_watcher_to_new_repo_id_and_path() {
+        let _test_guard = relocation_test_guard();
+        let (_runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("watcher-rebind");
+        let mut cache = startup_cache_shell(&load_settings(&app));
+        cache.repos_by_id.insert(
+            repo_id.clone(),
+            CachedRepoSummary {
+                summary: summarize_repo(&root, &source),
+                cached_at: now_millis(),
+                remote_checked_at: None,
+            },
+        );
+        save_startup_cache(&app, &cache).unwrap();
+        crate::workspace::watcher::clear_repo_watchers();
+        crate::workspace::watcher::sync_repo_watchers(&app);
+        assert!(crate::workspace::watcher::repo_watch_snapshot_for_tests()
+            .iter()
+            .any(|(id, path)| id == &repo_id && path == &canonical_repo_path(&source)));
+
+        let result = workspace_move_repo_to_group_guarded(
+            app.clone(),
+            repo_id.clone(),
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap();
+
+        let destination = canonical_repo_path(&root.join("group").join("repo"));
+        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests();
+        assert!(snapshot
+            .iter()
+            .any(|(id, path)| id == &result.repo.id && path == &destination));
+        assert!(!snapshot
+            .iter()
+            .any(|(id, path)| id == &repo_id || path == &canonical_repo_path(&source)));
+        assert!(load_startup_cache(&app).is_none());
+        crate::workspace::watcher::clear_repo_watchers();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
