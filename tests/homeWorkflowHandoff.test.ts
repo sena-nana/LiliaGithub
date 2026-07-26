@@ -193,7 +193,7 @@ describe("Home workflow failure handoff", () => {
 
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
     await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(1));
-    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only");
+    expect(handoffFeedback(container, "alert")).toHaveTextContent("协议不兼容，更新后重试");
 
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
     await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(2));
@@ -207,6 +207,41 @@ describe("Home workflow failure handoff", () => {
     ).not.toBeNull());
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.open-result`));
     expect(handoffMocks.open).toHaveBeenCalledWith(firstDraft.id);
+  });
+
+  it("keeps a failed handoff visible and retryable", async () => {
+    handoffMocks.create.mockImplementation(async (handoff) => ({
+      ...pendingStatus(handoff.id),
+      status: "failed",
+      error: "LiliaCode failed to save the task",
+    }));
+    const { container } = await renderHome();
+    await screen.findByText("Actions 失败");
+
+    await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
+    await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(1));
+
+    expect(handoffFeedback(container, "alert")).toHaveTextContent("交接失败，草稿已保留");
+    expect(agentButton(container, `${workflowAgentId}.handoff.create`)).toBeEnabled();
+    expect(agentButton(container, `${workflowAgentId}.handoff.create`)).toHaveAccessibleName("重试交接");
+  });
+
+  it("keeps an accepted handoff visible without offering an unavailable result action", async () => {
+    handoffMocks.create.mockImplementation(async (handoff) => ({
+      ...acceptedStatus(handoff.id),
+      resultRoute: null,
+    }));
+    const { container } = await renderHome();
+    await screen.findByText("Actions 失败");
+
+    await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
+    await waitFor(() => expect(handoffMocks.create).toHaveBeenCalledTimes(1));
+
+    expect(handoffFeedback(container, "status")).toHaveTextContent("LiliaCode 已接收");
+    expect(container.querySelector(
+      `[data-agent-id="${workflowAgentId}.handoff.create"], `
+      + `[data-agent-id="${workflowAgentId}.handoff.open-result"]`,
+    )).toBeNull();
   });
 
   it("keeps successful diagnostics when one failed job log is unavailable", async () => {
@@ -239,6 +274,7 @@ describe("Home workflow failure handoff", () => {
     await waitFor(() => expect(handoffMocks.wait).toHaveBeenCalledTimes(1));
     expect(handoffMocks.create).toHaveBeenCalledTimes(1);
     const handoffId = handoffMocks.create.mock.calls[0]?.[0].id;
+    await waitFor(() => expect(handoffFeedback(container, "status")).toHaveTextContent("等待 LiliaCode 接收"));
 
     await fireEvent.click(agentButton(container, `${workflowAgentId}.handoff.create`));
     await waitFor(() => expect(handoffMocks.wait).toHaveBeenCalledTimes(2));
@@ -258,7 +294,7 @@ describe("Home workflow failure handoff", () => {
     await waitFor(() => expect(
       container.querySelector(`[data-agent-id="${workflowAgentId}.handoff.error"]`),
     ).not.toBeNull());
-    expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only");
+    expect(handoffFeedback(container, "alert")).toHaveTextContent("交接未完成，可重试");
     expect(agentButton(container, `${workflowAgentId}.handoff.create`)).toBeEnabled();
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute("href", failureRoute);
 
@@ -276,7 +312,7 @@ describe("Home workflow failure handoff", () => {
 
     await waitFor(() => expect(workflowMocks.detail).toHaveBeenCalledOnce());
     expect(handoffMocks.create).not.toHaveBeenCalled();
-    await waitFor(() => expect(agentElement(container, `${workflowAgentId}.handoff.error`)).toHaveClass("sr-only"));
+    await waitFor(() => expect(handoffFeedback(container, "alert")).toHaveTextContent("交接未完成，可重试"));
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute("href", failureRoute);
   });
 
@@ -287,16 +323,13 @@ describe("Home workflow failure handoff", () => {
 
     const row = agentElement(container, workflowAgentId);
     expect(within(row).getByText("CI failed")).toBeVisible();
-    expect(within(row).getByText(repoFullName)).toBeVisible();
     expect(within(row).queryByText("missing-branch 的运行结果为 Actions 失败")).not.toBeInTheDocument();
 
-    const unavailableReason = "请先在本地检出 missing-branch 分支";
+    const unavailableReason = "missing-branch 分支未在本地检出";
     const handoffButton = within(row).getByRole("button", { name: unavailableReason });
     expect(handoffButton).toBeDisabled();
-    expect(handoffButton).toHaveAttribute("title", unavailableReason);
 
-    const status = agentElement(container, `${workflowAgentId}.handoff.status`);
-    expect(status).toHaveClass("sr-only");
+    expect(handoffFeedback(container, "status")).toHaveTextContent(unavailableReason);
     expect(agentElement(container, `${workflowAgentId}.open`)).toHaveAttribute(
       "href",
       `/repos/${mainRepoId}?projectTab=actions&run=${runId}`,
@@ -328,6 +361,13 @@ function agentButton(container: HTMLElement, agentId: string) {
   const button = agentElement(container, agentId);
   if (!(button instanceof HTMLButtonElement)) throw new Error(`Agent 元素不是按钮：${agentId}`);
   return button;
+}
+
+function handoffFeedback(container: HTMLElement, role: "status" | "alert") {
+  const feedback = within(agentElement(container, workflowAgentId)).getByRole(role);
+  expect(feedback).not.toHaveClass("sr-only");
+  expect(feedback).toBeVisible();
+  return feedback;
 }
 
 function workflowRun(overrides: Partial<GitHubWorkflowRun> = {}): GitHubWorkflowRun {

@@ -301,13 +301,11 @@ type HomePendingSection = {
 type HomePendingWorkflowHandoff = {
   worktree: RepoSummary | null;
   sourceRoute: string;
-  unavailableReason: string | null;
-  accepted: boolean;
-  expanded: boolean;
+  action: "handoff" | "open" | null;
   busy: boolean;
-  error: string | null;
   buttonLabel: string;
   statusText: string | null;
+  statusRole: "status" | "alert";
 };
 
 type HomeOverviewSettingsSnapshot = Pick<WorkspaceSettings, "repoSyncPreferences"> | null;
@@ -1574,7 +1572,7 @@ function homePendingWorkflowHandoff(
   const unavailableReason = !branch
     ? "该运行没有可用分支，无法交接"
     : !worktree
-      ? `请先在本地检出 ${branch} 分支`
+      ? `${branch} 分支未在本地检出`
       : null;
   const session = worktree ? workflowFailureHandoff.getSession(item.id) : null;
   return {
@@ -1582,7 +1580,6 @@ function homePendingWorkflowHandoff(
     sourceRoute: link.kind === "route"
       ? link.to
       : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.run.id),
-    unavailableReason,
     ...homePendingHandoffPresentation(session, unavailableReason),
   };
 }
@@ -1592,14 +1589,16 @@ function homePendingHandoffPresentation(
   unavailableReason: string | null,
 ) {
   const status = session?.status?.status;
-  const accepted = status === "accepted" && Boolean(session?.status?.resultRoute);
+  const accepted = status === "accepted";
+  const action: HomePendingWorkflowHandoff["action"] = accepted
+    ? (session?.status?.resultRoute ? "open" : null)
+    : "handoff";
   const busy = Boolean(session?.busy);
-  const expanded = Boolean(session && (session.busy || session.draft || session.status || session.error));
   let buttonLabel = "交给 LiliaCode";
   if (session?.busy === "diagnostics") buttonLabel = "正在准备";
   else if (session?.busy === "handoff") buttonLabel = "正在交接";
   else if (session?.busy === "open") buttonLabel = "正在打开";
-  else if (accepted) buttonLabel = "查看任务";
+  else if (action === "open") buttonLabel = "查看任务";
   else if (status === "pending") buttonLabel = "继续等待";
   else if (session?.draft || session?.error) buttonLabel = "重试交接";
 
@@ -1607,13 +1606,20 @@ function homePendingHandoffPresentation(
   if (!statusText && session?.busy === "diagnostics") statusText = "正在读取失败日志";
   else if (!statusText && session?.busy === "handoff") statusText = "正在等待 LiliaCode";
   else if (!statusText && session?.busy === "open") statusText = "正在打开任务";
-  else if (!statusText && status === "pending") statusText = "任务已保存";
-  else if (!statusText && status === "incompatible") statusText = "任务草稿已保留，可更新后重试";
-  else if (!statusText && status === "failed") statusText = "任务草稿已保留，可重试";
+  else if (!statusText && status === "pending") statusText = "等待 LiliaCode 接收";
+  else if (!statusText && status === "incompatible") statusText = "协议不兼容，更新后重试";
+  else if (!statusText && status === "failed") statusText = "交接失败，草稿已保留";
   else if (!statusText && session?.error) {
     statusText = status === "accepted" ? "打开任务失败，可重试" : "交接未完成，可重试";
   } else if (!statusText && status === "accepted") statusText = "LiliaCode 已接收";
-  return { accepted, expanded, busy, error: session?.error ?? null, buttonLabel, statusText };
+  const statusRole: HomePendingWorkflowHandoff["statusRole"] = session?.error ? "alert" : "status";
+  return {
+    action,
+    busy,
+    buttonLabel,
+    statusText,
+    statusRole,
+  };
 }
 
 function homePendingItemRepoFullName(item: HomePendingItem) {
@@ -1742,7 +1748,6 @@ async function runHomeWorkflowHandoff(row: HomePendingRow) {
   const target = row.item.target;
   if (
     !handoff ||
-    handoff.unavailableReason ||
     !handoff.worktree ||
     target.kind !== "workflow" ||
     !target.run ||
@@ -1758,7 +1763,7 @@ async function runHomeWorkflowHandoff(row: HomePendingRow) {
 }
 
 async function openHomeWorkflowHandoffResult(row: HomePendingRow) {
-  if (!row.handoff?.accepted || row.runningAction) return;
+  if (row.handoff?.action !== "open" || row.runningAction) return;
   await workflowFailureHandoff.openResult(row.item.id);
 }
 
@@ -2763,36 +2768,41 @@ function bulkOperationDescription(operation: BulkOperation) {
                     <span>{{ row.item.detail }}</span>
                   </span>
                   <span class="home-pending-row__side">
-                    <span class="home-pending-row__repo" :title="row.repoFullName">{{ row.repoFullName }}</span>
                     <span
-                      v-if="row.handoff?.statusText"
-                      class="sr-only"
-                      :title="row.handoff.error || row.handoff.statusText"
-                      :role="row.handoff.error ? 'alert' : 'status'"
-                      :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.error ? 'error' : 'status')"
+                      v-if="!row.handoff?.statusText"
+                      class="home-pending-row__repo"
+                      :title="row.repoFullName"
                     >
-                      {{ row.handoff.statusText }}
+                      {{ row.repoFullName }}
                     </span>
                     <span
                       v-if="row.actions.length || row.handoff || row.link.kind !== 'none'"
                       class="home-pending-row__actions"
                       :class="{
-                        'is-expanded': Boolean(row.confirmingAction || row.runningAction || row.handoff?.expanded),
+                        'has-handoff-feedback': Boolean(row.handoff?.statusText),
+                        'is-expanded': Boolean(row.confirmingAction || row.runningAction),
                       }"
                       aria-label="快捷操作"
                     >
+                      <span
+                        v-if="row.handoff?.statusText"
+                        class="home-pending-row__handoff-feedback"
+                        :class="{ 'is-error': row.handoff.statusRole === 'alert' }"
+                        :title="row.handoff.statusText"
+                        :role="row.handoff.statusRole"
+                        :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.statusRole === 'alert' ? 'error' : 'status')"
+                      >
+                        {{ row.handoff.statusText }}
+                      </span>
                       <button
-                        v-if="row.handoff"
+                        v-if="row.handoff?.action"
                         type="button"
                         class="home-pending-action"
-                        :class="{
-                          'is-expanded': row.handoff.expanded,
-                        }"
-                        :aria-label="row.handoff.unavailableReason || row.handoff.buttonLabel"
-                        :title="row.handoff.unavailableReason || row.handoff.error || row.handoff.buttonLabel"
-                        :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.accepted ? 'open-result' : 'create')"
-                        :disabled="Boolean(row.runningAction || row.handoff.unavailableReason || row.handoff.busy)"
-                        @click.stop="row.handoff.accepted ? openHomeWorkflowHandoffResult(row) : runHomeWorkflowHandoff(row)"
+                        :aria-label="row.handoff.worktree ? row.handoff.buttonLabel : row.handoff.statusText || row.handoff.buttonLabel"
+                        :title="row.handoff.worktree ? row.handoff.buttonLabel : row.handoff.statusText || row.handoff.buttonLabel"
+                        :data-agent-id="homePendingHandoffAgentId(row.item, row.handoff.action === 'open' ? 'open-result' : 'create')"
+                        :disabled="Boolean(row.runningAction || !row.handoff.worktree || row.handoff.busy)"
+                        @click.stop="row.handoff.action === 'open' ? openHomeWorkflowHandoffResult(row) : runHomeWorkflowHandoff(row)"
                       >
                         <LoaderCircle
                           v-if="row.handoff.busy"
@@ -2801,14 +2811,13 @@ function bulkOperationDescription(operation: BulkOperation) {
                           class="sb-spin"
                         />
                         <Send v-else :size="13" aria-hidden="true" />
-                        <span v-if="row.handoff.expanded">{{ row.handoff.buttonLabel }}</span>
                       </button>
                       <button
                         v-for="action in row.actions"
                         v-show="!row.runningAction || row.runningAction === action"
                         :key="action"
                         type="button"
-                        class="home-pending-action"
+                        class="home-pending-action home-pending-action--secondary"
                         :class="{
                           'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
                           'home-pending-action--danger': action === 'issue-close' || action === 'pull-close' || action === 'workflow-cancel',
@@ -3781,17 +3790,27 @@ function bulkOperationDescription(operation: BulkOperation) {
   height: 24px;
 }
 
-.home-pending-row__repo {
+.home-pending-row__repo,
+.home-pending-row__handoff-feedback {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: opacity 0.12s ease;
+  font-weight: 600;
 }
 
 .home-pending-row__repo {
   color: var(--text-faint);
-  font-weight: 600;
+  transition: opacity 0.12s ease;
+}
+
+.home-pending-row__handoff-feedback {
+  flex: 1 1 auto;
+  color: var(--text-muted);
+}
+
+.home-pending-row__handoff-feedback.is-error {
+  color: var(--err);
 }
 
 .home-pending-row__actions {
@@ -3805,6 +3824,22 @@ function bulkOperationDescription(operation: BulkOperation) {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.home-pending-row__actions.has-handoff-feedback {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.home-pending-row__actions.has-handoff-feedback :is(.home-pending-action--secondary, .home-pending-row__jump) {
+  display: none;
+}
+
+.home-pending-row:is(:hover, :focus-within)
+  .home-pending-row__actions.has-handoff-feedback
+  :is(.home-pending-action--secondary, .home-pending-row__jump) {
+  display: inline-flex;
 }
 
 .home-pending-row.has-hover-controls:hover .home-pending-row__repo,
