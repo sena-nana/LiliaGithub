@@ -1,0 +1,19 @@
+[package]
+name = "lilia_github_workspace_runtime_reference"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "workspace-execution-domain-bench"
+path = "src/bin/workspace_execution_domain_bench.rs"
+
+[dependencies]
+lilia_github_git = { path = "../git" }
+lilia_github_workspace = { path = "../workspace" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

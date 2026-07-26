@@ -1,0 +1,54 @@
+{
+  "schema": "lilia.github.execution-domain-reference.v1",
+  "business_purpose": "read the current repository status while full workspace and history analysis are saturated",
+  "workload": {
+    "background_work": [
+      "CPU derivation from a captured production git ls-files -z snapshot",
+      "CPU derivation from a captured production git log --all snapshot"
+    ],
+    "calibrated": {
+      "analysis_iterations": 16384,
+      "bulk_iterations": 32768
+    },
+    "calibration_attempts_per_step": 3,
+    "calibration_safety_factor": 10,
+    "interactive_work": "production git status --porcelain=v1 -z --branch plus production parser",
+    "measurement": "local repository status submit to runner start; terminal business output is still required and validated",
+    "minimum_background_work_ms": 20,
+    "multi_path_threads": {
+      "local_blocking": 1,
+      "workspace_cpu": 1
+    },
+    "percentile_method": "nearest-rank",
+    "pressure_establishment_attempts": 3,
+    "runtime_lifecycle": "reuse one warmed long-lived runtime per topology",
+    "same_protocols_runners_payloads_and_outputs": true,
+    "same_runtime_domain": true,
+    "same_total_worker_budget": 2,
+    "sample_order": "alternate single-path-first and multi-path-first paired samples",
+    "samples": 300,
+    "single_path_threads": 2,
+    "snapshot_inputs": {
+      "history_bytes": 8400,
+      "tracked_files_bytes": 16714
+    },
+    "workspace": "."
+  },
+  "single_path": {
+    "samples": 300,
+    "p50_ms": 310.2878,
+    "p95_ms": 338.2505,
+    "p99_ms": 361.2655,
+    "max_ms": 394.5887
+  },
+  "local_and_analysis_paths": {
+    "samples": 300,
+    "p50_ms": 0.0743,
+    "p95_ms": 0.113,
+    "p99_ms": 0.2529,
+    "max_ms": 0.5548
+  },
+  "p99_improvement_percent": 99.92999608321304,
+  "expected_minimum_improvement_percent": 50.0,
+  "passed": true
+}

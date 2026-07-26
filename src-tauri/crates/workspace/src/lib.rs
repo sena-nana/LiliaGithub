@@ -2,6 +2,10 @@ pub mod runtime;
 pub mod tauri_commands;
 pub mod workspace;
 
+pub use workspace::operations::{
+    OperationKind, BULK_PROTOCOL, LOCAL_READ_PROTOCOL, WORKSPACE_ANALYSIS_PROTOCOL,
+};
+
 pub fn mutsuki_host_builder() -> mutsuki_tauri_host::MutsukiTauriHostBuilder {
     let mut builder = mutsuki_tauri_host::MutsukiTauriHost::builder().app_name("LiliaGithub");
     builder = builder.runtime_config(workspace::refresh::refresh_runtime_config());

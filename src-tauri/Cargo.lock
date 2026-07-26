@@ -2437,6 +2437,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lilia_github_workspace_runtime_reference"
+version = "1.0.0"
+dependencies = [
+ "lilia_github_git",
+ "lilia_github_workspace",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-host",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
