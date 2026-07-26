@@ -15,6 +15,7 @@ members = [
   "crates/github",
   "crates/lilia_github_contracts",
   "crates/workspace",
+  "crates/workspace_runtime_reference",
 ]
 resolver = "2"
 
