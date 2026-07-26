@@ -10,6 +10,7 @@ import {
 } from "./ui";
 import type { RouterHistory } from "vue-router";
 import { createLiliaGithubRouter } from "./router";
+import { installLiliaGithubAgentDebugCompat } from "./agentDebug/compat";
 import {
   LILIA_AGENT_DEBUG_ENABLED,
   LILIA_SETTINGS_MODEL,
@@ -32,7 +33,11 @@ export function createLiliaGithubApp(options: CreateLiliaGithubAppOptions = {}) 
   installGlobalScrollbarVisibility();
   installCornerStyle();
   installNativeAppearance();
-  if (LILIA_AGENT_DEBUG_ENABLED) installAgentDebugHarness({ enabled: true });
+  if (LILIA_AGENT_DEBUG_ENABLED) {
+    installAgentDebugHarness({ enabled: true });
+    const cleanupAgentDebugCompat = installLiliaGithubAgentDebugCompat();
+    app.onUnmount(cleanupAgentDebugCompat);
+  }
 
   return { app, router };
 }

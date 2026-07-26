@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{recommended_watcher, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -17,6 +17,7 @@ use crate::workspace::settings::{
 use crate::workspace::shared::configure_background_command;
 
 const REPO_WATCH_DEBOUNCE: Duration = Duration::from_secs(2);
+const REPO_WATCH_PATH_LIMIT: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RepoWatchSpec {
@@ -373,49 +374,106 @@ fn watch_event_loop(
     receiver: mpsc::Receiver<notify::Result<Event>>,
 ) {
     while let Ok(first) = receiver.recv() {
-        let mut batch = vec![first];
-        loop {
-            match receiver.recv_timeout(REPO_WATCH_DEBOUNCE) {
-                Ok(result) => batch.push(result),
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-        }
+        let index = index
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let (batch, disconnected) =
+            receive_notify_batch(&index, &receiver, first, REPO_WATCH_DEBOUNCE);
         handle_notify_batch(&app, &index, batch);
+        if disconnected {
+            return;
+        }
     }
 }
 
-fn handle_notify_batch(
-    app: &AppHandle,
-    index: &RwLock<WatchIndex>,
-    results: Vec<notify::Result<Event>>,
-) {
-    let index = index
-        .read()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone();
-    let mut uncertain_repo_ids = HashSet::new();
-    let mut paths = Vec::new();
-    for result in results {
+#[derive(Default)]
+struct NotifyBatch {
+    uncertain_repo_ids: HashSet<String>,
+    paths: HashSet<PathBuf>,
+    path_limit_exceeded: bool,
+}
+
+impl NotifyBatch {
+    fn push(&mut self, index: &WatchIndex, result: notify::Result<Event>) {
         let event = match result {
             Ok(event) => event,
             Err(error) => {
                 let repo_ids = index.repo_ids_for_paths(&error.paths);
                 if repo_ids.is_empty() {
-                    uncertain_repo_ids.extend(index.repo_ids());
+                    self.uncertain_repo_ids.extend(index.repo_ids());
                 } else {
-                    uncertain_repo_ids.extend(repo_ids);
+                    self.uncertain_repo_ids.extend(repo_ids);
                 }
-                continue;
+                return;
             }
         };
         if event.need_rescan() {
-            uncertain_repo_ids.extend(index.repo_ids());
+            self.uncertain_repo_ids.extend(index.repo_ids());
         } else if !matches!(event.kind, EventKind::Access(_)) {
-            paths.extend(event.paths);
+            for path in event.paths {
+                self.push_path(index, path);
+            }
         }
     }
 
+    fn push_path(&mut self, index: &WatchIndex, path: PathBuf) {
+        if self.path_limit_exceeded {
+            self.mark_path_uncertain(index, &path);
+            return;
+        }
+        if self.paths.contains(&path) {
+            return;
+        }
+        if self.paths.len() < REPO_WATCH_PATH_LIMIT {
+            self.paths.insert(path);
+            return;
+        }
+
+        self.path_limit_exceeded = true;
+        for existing in std::mem::take(&mut self.paths) {
+            self.mark_path_uncertain(index, &existing);
+        }
+        self.mark_path_uncertain(index, &path);
+    }
+
+    fn mark_path_uncertain(&mut self, index: &WatchIndex, path: &Path) {
+        self.uncertain_repo_ids.extend(
+            index
+                .affected_repos(path)
+                .into_iter()
+                .map(|(repo_id, _)| repo_id),
+        );
+    }
+}
+
+fn receive_notify_batch(
+    index: &WatchIndex,
+    receiver: &mpsc::Receiver<notify::Result<Event>>,
+    first: notify::Result<Event>,
+    window: Duration,
+) -> (NotifyBatch, bool) {
+    let deadline = Instant::now() + window;
+    let mut batch = NotifyBatch::default();
+    batch.push(index, first);
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return (batch, false);
+        };
+        match receiver.recv_timeout(remaining) {
+            Ok(result) => batch.push(index, result),
+            Err(mpsc::RecvTimeoutError::Timeout) => return (batch, false),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return (batch, true),
+        }
+    }
+}
+
+fn handle_notify_batch(app: &AppHandle, index: &WatchIndex, batch: NotifyBatch) {
+    let NotifyBatch {
+        mut uncertain_repo_ids,
+        paths,
+        ..
+    } = batch;
     let mut affected = HashMap::<String, RepoChangeKind>::new();
     let mut worktree_paths = HashMap::<String, HashSet<PathBuf>>::new();
     for path in paths {
@@ -492,18 +550,35 @@ fn git_all_paths_ignored(repo_path: &Path, paths: &[String]) -> Result<bool, ()>
         .stderr(Stdio::piped());
     configure_background_command(&mut command);
     let mut child = command.spawn().map_err(|_| ())?;
-    {
-        let stdin = child.stdin.as_mut().ok_or(())?;
-        for path in paths {
-            stdin.write_all(path.as_bytes()).map_err(|_| ())?;
-            stdin.write_all(&[0]).map_err(|_| ())?;
+    let mut stdin = child.stdin.take().ok_or(())?;
+    let (output, write_result) = thread::scope(|scope| {
+        let writer = scope.spawn(move || -> Result<(), ()> {
+            for path in paths {
+                stdin.write_all(path.as_bytes()).map_err(|_| ())?;
+                stdin.write_all(&[0]).map_err(|_| ())?;
+            }
+            Ok(())
+        });
+        let output = child.wait_with_output();
+        let write_result = writer.join().map_err(|_| ()).and_then(|result| result);
+        (output, write_result)
+    });
+    let output = output.map_err(|_| ())?;
+    write_result?;
+
+    let ignored_count = if output.stdout.is_empty() {
+        0
+    } else {
+        if output.stdout.last() != Some(&0) {
+            return Err(());
         }
+        output.stdout.iter().filter(|byte| **byte == 0).count()
+    };
+    match output.status.code() {
+        Some(0) if ignored_count > 0 => Ok(ignored_count == paths.len()),
+        Some(1) if ignored_count == 0 => Ok(false),
+        _ => Err(()),
     }
-    let output = child.wait_with_output().map_err(|_| ())?;
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(());
-    }
-    Ok(output.stdout.iter().filter(|byte| **byte == 0).count() == paths.len())
 }
 
 fn longest_matching_repo<'a>(
@@ -559,15 +634,21 @@ fn is_path_inside(path: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        minimal_non_overlapping_roots, repo_has_relevant_worktree_change, watch_roots,
-        RepoChangeKind, RepoWatchSpec, WatchIndex,
+        git_all_paths_ignored, minimal_non_overlapping_roots, receive_notify_batch,
+        repo_has_relevant_worktree_change, watch_roots, NotifyBatch, RepoChangeKind, RepoWatchSpec,
+        WatchIndex, REPO_WATCH_PATH_LIMIT,
     };
+    use notify::{Event, EventKind};
     use std::collections::HashSet;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    };
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn repo(repo_id: &str, worktree: &str, git_dir: &str, common_dir: &str) -> RepoWatchSpec {
         RepoWatchSpec {
@@ -799,6 +880,104 @@ mod tests {
             &spec,
             [repo.path("debug.log")].iter()
         ));
+    }
+
+    #[test]
+    fn mixed_ignored_and_relevant_paths_refresh() {
+        let repo = TestRepo::new();
+        repo.write(".gitignore", "ignored/\n");
+        let spec = repo.spec();
+
+        assert!(repo_has_relevant_worktree_change(
+            &spec,
+            [repo.path("ignored/cache.bin"), repo.path("src/main.rs")].iter()
+        ));
+    }
+
+    #[test]
+    fn check_ignore_drains_large_output_without_leaving_the_child_running() {
+        let repo = TestRepo::new();
+        repo.write(".gitignore", "ignored/\n");
+        let repo_path = repo.0.clone();
+        let paths = (0..20_000)
+            .map(|index| format!("ignored/nested/cache-{index:05}.bin"))
+            .collect::<Vec<_>>();
+        let (sender, receiver) = mpsc::channel();
+
+        thread::spawn(move || {
+            let _ = sender.send(git_all_paths_ignored(&repo_path, &paths));
+        });
+
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(5)), Ok(Ok(true)));
+    }
+
+    #[test]
+    fn notify_batch_uses_a_fixed_window_during_continuous_events() {
+        let index = WatchIndex {
+            repos: vec![repo(
+                "repo",
+                "C:/ws/app",
+                "C:/ws/app/.git",
+                "C:/ws/app/.git",
+            )],
+        };
+        let (sender, receiver) = mpsc::channel();
+        let producer = thread::spawn(move || {
+            for path_index in 0..30 {
+                if sender
+                    .send(Ok(Event::new(EventKind::Any).add_path(PathBuf::from(
+                        format!("C:/ws/app/src/{path_index}.rs"),
+                    ))))
+                    .is_err()
+                {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let started = Instant::now();
+        let (batch, disconnected) = receive_notify_batch(
+            &index,
+            &receiver,
+            Ok(Event::new(EventKind::Any).add_path(PathBuf::from("C:/ws/app/src/first.rs"))),
+            Duration::from_millis(60),
+        );
+        let elapsed = started.elapsed();
+        drop(receiver);
+        producer.join().unwrap();
+
+        assert!(!disconnected);
+        assert!(elapsed < Duration::from_millis(180), "{elapsed:?}");
+        assert!(batch.paths.len() < 30);
+    }
+
+    #[test]
+    fn notify_batch_caps_unique_paths_and_marks_affected_repos_uncertain() {
+        let index = WatchIndex {
+            repos: vec![repo(
+                "repo",
+                "C:/ws/app",
+                "C:/ws/app/.git",
+                "C:/ws/app/.git",
+            )],
+        };
+        let mut batch = NotifyBatch::default();
+
+        for path_index in 0..(REPO_WATCH_PATH_LIMIT + 100) {
+            batch.push(
+                &index,
+                Ok(Event::new(EventKind::Any).add_path(PathBuf::from(format!(
+                    "C:/ws/app/generated/{path_index}.tmp"
+                )))),
+            );
+        }
+
+        assert!(batch.path_limit_exceeded);
+        assert!(batch.paths.len() <= REPO_WATCH_PATH_LIMIT);
+        assert_eq!(
+            batch.uncertain_repo_ids,
+            ["repo".to_string()].into_iter().collect()
+        );
     }
 
     #[test]

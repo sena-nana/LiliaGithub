@@ -20,6 +20,8 @@ function debugWindow() {
 
 describe("agent debug compatibility", () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     uninstallAgentDebugHarness();
     document.body.innerHTML = "";
     delete debugWindow().__liliaGithubAgentDebug;
@@ -32,6 +34,25 @@ describe("agent debug compatibility", () => {
     expect(debugWindow().__liliaGithubAgentDebug).toBeUndefined();
 
     cleanup();
+  });
+
+  it("does not schedule compatibility retries when the shared harness is absent", () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(window, "setTimeout");
+
+    const cleanup = installLiliaGithubAgentDebugCompat();
+    vi.advanceTimersByTime(5_000);
+
+    expect(timeout).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("does not serialize invoke arguments before the debug harness exists", async () => {
+    const stringify = vi.spyOn(JSON, "stringify");
+    const { recordAgentDebugInvokeStart } = await import("../src/agentDebug/compat");
+
+    expect(recordAgentDebugInvokeStart("workspace_refresh_repos", { repoCount: 12 })).toBeNull();
+    expect(stringify).not.toHaveBeenCalled();
   });
 
   it("exposes the shared LiliaUI debug API through the LiliaGithub alias", () => {

@@ -447,7 +447,9 @@ function upsertGitHubPullRequest(repoFullName: string, pull: GitHubPullRequest) 
 function clearGitHubProjectPullRequestChecks(repoFullName: string, pullNumber?: number) {
   const cache = githubProjectCache.get(githubProjectRepoKey(repoFullName));
   if (!cache) return;
-  if (pullNumber == null) cache.pullRequestChecks = {};
+  if (pullNumber == null) {
+    for (const key of Object.keys(cache.pullRequestChecks)) delete cache.pullRequestChecks[Number(key)];
+  }
   else delete cache.pullRequestChecks[pullNumber];
 }
 
