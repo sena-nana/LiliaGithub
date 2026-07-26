@@ -12,6 +12,7 @@ const localRoot = resolve(repoRoot, process.env.LILIA_UI_LOCAL_PATH || "../Lilia
 const packages = [
   ["@lilia/build", "packages/build"],
   ["@lilia/config", "packages/config"],
+  ["@lilia/theme", "packages/theme"],
   ["@lilia/tools", "packages/tools"],
   ["@lilia/ui", "packages/ui"],
   ["@lilia/ui-contract", "packages/ui-contract"],
@@ -52,14 +53,11 @@ function assertLocalPackages(packageRoots) {
 }
 
 function runYarn(args) {
-  const yarnCli = process.env.npm_execpath;
-  if (!yarnCli) {
-    fail("Run this script through a root Yarn command, for example: yarn liliaui:local");
-  }
-
-  const isWindowsShim = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(yarnCli);
-  const command = isWindowsShim ? process.env.ComSpec || "cmd.exe" : yarnCli;
-  const commandArgs = isWindowsShim ? ["/d", "/s", "/c", yarnCli, ...args] : args;
+  const isWindows = process.platform === "win32";
+  const command = isWindows ? process.env.ComSpec || "cmd.exe" : "corepack";
+  const commandArgs = isWindows
+    ? ["/d", "/s", "/c", "corepack", "yarn", ...args]
+    : ["yarn", ...args];
   const result = spawnSync(command, commandArgs, {
     cwd: repoRoot,
     stdio: "inherit",

@@ -3612,6 +3612,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
     <LiliaWorkspace
       class="project-layout"
       aria-label="仓库工作区"
+      surface-level="base"
+      :content-inset="{ inlineStart: 24, blockEnd: 14 }"
+      :row-gap="14"
     >
       <LiliaPrimaryContent id="repo-primary" overflow="hidden" :style="{ '--lilia-primary-inset': '0' }">
         <main
@@ -4780,8 +4783,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-layout {
-  gap: 14px;
-  padding: 0 0 14px 24px;
   min-width: 0;
   min-height: 0;
   height: 100%;
