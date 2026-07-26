@@ -51,6 +51,184 @@ type GitHubProjectRepoClientCache = {
   settingsSections: Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>;
 };
 
+export const GITHUB_PROJECT_CACHE_LIMITS = {
+  repos: 8,
+  collectionEntries: 12,
+  heavyBytes: 16 * 1024 * 1024,
+} as const;
+
+type HeavyCacheEntry = {
+  size: number;
+  remove: () => void;
+};
+
+class HeavyCacheBudget {
+  private readonly entries = new Map<string, HeavyCacheEntry>();
+  private totalSize = 0;
+
+  touch(key: string) {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+  }
+
+  set(key: string, value: unknown, remove: () => void) {
+    this.delete(key);
+    const entry = {
+      size: estimateCacheValueSize(value),
+      remove,
+    };
+    this.entries.set(key, entry);
+    this.totalSize += entry.size;
+    this.evict();
+  }
+
+  delete(key: string) {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.totalSize -= entry.size;
+  }
+
+  deleteRepo(repoKey: string) {
+    const prefix = `${repoKey}\0`;
+    for (const key of [...this.entries.keys()]) {
+      if (key.startsWith(prefix)) this.delete(key);
+    }
+  }
+
+  clear() {
+    this.entries.clear();
+    this.totalSize = 0;
+  }
+
+  private evict() {
+    while (this.totalSize > GITHUB_PROJECT_CACHE_LIMITS.heavyBytes) {
+      const oldest = this.entries.entries().next().value as [string, HeavyCacheEntry] | undefined;
+      if (!oldest) break;
+      this.entries.delete(oldest[0]);
+      this.totalSize -= oldest[1].size;
+      oldest[1].remove();
+    }
+  }
+}
+
+const cacheTextEncoder = new TextEncoder();
+const heavyCacheBudget = new HeavyCacheBudget();
+
+function estimateCacheValueSize(value: unknown) {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized == null ? 0 : cacheTextEncoder.encode(serialized).byteLength;
+  } catch {
+    return GITHUB_PROJECT_CACHE_LIMITS.heavyBytes + 1;
+  }
+}
+
+function createBoundedRecord<T>(
+  repoKey: string,
+  collection: string,
+  heavy = false,
+): Record<string, T | undefined> {
+  const target: Record<string, T | undefined> = {};
+  const recency = new Map<string, true>();
+  const budgetKey = (key: string) => `${repoKey}\0${collection}\0${key}`;
+  const forget = (key: string) => {
+    recency.delete(key);
+    Reflect.deleteProperty(target, key);
+    if (heavy) heavyCacheBudget.delete(budgetKey(key));
+  };
+
+  return new Proxy(target, {
+    get(current, property, receiver) {
+      if (
+        typeof property === "string"
+        && Object.prototype.hasOwnProperty.call(current, property)
+      ) {
+        recency.delete(property);
+        recency.set(property, true);
+        if (heavy) heavyCacheBudget.touch(budgetKey(property));
+      }
+      return Reflect.get(current, property, receiver);
+    },
+    set(current, property, value, receiver) {
+      if (typeof property !== "string") return Reflect.set(current, property, value, receiver);
+      Reflect.set(current, property, value, receiver);
+      recency.delete(property);
+      recency.set(property, true);
+      if (heavy) {
+        heavyCacheBudget.set(budgetKey(property), value, () => {
+          recency.delete(property);
+          Reflect.deleteProperty(target, property);
+        });
+      }
+      while (recency.size > GITHUB_PROJECT_CACHE_LIMITS.collectionEntries) {
+        const oldest = recency.keys().next().value as string | undefined;
+        if (oldest == null) break;
+        forget(oldest);
+      }
+      return true;
+    },
+    deleteProperty(_current, property) {
+      if (typeof property === "string") forget(property);
+      return true;
+    },
+  });
+}
+
+function createGitHubProjectRepoClientCache(repoKey: string): GitHubProjectRepoClientCache {
+  return {
+    files: createBoundedRecord(repoKey, "files"),
+    filePreviews: createBoundedRecord(repoKey, "filePreviews", true),
+    commits: createBoundedRecord(repoKey, "commits"),
+    commitDetails: createBoundedRecord(repoKey, "commitDetails"),
+    issues: createBoundedRecord(repoKey, "issues"),
+    issueDiscussions: createBoundedRecord(repoKey, "issueDiscussions"),
+    pullRequests: createBoundedRecord(repoKey, "pullRequests"),
+    pullRequestDiscussions: createBoundedRecord(repoKey, "pullRequestDiscussions"),
+    pullRequestChecks: createBoundedRecord(repoKey, "pullRequestChecks"),
+    workflowRuns: createBoundedRecord(repoKey, "workflowRuns"),
+    workflowRunDetails: createBoundedRecord(repoKey, "workflowRunDetails"),
+    workflowJobLogs: createBoundedRecord(repoKey, "workflowJobLogs", true),
+    workflowArtifactEntries: createBoundedRecord(repoKey, "workflowArtifactEntries"),
+    workflowArtifactPreviews: createBoundedRecord(repoKey, "workflowArtifactPreviews", true),
+    releases: undefined,
+    settingsSections: {},
+  };
+}
+
+class GitHubProjectCache extends Map<string, GitHubProjectRepoClientCache> {
+  override get(key: string) {
+    const cache = super.get(key);
+    if (!cache) return undefined;
+    super.delete(key);
+    super.set(key, cache);
+    return cache;
+  }
+
+  override set(key: string, cache: GitHubProjectRepoClientCache) {
+    if (super.has(key)) super.delete(key);
+    super.set(key, cache);
+    while (this.size > GITHUB_PROJECT_CACHE_LIMITS.repos) {
+      const oldest = super.keys().next().value as string | undefined;
+      if (oldest == null) break;
+      this.delete(oldest);
+    }
+    return this;
+  }
+
+  override delete(key: string) {
+    heavyCacheBudget.deleteRepo(key);
+    return super.delete(key);
+  }
+
+  override clear() {
+    heavyCacheBudget.clear();
+    super.clear();
+  }
+}
+
 type GitHubRepoCacheEntry = {
   items: GitHubRepoPage["items"];
   nextPage: number | null;
@@ -74,7 +252,7 @@ export let githubActionNotificationCache: {
   items: GitHubActionNotification[];
   fetchedAt: number;
 } | null = null;
-export const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
+export const githubProjectCache = new GitHubProjectCache();
 export const pendingWorkspaceReads = new Map<string, Promise<unknown>>();
 
 export function setGitHubAccountIssueCache(cache: typeof githubAccountIssueCache) {
@@ -116,24 +294,7 @@ export function githubProjectRepoCache(repoFullName: string) {
   const key = githubProjectRepoKey(repoFullName);
   let cache = githubProjectCache.get(key);
   if (!cache) {
-    cache = {
-      files: {},
-      filePreviews: {},
-      commits: {},
-      commitDetails: {},
-      issues: {},
-      issueDiscussions: {},
-      pullRequests: {},
-      pullRequestDiscussions: {},
-      pullRequestChecks: {},
-      workflowRuns: {},
-      workflowRunDetails: {},
-      workflowJobLogs: {},
-      workflowArtifactEntries: {},
-      workflowArtifactPreviews: {},
-      releases: undefined,
-      settingsSections: {},
-    };
+    cache = createGitHubProjectRepoClientCache(key);
     githubProjectCache.set(key, cache);
   }
   return cache;

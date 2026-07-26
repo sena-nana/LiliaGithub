@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from "vue";
-import { installLiliaGithubAgentDebugCompat } from "../agentDebug/compat";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
 import { installRepoRefreshEvents } from "../composables/workspace/repoRefreshEvents";
@@ -9,11 +8,9 @@ import { useWorkspaceRecentContext } from "../composables/useWorkspaceRecentCont
 const workspaceRecentContext = useWorkspaceRecentContext();
 
 let cleanupEffects: (() => void) | null = null;
-let cleanupDebug: (() => void) | null = null;
 let disposed = false;
 
 onMounted(async () => {
-  cleanupDebug = installLiliaGithubAgentDebugCompat();
   await workspaceRecentContext.initialize();
   if (disposed) return;
   const [cleanupFocus, cleanupLaunch, cleanupRepoRefresh] = await Promise.all([
@@ -36,8 +33,6 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true;
   workspaceRecentContext.dispose();
-  cleanupDebug?.();
-  cleanupDebug = null;
   cleanupEffects?.();
   cleanupEffects = null;
 });

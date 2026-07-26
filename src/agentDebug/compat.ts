@@ -19,25 +19,13 @@ const MAX_SUMMARY_LENGTH = 500;
 export function installLiliaGithubAgentDebugCompat(): () => void {
   if (typeof window === "undefined") return () => undefined;
   const debugWindow = window as LiliaGithubAgentDebugWindow;
-  let disposed = false;
-  let timer: number | null = null;
-
-  const install = () => {
-    if (disposed) return;
-    const sharedApi = debugWindow.__liliaAgentDebug;
-    if (sharedApi) {
-      debugWindow.__liliaGithubAgentDebug = sharedApi;
-      return;
-    }
-    timer = window.setTimeout(install, 50);
-  };
-
-  install();
+  const sharedApi = debugWindow.__liliaAgentDebug;
+  if (sharedApi) {
+    debugWindow.__liliaGithubAgentDebug = sharedApi;
+  }
 
   return () => {
-    disposed = true;
-    if (timer !== null) window.clearTimeout(timer);
-    if (debugWindow.__liliaGithubAgentDebug === debugWindow.__liliaAgentDebug) {
+    if (debugWindow.__liliaGithubAgentDebug === sharedApi) {
       delete debugWindow.__liliaGithubAgentDebug;
     }
   };
@@ -45,6 +33,7 @@ export function installLiliaGithubAgentDebugCompat(): () => void {
 
 export function recordAgentDebugInvokeStart(command: string, args: unknown): InvokeTrace | null {
   if (typeof window === "undefined" || command.startsWith("agent_debug_")) return null;
+  if (!(window as LiliaGithubAgentDebugWindow).__liliaAgentDebug) return null;
   const trace: InvokeTrace = {
     argsSummary: summarize(args),
     command,

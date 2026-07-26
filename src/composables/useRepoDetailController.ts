@@ -120,7 +120,8 @@ export function useRepoDetailController() {
   const launchRefreshLoader = createLatestAsyncLoader({ componentEpoch });
   const actionTracker = createPendingTaskTracker();
   const actionRunning = actionTracker.running;
-  let launchPollTimer: number | null = null;
+  let launchLogTimer: number | null = null;
+  let launchLogRefreshPending = false;
   let actionGeneration = 0;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
@@ -395,11 +396,9 @@ export function useRepoDetailController() {
   ) as Record<RepoSettingKey, boolean>);
   onMounted(() => {
     void load();
-    launchPollTimer = window.setInterval(() => {
-      if (repoId.value && repoContext.value.capabilities.launch.available) {
-        void refreshLaunch();
-      }
-    }, 1500);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   });
 
   async function selectMissingLocalRepo() {
@@ -432,14 +431,16 @@ export function useRepoDetailController() {
     githubCommitsLoader.invalidate();
     launchRefreshLoader.invalidate();
     invalidateActions();
-    if (launchPollTimer !== null) {
-      window.clearInterval(launchPollTimer);
-    }
+    stopLaunchLogPolling();
+    window.removeEventListener("focus", handleWindowFocus);
+    window.removeEventListener("blur", handleWindowBlur);
+    document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   });
 
   watch(repoId, () => {
     commitMessage.value = "";
     launchTerminalVisible.value = false;
+    stopLaunchLogPolling();
     focusedChangePath.value = activeChangePath.value;
     selectedCommitHash.value = null;
     openTarget.value = "folder";
@@ -484,6 +485,10 @@ export function useRepoDetailController() {
 
   watch(activeRemoteRef, (branch) => {
     if (branch !== activeRemoteBranch.value) activeRemoteBranch.value = branch;
+  });
+
+  watch([launchRunning, launchTerminalVisible], () => {
+    syncLaunchLogPolling();
   });
 
   watch(
@@ -731,20 +736,77 @@ export function useRepoDetailController() {
     activeRemoteBranch.value = null;
   }
 
-  async function refreshLaunch() {
+  async function validateLaunchStatus() {
     const targetRepoId = repoId.value;
     if (!targetRepoId || !repoContext.value.capabilities.launch.available) return;
     await launchRefreshLoader.run(targetRepoId, async (runId) => {
       try {
-        const status = await workspace.refreshLaunchStatus(targetRepoId);
+        await workspace.refreshLaunchStatus(targetRepoId);
         if (!launchRefreshLoader.isCurrent(runId) || repoId.value !== targetRepoId || !repoContext.value.capabilities.launch.available) return;
-        if (status.state === "running" || launchTerminalVisible.value) {
-          await workspace.refreshLaunchLogs(targetRepoId);
-        }
       } catch {
-        // The explicit action path surfaces errors; polling should stay quiet.
+        // The explicit action path surfaces errors; focus validation should stay quiet.
       }
     }, { reusePending: true });
+  }
+
+  function launchLogPollingActive() {
+    return (
+      launchRunning.value &&
+      launchTerminalVisible.value &&
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    );
+  }
+
+  function stopLaunchLogPolling() {
+    if (launchLogTimer !== null) {
+      window.clearTimeout(launchLogTimer);
+      launchLogTimer = null;
+    }
+  }
+
+  function syncLaunchLogPolling() {
+    if (!launchLogPollingActive()) {
+      stopLaunchLogPolling();
+      return;
+    }
+    if (launchLogTimer !== null || launchLogRefreshPending) return;
+    launchLogTimer = window.setTimeout(() => {
+      launchLogTimer = null;
+      void refreshLaunchLogs();
+    }, 1500);
+  }
+
+  async function refreshLaunchLogs() {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId || !launchLogPollingActive()) return;
+    launchLogRefreshPending = true;
+    try {
+      await workspace.refreshLaunchLogs(targetRepoId);
+    } catch {
+      // The explicit action path surfaces errors; log refresh should stay quiet.
+    } finally {
+      launchLogRefreshPending = false;
+      if (repoId.value === targetRepoId) syncLaunchLogPolling();
+    }
+  }
+
+  function handleWindowFocus() {
+    void validateLaunchStatus();
+    syncLaunchLogPolling();
+  }
+
+  function handleWindowBlur() {
+    stopLaunchLogPolling();
+  }
+
+  function handleDocumentVisibilityChange() {
+    if (document.visibilityState !== "visible") {
+      stopLaunchLogPolling();
+      return;
+    }
+    if (document.hasFocus()) void validateLaunchStatus();
+    syncLaunchLogPolling();
   }
 
   function syncFocusedChange() {

@@ -1,6 +1,6 @@
 import { cleanup, render, waitFor } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h } from "vue";
+import { defineComponent, h, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { useRepoDetailController } from "../src/composables/useRepoDetailController";
 import { resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
@@ -74,11 +74,16 @@ async function renderControllerHarness(repoId: string) {
 }
 
 describe("repo detail launch controller", () => {
+  let documentFocused = true;
+  let documentVisibility: DocumentVisibilityState = "visible";
+
   beforeEach(() => {
     resetWorkspaceStateForTests();
     resetRepositoryRuntimeForTests();
     resetRepoRefreshRuntimeForTests();
     vi.clearAllMocks();
+    vi.spyOn(document, "hasFocus").mockImplementation(() => documentFocused);
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => documentVisibility);
 
     const summary = repoSummary("repo-a");
     state.repos = [summary];
@@ -121,6 +126,8 @@ describe("repo detail launch controller", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("loads launch command candidates before repo detail loading finishes without starting statistics", async () => {
@@ -173,5 +180,117 @@ describe("repo detail launch controller", () => {
       command: "pnpm dev --host 0.0.0.0",
       cwd: "apps/web",
     });
+  });
+
+  it("does not poll launch status while an idle repo detail page remains open", async () => {
+    await renderControllerHarness("repo-a");
+    await waitFor(() => {
+      expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+      expect(state.launchLoading).toBe(false);
+    });
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+    expect(service.getRepoLaunchStatus).not.toHaveBeenCalled();
+    expect(service.getRepoLaunchLogs).not.toHaveBeenCalled();
+  });
+
+  it("self-schedules running terminal logs and pauses while the window is unfocused", async () => {
+    const { controller } = await renderControllerHarness("repo-a");
+    await waitFor(() => {
+      expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+      expect(state.launchLoading).toBe(false);
+    });
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+
+    state.launchStatuses["repo-a"] = {
+      repoId: "repo-a",
+      workspaceId: null,
+      contextRevision: 0,
+      state: "running",
+      pid: 1,
+      command: "pnpm dev",
+      startedAt: 1,
+      exitCode: null,
+      error: null,
+    };
+    controller.launchTerminalVisible.value = true;
+    await nextTick();
+    expect(controller.launchRunning.value).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(1);
+
+    documentFocused = false;
+    window.dispatchEvent(new Event("blur"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(1);
+
+    documentFocused = true;
+    service.getRepoLaunchStatus.mockResolvedValue({
+      ...state.launchStatuses["repo-a"]!,
+      state: "running",
+    });
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(2);
+
+    state.launchStatuses["repo-a"] = {
+      ...state.launchStatuses["repo-a"]!,
+      state: "exited",
+      exitCode: 0,
+    };
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops terminal log refresh while the document is hidden and resumes when visible", async () => {
+    const { controller } = await renderControllerHarness("repo-a");
+    await waitFor(() => {
+      expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+      expect(state.launchLoading).toBe(false);
+    });
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+
+    state.launchStatuses["repo-a"] = {
+      repoId: "repo-a",
+      workspaceId: null,
+      contextRevision: 0,
+      state: "running",
+      pid: 1,
+      command: "pnpm dev",
+      startedAt: 1,
+      exitCode: null,
+      error: null,
+    };
+    controller.launchTerminalVisible.value = true;
+    await nextTick();
+    expect(controller.launchRunning.value).toBe(true);
+
+    documentVisibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.getRepoLaunchLogs).not.toHaveBeenCalled();
+
+    documentVisibility = "visible";
+    service.getRepoLaunchStatus.mockResolvedValue({
+      ...state.launchStatuses["repo-a"]!,
+      state: "running",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(1);
+
+    controller.launchTerminalVisible.value = false;
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.getRepoLaunchLogs).toHaveBeenCalledTimes(1);
   });
 });

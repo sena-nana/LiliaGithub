@@ -6,19 +6,23 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use keyring::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
 use crate::workspace::operations::OperationKind;
 use crate::workspace::readme::{image_mime_for_path, readme_image_sources};
 use crate::workspace::repos::{commit_file_patches, run_repo_analysis_blocking};
 use crate::workspace::settings::{
-    clear_github_binding, load_settings, repo_path_by_id, switch_github_binding, STORE_FILE,
+    clear_github_binding as clear_github_binding_settings, load_settings, repo_path_by_id,
+    switch_github_binding as switch_github_binding_settings, STORE_FILE,
 };
 use crate::workspace::shared::{
     collect_local_contribution_counts, current_utc_day_index, github_contribution_days,
@@ -38,7 +42,7 @@ use lilia_github_contracts::workspace::{
     GitHubOrganizationMembersSection, GitHubOrganizationOverview, GitHubOrganizationProfile,
     GitHubOrganizationProfileView, GitHubOrganizationRepositorySection,
     GitHubOrganizationSectionStatus, GitHubOwnerKind, GitHubProfileReadmeSection,
-    GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
+    GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubReadmeSectionStatus,
     GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest, GitHubRepoLicense,
     GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage, GitHubRepoSettingsEndpointItem,
@@ -69,6 +73,24 @@ pub(super) const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
+const GITHUB_PROJECT_CACHE_INDEX_FILE: &str = "github-project-cache-v2-index.json";
+const GITHUB_PROJECT_CACHE_INDEX_KEY: &str = "index";
+const GITHUB_PROJECT_CACHE_SHARD_KEY: &str = "cache";
+const GITHUB_PROJECT_CACHE_VERSION: u8 = 2;
+const GITHUB_PROJECT_CACHE_MAX_REPOS: usize = 12;
+const GITHUB_PROJECT_CACHE_MAX_KEYED_ITEMS: usize = 16;
+const GITHUB_PROJECT_CACHE_MAX_SHARD_BYTES: usize = 4 * 1024 * 1024;
+const GITHUB_PROJECT_CACHE_MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+const GITHUB_PROJECT_CACHE_KEYED_FIELDS: [&str; 8] = [
+    "issues",
+    "issueDiscussions",
+    "pullRequests",
+    "pullRequestDiscussions",
+    "pullRequestChecks",
+    "workflowRuns",
+    "commits",
+    "commitDetails",
+];
 pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
 #[cfg(test)]
 pub(super) const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 =
@@ -1420,28 +1442,241 @@ pub(super) fn github_graphql_errors_require_read_project(errors: &[GitHubGraphQl
         })
 }
 
-pub(super) fn load_github_project_cache(app: &AppHandle) -> GitHubProjectCache {
-    app.store(STORE_FILE)
-        .ok()
-        .and_then(|store| store.get(GITHUB_PROJECT_CACHE_KEY))
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubProjectCacheIndex {
+    version: u8,
+    account_login: Option<String>,
+    #[serde(default)]
+    repos: Vec<GitHubProjectCacheIndexEntry>,
 }
 
-pub(super) fn save_github_project_cache(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubProjectCacheIndexEntry {
+    repo_key: String,
+    last_accessed_at: i64,
+    estimated_size: usize,
+}
+
+fn github_project_cache_account(app: &AppHandle) -> Option<String> {
+    load_settings(app).github_binding.and_then(|binding| {
+        let login = binding.login.trim().to_ascii_lowercase();
+        (!login.is_empty()).then_some(login)
+    })
+}
+
+fn github_project_cache_shard_file(repo_key: &str) -> String {
+    format!(
+        "github-project-cache-v2-{}.json",
+        URL_SAFE_NO_PAD.encode(repo_key.as_bytes())
+    )
+}
+
+fn save_github_project_cache_index(
     app: &AppHandle,
-    cache: &GitHubProjectCache,
+    index: &GitHubProjectCacheIndex,
 ) -> Result<(), String> {
     let store = app
-        .store(STORE_FILE)
-        .map_err(|e| format!("打开 GitHub 项目缓存失败：{e}"))?;
+        .store(GITHUB_PROJECT_CACHE_INDEX_FILE)
+        .map_err(|error| format!("打开 GitHub 项目缓存索引失败：{error}"))?;
     store.set(
-        GITHUB_PROJECT_CACHE_KEY,
-        serde_json::to_value(cache).map_err(|e| e.to_string())?,
+        GITHUB_PROJECT_CACHE_INDEX_KEY,
+        serde_json::to_value(index).map_err(|error| error.to_string())?,
     );
     store
         .save()
-        .map_err(|e| format!("保存 GitHub 项目缓存失败：{e}"))
+        .map_err(|error| format!("保存 GitHub 项目缓存索引失败：{error}"))
+}
+
+fn clear_github_project_cache_shard(app: &AppHandle, shard_file: &str) -> Result<(), String> {
+    let store = app
+        .store(shard_file)
+        .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
+    store.delete(GITHUB_PROJECT_CACHE_SHARD_KEY);
+    store
+        .save()
+        .map_err(|error| format!("清理 GitHub 项目缓存分片失败：{error}"))
+}
+
+fn load_github_project_cache_index_for_account(
+    app: &AppHandle,
+    account_login: Option<String>,
+) -> Result<GitHubProjectCacheIndex, String> {
+    let index_store = app
+        .store(GITHUB_PROJECT_CACHE_INDEX_FILE)
+        .map_err(|error| format!("打开 GitHub 项目缓存索引失败：{error}"))?;
+    let existing = index_store
+        .get(GITHUB_PROJECT_CACHE_INDEX_KEY)
+        .and_then(|value| serde_json::from_value::<GitHubProjectCacheIndex>(value).ok())
+        .filter(|index| index.version == GITHUB_PROJECT_CACHE_VERSION);
+    if let Some(mut index) = existing {
+        if index.account_login != account_login {
+            for entry in &index.repos {
+                clear_github_project_cache_shard(
+                    app,
+                    &github_project_cache_shard_file(&entry.repo_key),
+                )?;
+            }
+            index.repos.clear();
+            index.account_login = account_login;
+            save_github_project_cache_index(app, &index)?;
+        }
+        return Ok(index);
+    }
+
+    let legacy_store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("打开旧 GitHub 项目缓存失败：{error}"))?;
+    if legacy_store.get(GITHUB_PROJECT_CACHE_KEY).is_some() {
+        legacy_store.delete(GITHUB_PROJECT_CACHE_KEY);
+        legacy_store
+            .save()
+            .map_err(|error| format!("清理旧 GitHub 项目缓存失败：{error}"))?;
+    }
+    let index = GitHubProjectCacheIndex {
+        version: GITHUB_PROJECT_CACHE_VERSION,
+        account_login,
+        repos: Vec::new(),
+    };
+    save_github_project_cache_index(app, &index)?;
+    Ok(index)
+}
+
+fn load_github_project_cache_index(
+    app: &AppHandle,
+) -> Result<GitHubProjectCacheIndex, String> {
+    load_github_project_cache_index_for_account(app, github_project_cache_account(app))
+}
+
+fn clear_github_binding(
+    app: &AppHandle,
+) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
+    let settings = clear_github_binding_settings(app)?;
+    load_github_project_cache_index_for_account(app, None)?;
+    Ok(settings)
+}
+
+fn switch_github_binding(
+    app: &AppHandle,
+    binding: GitHubBindingMetadata,
+) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
+    let account_login = {
+        let login = binding.login.trim().to_ascii_lowercase();
+        (!login.is_empty()).then_some(login)
+    };
+    let settings = switch_github_binding_settings(app, binding)?;
+    load_github_project_cache_index_for_account(app, account_login)?;
+    Ok(settings)
+}
+
+fn load_github_project_cache_shard(
+    app: &AppHandle,
+    shard_file: &str,
+) -> Result<Option<GitHubProjectRepoCache>, String> {
+    let store = app
+        .store(shard_file)
+        .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
+    store
+        .get(GITHUB_PROJECT_CACHE_SHARD_KEY)
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| format!("读取 GitHub 项目缓存分片失败：{error}"))
+}
+
+fn save_github_project_cache_shard(
+    app: &AppHandle,
+    shard_file: &str,
+    cache: serde_json::Value,
+) -> Result<(), String> {
+    let store = app
+        .store(shard_file)
+        .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
+    store.set(GITHUB_PROJECT_CACHE_SHARD_KEY, cache);
+    store
+        .save()
+        .map_err(|error| format!("保存 GitHub 项目缓存分片失败：{error}"))
+}
+
+fn bound_github_project_repo_cache(
+    mut value: serde_json::Value,
+    before: &serde_json::Value,
+) -> Result<(serde_json::Value, usize), String> {
+    for field in GITHUB_PROJECT_CACHE_KEYED_FIELDS {
+        let previous = before.get(field).and_then(serde_json::Value::as_object);
+        let Some(values) = value
+            .get_mut(field)
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        while values.len() > GITHUB_PROJECT_CACHE_MAX_KEYED_ITEMS {
+            let evicted = values
+                .keys()
+                .find(|key| previous.is_some_and(|previous| previous.contains_key(*key)))
+                .or_else(|| values.keys().next())
+                .cloned()
+                .expect("non-empty cache collection");
+            values.remove(&evicted);
+        }
+    }
+
+    while serde_json::to_vec(&value)
+        .map_err(|error| error.to_string())?
+        .len()
+        > GITHUB_PROJECT_CACHE_MAX_SHARD_BYTES
+    {
+        let removed = GITHUB_PROJECT_CACHE_KEYED_FIELDS.iter().any(|field| {
+            let Some(values) = value
+                .get_mut(field)
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                return false;
+            };
+            let Some(evicted) = values.keys().next().cloned() else {
+                return false;
+            };
+            values.remove(&evicted);
+            true
+        });
+        if !removed {
+            value = serde_json::to_value(GitHubProjectRepoCache::default())
+                .map_err(|error| error.to_string())?;
+            break;
+        }
+    }
+    let estimated_size = serde_json::to_vec(&value)
+        .map_err(|error| error.to_string())?
+        .len();
+    Ok((value, estimated_size))
+}
+
+fn load_github_project_repo_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<Option<GitHubProjectRepoCache>, String> {
+    let repo_key = github_project_cache_repo_key(repo_full_name)?;
+    let mut index = load_github_project_cache_index(app)?;
+    let Some(position) = index
+        .repos
+        .iter()
+        .position(|entry| entry.repo_key == repo_key)
+    else {
+        return Ok(None);
+    };
+    let shard_file = github_project_cache_shard_file(&repo_key);
+    let cache = match load_github_project_cache_shard(app, &shard_file) {
+        Ok(Some(cache)) => cache,
+        Ok(None) | Err(_) => {
+            index.repos.remove(position);
+            clear_github_project_cache_shard(app, &shard_file)?;
+            save_github_project_cache_index(app, &index)?;
+            return Ok(None);
+        }
+    };
+    index.repos[position].last_accessed_at = now_millis();
+    save_github_project_cache_index(app, &index)?;
+    Ok(Some(cache))
 }
 
 pub(super) fn github_project_cache_repo_key(repo_full_name: &str) -> Result<String, String> {
@@ -1459,21 +1694,90 @@ pub(super) fn update_github_project_repo_cache(
     repo_full_name: &str,
     update: impl FnOnce(&mut GitHubProjectRepoCache),
 ) -> Result<(), String> {
-    let key = github_project_cache_repo_key(repo_full_name)?;
-    let mut cache = load_github_project_cache(app);
-    let repo_cache = cache.repos.entry(key).or_default();
-    update(repo_cache);
-    save_github_project_cache(app, &cache)
+    let repo_key = github_project_cache_repo_key(repo_full_name)?;
+    let mut index = load_github_project_cache_index(app)?;
+    let existing_position = index
+        .repos
+        .iter()
+        .position(|entry| entry.repo_key == repo_key);
+    let shard_file = github_project_cache_shard_file(&repo_key);
+    let mut cache = load_github_project_cache_shard(app, &shard_file)?.unwrap_or_default();
+    let before = serde_json::to_value(&cache).map_err(|error| error.to_string())?;
+    update(&mut cache);
+    let after = serde_json::to_value(&cache).map_err(|error| error.to_string())?;
+    if before == after {
+        if let Some(position) = existing_position {
+            index.repos[position].last_accessed_at = now_millis();
+            return save_github_project_cache_index(app, &index);
+        }
+        return Ok(());
+    }
+
+    let position = if let Some(position) = existing_position {
+        position
+    } else {
+        index.repos.push(GitHubProjectCacheIndexEntry {
+            repo_key: repo_key.clone(),
+            last_accessed_at: now_millis(),
+            estimated_size: 0,
+        });
+        index.repos.len() - 1
+    };
+    let entry = &mut index.repos[position];
+    let (cache, estimated_size) = bound_github_project_repo_cache(after, &before)?;
+    entry.last_accessed_at = now_millis();
+    entry.estimated_size = estimated_size;
+    save_github_project_cache_shard(app, &shard_file, cache)?;
+
+    loop {
+        let total_size = index
+            .repos
+            .iter()
+            .map(|entry| entry.estimated_size)
+            .sum::<usize>();
+        if index.repos.len() <= GITHUB_PROJECT_CACHE_MAX_REPOS
+            && total_size <= GITHUB_PROJECT_CACHE_MAX_TOTAL_BYTES
+        {
+            break;
+        }
+        let Some(evicted_position) = index
+            .repos
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.repo_key != repo_key)
+            .min_by_key(|(_, entry)| entry.last_accessed_at)
+            .map(|(position, _)| position)
+        else {
+            break;
+        };
+        let evicted = index.repos.remove(evicted_position);
+        clear_github_project_cache_shard(
+            app,
+            &github_project_cache_shard_file(&evicted.repo_key),
+        )?;
+    }
+    save_github_project_cache_index(app, &index)
 }
 
 pub(super) fn clear_github_project_repo_cache(
     app: &AppHandle,
     repo_full_name: &str,
 ) -> Result<(), String> {
-    let key = github_project_cache_repo_key(repo_full_name)?;
-    let mut cache = load_github_project_cache(app);
-    cache.repos.remove(&key);
-    save_github_project_cache(app, &cache)
+    let repo_key = github_project_cache_repo_key(repo_full_name)?;
+    let mut index = load_github_project_cache_index(app)?;
+    let Some(position) = index
+        .repos
+        .iter()
+        .position(|entry| entry.repo_key == repo_key)
+    else {
+        return Ok(());
+    };
+    let entry = index.repos.remove(position);
+    clear_github_project_cache_shard(
+        app,
+        &github_project_cache_shard_file(&entry.repo_key),
+    )?;
+    save_github_project_cache_index(app, &index)
 }
 
 pub(super) fn clear_github_project_issue_cache(
@@ -5496,6 +5800,245 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
 }
 
 #[cfg(test)]
+mod project_cache_tests {
+    use super::*;
+    use crate::runtime::WorkspaceRuntime;
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct GitHubCacheTestRuntime {
+        values: Mutex<HashMap<(String, String), serde_json::Value>>,
+        saves: Mutex<Vec<String>>,
+    }
+
+    impl GitHubCacheTestRuntime {
+        fn insert(&self, file: &str, key: &str, value: serde_json::Value) {
+            self.values
+                .lock()
+                .unwrap()
+                .insert((file.to_string(), key.to_string()), value);
+        }
+
+        fn value(&self, file: &str, key: &str) -> Option<serde_json::Value> {
+            self.values
+                .lock()
+                .unwrap()
+                .get(&(file.to_string(), key.to_string()))
+                .cloned()
+        }
+
+        fn take_saves(&self) -> Vec<String> {
+            std::mem::take(&mut *self.saves.lock().unwrap())
+        }
+    }
+
+    impl WorkspaceRuntime for GitHubCacheTestRuntime {
+        fn store_get(
+            &self,
+            file: &str,
+            key: &str,
+        ) -> Result<Option<serde_json::Value>, String> {
+            Ok(self.value(file, key))
+        }
+
+        fn store_set(
+            &self,
+            file: &str,
+            key: &str,
+            value: serde_json::Value,
+        ) -> Result<(), String> {
+            self.insert(file, key, value);
+            Ok(())
+        }
+
+        fn store_delete(&self, file: &str, key: &str) -> Result<(), String> {
+            self.values
+                .lock()
+                .unwrap()
+                .remove(&(file.to_string(), key.to_string()));
+            Ok(())
+        }
+
+        fn store_save(&self, file: &str) -> Result<(), String> {
+            self.saves.lock().unwrap().push(file.to_string());
+            Ok(())
+        }
+
+        fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        fn pick_files(&self, _title: Option<&str>) -> Result<Option<Vec<String>>, String> {
+            Ok(None)
+        }
+
+        fn open_path(&self, _path: &str, _with: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn open_url(&self, _url: &str, _with: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn emit(
+            &self,
+            _event: &str,
+            _payload: serde_json::Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn github_cache_test_app(
+    ) -> (Arc<GitHubCacheTestRuntime>, crate::runtime::WorkspaceContext) {
+        let runtime = Arc::new(GitHubCacheTestRuntime::default());
+        let app = crate::runtime::WorkspaceContext::new(runtime.clone());
+        (runtime, app)
+    }
+
+    #[test]
+    fn v2_drops_only_the_legacy_cache_key() {
+        let (runtime, app) = github_cache_test_app();
+        runtime.insert(
+            STORE_FILE,
+            GITHUB_PROJECT_CACHE_KEY,
+            json!({ "repos": { "owner/legacy": {} } }),
+        );
+        runtime.insert(STORE_FILE, "business.setting", json!({ "preserved": true }));
+
+        let index =
+            load_github_project_cache_index_for_account(&app, Some("alice".to_string())).unwrap();
+
+        assert_eq!(index.version, GITHUB_PROJECT_CACHE_VERSION);
+        assert_eq!(index.account_login.as_deref(), Some("alice"));
+        assert!(runtime.value(STORE_FILE, GITHUB_PROJECT_CACHE_KEY).is_none());
+        assert_eq!(
+            runtime.value(STORE_FILE, "business.setting"),
+            Some(json!({ "preserved": true }))
+        );
+    }
+
+    #[test]
+    fn v2_bounds_keyed_collections_and_repo_shards() {
+        let (_runtime, app) = github_cache_test_app();
+        load_github_project_cache_index_for_account(&app, None).unwrap();
+
+        update_github_project_repo_cache(&app, "owner/current", |cache| {
+            for index in 0..20 {
+                cache.issues.insert(format!("query-{index:02}"), Vec::new());
+            }
+        })
+        .unwrap();
+        let current = load_github_project_repo_cache(&app, "owner/current")
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.issues.len(), GITHUB_PROJECT_CACHE_MAX_KEYED_ITEMS);
+        update_github_project_repo_cache(&app, "owner/current", |cache| {
+            cache.issues.insert("latest".to_string(), Vec::new());
+        })
+        .unwrap();
+        let current = load_github_project_repo_cache(&app, "owner/current")
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.issues.len(), GITHUB_PROJECT_CACHE_MAX_KEYED_ITEMS);
+        assert!(current.issues.contains_key("latest"));
+
+        for index in 0..13 {
+            update_github_project_repo_cache(&app, &format!("owner/repo-{index:02}"), |cache| {
+                cache.issues.insert("recent".to_string(), Vec::new());
+            })
+            .unwrap();
+        }
+        let index = load_github_project_cache_index_for_account(&app, None).unwrap();
+        assert_eq!(index.repos.len(), GITHUB_PROJECT_CACHE_MAX_REPOS);
+        assert!(index
+            .repos
+            .iter()
+            .any(|entry| entry.repo_key == "owner/repo-12"));
+    }
+
+    #[test]
+    fn v2_account_change_clears_listed_shards() {
+        let (runtime, app) = github_cache_test_app();
+        load_github_project_cache_index_for_account(&app, None).unwrap();
+        update_github_project_repo_cache(&app, "owner/repo", |cache| {
+            cache.issues.insert("query".to_string(), Vec::new());
+        })
+        .unwrap();
+        let before = load_github_project_cache_index_for_account(&app, None).unwrap();
+        let shard_file = github_project_cache_shard_file(&before.repos[0].repo_key);
+        assert!(runtime
+            .value(&shard_file, GITHUB_PROJECT_CACHE_SHARD_KEY)
+            .is_some());
+
+        let after =
+            load_github_project_cache_index_for_account(&app, Some("bob".to_string())).unwrap();
+
+        assert!(after.repos.is_empty());
+        assert_eq!(after.account_login.as_deref(), Some("bob"));
+        assert!(runtime
+            .value(&shard_file, GITHUB_PROJECT_CACHE_SHARD_KEY)
+            .is_none());
+    }
+
+    #[test]
+    fn v2_reads_only_save_the_index() {
+        let (runtime, app) = github_cache_test_app();
+        load_github_project_cache_index_for_account(&app, None).unwrap();
+        update_github_project_repo_cache(&app, "owner/repo", |cache| {
+            cache.issues.insert("query".to_string(), Vec::new());
+        })
+        .unwrap();
+        runtime.take_saves();
+
+        let cache = load_github_project_repo_cache(&app, "owner/repo")
+            .unwrap()
+            .unwrap();
+        assert!(cache.issues.contains_key("query"));
+        let saves = runtime.take_saves();
+        assert!(!saves.is_empty());
+        assert!(saves
+            .iter()
+            .all(|file| file == GITHUB_PROJECT_CACHE_INDEX_FILE));
+
+        update_github_project_repo_cache(&app, "owner/repo", |_| {}).unwrap();
+        let saves = runtime.take_saves();
+        assert!(!saves.is_empty());
+        assert!(saves
+            .iter()
+            .all(|file| file == GITHUB_PROJECT_CACHE_INDEX_FILE));
+    }
+
+    #[test]
+    fn v2_update_rewrites_only_the_target_repo_shard_and_index() {
+        let (runtime, app) = github_cache_test_app();
+        load_github_project_cache_index_for_account(&app, None).unwrap();
+        for repo in ["owner/first", "owner/second"] {
+            update_github_project_repo_cache(&app, repo, |cache| {
+                cache.issues.insert("initial".to_string(), Vec::new());
+            })
+            .unwrap();
+        }
+        let first_shard = github_project_cache_shard_file("owner/first");
+        let second_shard = github_project_cache_shard_file("owner/second");
+        runtime.take_saves();
+
+        update_github_project_repo_cache(&app, "owner/first", |cache| {
+            cache.issues.insert("changed".to_string(), Vec::new());
+        })
+        .unwrap();
+
+        let saves = runtime.take_saves();
+        assert!(saves.iter().any(|file| file == &first_shard));
+        assert!(saves
+            .iter()
+            .any(|file| file == GITHUB_PROJECT_CACHE_INDEX_FILE));
+        assert!(!saves.iter().any(|file| file == &second_shard));
+        assert!(!saves.iter().any(|file| file == STORE_FILE));
+    }
+}
+
+#[cfg(test)]
 mod repository_scope_tests {
     use super::*;
     use serde_json::json;
@@ -6012,12 +6555,10 @@ pub async fn github_get_repo_management(
         OperationKind::GitHubRead,
         "读取 GitHub 仓库设置",
         move || {
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
-                    .and_then(|repo_cache| repo_cache.management.clone())
+                if let Some(cached) =
+                    load_github_project_repo_cache(&app, &repo_full_name)?
+                        .and_then(|repo_cache| repo_cache.management)
                 {
                     return Ok(cached);
                 }
@@ -6712,11 +7253,8 @@ pub async fn github_list_pull_requests(
                 review.as_deref(),
                 search_query.as_deref(),
             );
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.pull_requests.get(&pull_key).cloned())
                 {
                     return Ok(cached);
@@ -6897,12 +7435,9 @@ pub async fn github_get_pull_request_discussion(
             if pull_number == 0 {
                 return Err("Pull Request 编号不合法".to_string());
             }
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             let discussion_key = pull_number.to_string();
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| {
                         repo_cache
                             .pull_request_discussions
@@ -7237,11 +7772,8 @@ pub async fn github_list_pull_request_checks(
                 return Err("Pull Request 编号不合法".to_string());
             }
             let checks_key = pull_number.to_string();
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.pull_request_checks.get(&checks_key).cloned())
                 {
                     return Ok(cached);
@@ -7331,11 +7863,8 @@ pub async fn github_list_issues(
                 project.as_deref(),
                 search_query.as_deref(),
             );
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.issues.get(&issue_key).cloned())
                 {
                     return Ok(cached);
@@ -7468,12 +7997,9 @@ pub async fn github_get_issue_discussion(
             if issue_number == 0 {
                 return Err("Issue 编号不合法".to_string());
             }
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             let discussion_key = issue_number.to_string();
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| {
                         repo_cache.issue_discussions.get(&discussion_key).cloned()
                     })
@@ -7533,10 +8059,10 @@ pub async fn github_get_issue_filter_metadata(
         OperationKind::GitHubRead,
         "读取 GitHub Issue 筛选项",
         move || {
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                let cache = load_github_project_cache(&app);
-                if let Some(repo_cache) = cache.repos.get(&cache_key) {
+                if let Some(repo_cache) =
+                    load_github_project_repo_cache(&app, &repo_full_name)?
+                {
                     if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
                         if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
                             return Ok(cached);
@@ -7597,12 +8123,9 @@ fn list_github_issue_values(
     error_label: &'static str,
     parse_values: impl Fn(Response) -> Result<Vec<String>, String>,
 ) -> Result<Vec<String>, String> {
-    let cache_key = github_project_cache_repo_key(repo_full_name)?;
     if github_project_cache_enabled(force_refresh) {
-        if let Some(cached) = load_github_project_cache(app)
-            .repos
-            .get(&cache_key)
-            .and_then(cache_read)
+        if let Some(cached) = load_github_project_repo_cache(app, repo_full_name)?
+            .and_then(|repo_cache| cache_read(&repo_cache))
         {
             return Ok(cached);
         }
@@ -7834,11 +8357,8 @@ pub async fn github_list_workflow_runs(
         "读取 GitHub Actions",
         move || {
             let runs_key = github_workflow_runs_cache_key(per_page);
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.workflow_runs.get(&runs_key).cloned())
                 {
                     return Ok(cached);
@@ -8311,11 +8831,8 @@ pub async fn github_list_repo_commits(
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
             let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.commits.get(&commits_key).cloned())
                 {
                     return Ok(cached);
@@ -8364,11 +8881,8 @@ pub async fn github_get_repo_commit_detail(
             if hash.is_empty() {
                 return Err("提交 hash 不能为空".to_string());
             }
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| {
                         repo_cache.commit_details.get(&hash).cloned().or_else(|| {
                             repo_cache
@@ -8424,12 +8938,10 @@ pub async fn github_list_releases(
         OperationKind::GitHubRead,
         "读取 GitHub Releases",
         move || {
-            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) = load_github_project_cache(&app)
-                    .repos
-                    .get(&cache_key)
-                    .and_then(|repo_cache| repo_cache.releases.clone())
+                if let Some(cached) =
+                    load_github_project_repo_cache(&app, &repo_full_name)?
+                        .and_then(|repo_cache| repo_cache.releases)
                 {
                     return Ok(cached);
                 }
