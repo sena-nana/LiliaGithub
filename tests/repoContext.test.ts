@@ -75,6 +75,8 @@ describe("repoContext", () => {
     expect(context.capabilities.files).toMatchObject({ available: true, provider: "github" });
     expect(context.capabilities.readme).toMatchObject({ available: true, provider: "github" });
     expect(context.capabilities.pulls).toMatchObject({ available: true, provider: "github" });
+    expect(context.capabilities.settings).toMatchObject({ available: true, provider: "github" });
+    expect(context.capabilities.deleteRemote).toMatchObject({ available: true, provider: "github" });
   });
 
   it("blocks GitHub permission content for system-git local repos without disabling local operations", () => {

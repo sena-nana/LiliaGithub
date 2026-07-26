@@ -1237,9 +1237,13 @@ watch(() => props.repoFullName, () => {
   void applyProjectRouteState();
 });
 
-watch(() => resolvedRepoContext.value.capabilities.issues.available, (githubAvailable) => {
+watch(() => resolvedRepoContext.value.capabilities.issues.available, (githubAvailable, wasGitHubAvailable) => {
   if (!githubAvailable) {
     clearBlockedGitHubState();
+    return;
+  }
+  if (wasGitHubAvailable === false && isGitHubProjectSection(activeSection.value)) {
+    void ensureSectionData(activeSection.value);
   }
 });
 
