@@ -70,6 +70,15 @@ impl OperationKind {
             | Self::LaunchControl => 2,
         }
     }
+
+    pub fn execution_class(self) -> ExecutionClass {
+        match self {
+            Self::LocalRead | Self::LocalWrite => ExecutionClass::Blocking,
+            Self::GitHubRead | Self::GitHubWrite | Self::GitHubTransfer => ExecutionClass::Io,
+            Self::WorkspaceAnalysis | Self::Bulk => ExecutionClass::Cpu,
+            Self::LaunchControl => ExecutionClass::Orchestration,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -665,7 +674,7 @@ impl OperationRunner {
                 plugin_generation: 1,
                 accepted_protocol_ids: vec![protocol.into()],
                 purity: RunnerPurity::Effectful,
-                execution_class: ExecutionClass::Blocking,
+                execution_class: kind.execution_class(),
                 invocation_mode: InvocationMode::SyncExclusive,
                 concurrency: RunnerConcurrency::Exclusive,
                 input_schema: json!({ "type": "object" }),
@@ -789,10 +798,31 @@ mod tests {
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::{Arc, Condvar};
+    use std::time::Duration;
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static TEST_LOCK: Mutex<()> = Mutex::new(());
         TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn operation_runners_use_the_execution_class_matching_their_work() {
+        for (kind, expected) in [
+            (OperationKind::LocalRead, ExecutionClass::Blocking),
+            (OperationKind::LocalWrite, ExecutionClass::Blocking),
+            (OperationKind::GitHubRead, ExecutionClass::Io),
+            (OperationKind::GitHubWrite, ExecutionClass::Io),
+            (OperationKind::GitHubTransfer, ExecutionClass::Io),
+            (OperationKind::WorkspaceAnalysis, ExecutionClass::Cpu),
+            (OperationKind::Bulk, ExecutionClass::Cpu),
+            (OperationKind::LaunchControl, ExecutionClass::Orchestration),
+        ] {
+            assert_eq!(kind.execution_class(), expected);
+            assert_eq!(
+                OperationRunner::new(kind).descriptor().execution_class,
+                expected
+            );
+        }
     }
 
     #[test]
@@ -1057,14 +1087,15 @@ mod tests {
     }
 
     async fn wait_for_task_status(title: &str, status: &str) {
-        for _ in 0..200 {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
             if workspace_list_tasks()
                 .iter()
                 .any(|task| task.title == title && task.status == status)
             {
                 return;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         panic!("task {title} did not reach {status}");
     }

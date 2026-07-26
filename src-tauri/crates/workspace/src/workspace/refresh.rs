@@ -13,13 +13,14 @@ use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
 use lilia_github_contracts::workspace::{RepoRefreshRequest, RepoRefreshedEvent};
 use mutsuki_runtime_contracts::{
-    CompletionBatch, EntryCompletion, ExecutionClass, OrderingRequirement, ResourceAccessMode,
-    ResourceRequirement, RunnerBatchCapability, RunnerDescriptor, RunnerMode, RunnerPurity,
-    RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle, WorkBatch,
+    CompletionBatch, DispatchLane, EntryCompletion, ExecutionClass, OrderingRequirement,
+    ResourceAccessMode, ResourceRequirement, RunnerBatchCapability, RunnerDescriptor, RunnerMode,
+    RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
-    DefaultScheduler, HostRuntimeConfig, RunnerLimits, ScheduleInput, SchedulerPolicy,
+    DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
+    SchedulerPolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -58,7 +59,20 @@ impl SchedulerPolicy for RefreshSchedulerPolicy {
 
 pub fn refresh_runtime_config() -> HostRuntimeConfig {
     let mut config = HostRuntimeConfig {
-        blocking_threads: 4,
+        execution_domains: vec![
+            ExecutionDomainConfig::new(
+                "interactive-orchestration",
+                vec![ExecutionClass::Orchestration],
+                1,
+            ),
+            ExecutionDomainConfig::new("github-io", vec![ExecutionClass::Io], 2),
+            ExecutionDomainConfig::new(
+                "workspace-cpu",
+                vec![ExecutionClass::Cpu, ExecutionClass::Script],
+                1,
+            ),
+            ExecutionDomainConfig::new("local-blocking", vec![ExecutionClass::Blocking], 2),
+        ],
         scheduler_policy: Arc::new(RefreshSchedulerPolicy),
         ..HostRuntimeConfig::default()
     };
@@ -170,9 +184,19 @@ struct RepoRefreshRunner {
 
 impl RepoRefreshRunner {
     fn new(lane: RefreshLane) -> Self {
-        let (runner_id, protocol_id, max_entries) = match lane {
-            RefreshLane::Local => (LOCAL_REFRESH_PROTOCOL, LOCAL_REFRESH_PROTOCOL, 4),
-            RefreshLane::Remote => (REMOTE_REFRESH_PROTOCOL, REMOTE_REFRESH_PROTOCOL, 1),
+        let (runner_id, protocol_id, max_entries, execution_class) = match lane {
+            RefreshLane::Local => (
+                LOCAL_REFRESH_PROTOCOL,
+                LOCAL_REFRESH_PROTOCOL,
+                4,
+                ExecutionClass::Blocking,
+            ),
+            RefreshLane::Remote => (
+                REMOTE_REFRESH_PROTOCOL,
+                REMOTE_REFRESH_PROTOCOL,
+                1,
+                ExecutionClass::Io,
+            ),
         };
         Self {
             lane,
@@ -182,7 +206,7 @@ impl RepoRefreshRunner {
                 plugin_generation: 1,
                 accepted_protocol_ids: vec![protocol_id.into()],
                 purity: RunnerPurity::Pure,
-                execution_class: ExecutionClass::Blocking,
+                execution_class,
                 invocation_mode: mutsuki_runtime_contracts::InvocationMode::SyncExclusive,
                 concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Exclusive,
                 input_schema: json!({ "type": "object" }),
@@ -266,7 +290,7 @@ impl Runner for RepoRefreshRunner {
 }
 
 fn execute_runtime_task(lane: RefreshLane, task: Task) -> RunnerResult {
-    let Ok(payload) = serde_json::from_value::<RefreshPayload>(task.payload) else {
+    let Ok(payload) = serde_json::from_value::<RefreshPayload>(task.payload.into()) else {
         let mut result = RunnerResult::completed(task.task_id);
         result.status = RunnerStatus::Failed;
         return result;
@@ -523,6 +547,7 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
         .map_err(|error| error.to_string())?;
         let mut task = Task::new(run_id.clone(), protocol, payload);
         task.priority = mutsuki_priority(&entry.request.priority);
+        task.dispatch_lane = mutsuki_lane(&entry.request.priority, &entry.request.trigger);
         task.runner_hint = Some(protocol.to_string());
         task.correlation_id = Some(entry.task_id.clone());
         (
@@ -592,6 +617,14 @@ fn mutsuki_priority(priority: &str) -> i64 {
         "high" => 100,
         "normal" => 0,
         _ => -100,
+    }
+}
+
+fn mutsuki_lane(priority: &str, trigger: &str) -> DispatchLane {
+    match (priority, trigger) {
+        ("high", _) => DispatchLane::Interactive,
+        ("low", _) | (_, "autoSync") => DispatchLane::Background,
+        _ => DispatchLane::Normal,
     }
 }
 
@@ -1084,16 +1117,39 @@ mod tests {
     }
 
     #[test]
-    fn runners_expose_local_four_remote_one_blocking_capacity() {
+    fn runners_and_runtime_config_assign_real_execution_domains() {
         let runners = repo_refresh_runners();
         assert_eq!(
             runners[0].descriptor().execution_class,
             ExecutionClass::Blocking
         );
+        assert_eq!(runners[1].descriptor().execution_class, ExecutionClass::Io);
         assert_eq!(runners[0].descriptor().batch.max_entry_concurrency, 4);
         assert_eq!(runners[1].descriptor().batch.max_entry_concurrency, 1);
         let config = refresh_runtime_config();
-        assert_eq!(config.blocking_threads, 4);
+        assert_eq!(config.execution_domains.len(), 4);
+        for (domain_id, execution_classes, threads) in [
+            (
+                "interactive-orchestration",
+                vec![ExecutionClass::Orchestration],
+                1,
+            ),
+            ("github-io", vec![ExecutionClass::Io], 2),
+            (
+                "workspace-cpu",
+                vec![ExecutionClass::Cpu, ExecutionClass::Script],
+                1,
+            ),
+            ("local-blocking", vec![ExecutionClass::Blocking], 2),
+        ] {
+            let domain = config
+                .execution_domains
+                .iter()
+                .find(|domain| domain.domain_id == domain_id)
+                .expect("configured execution domain");
+            assert_eq!(domain.execution_classes, execution_classes);
+            assert_eq!(domain.threads, threads);
+        }
         assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 1);
         assert_eq!(config.runner_limits[REMOTE_REFRESH_PROTOCOL].max_running, 1);
         for (kind, expected) in [
