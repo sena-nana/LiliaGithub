@@ -209,7 +209,8 @@ fn execute_git_work(kind: OperationKind, payload: &Value) -> Result<Value, Strin
                 .ok_or_else(|| "analysis reference payload requires snapshot".to_string())?;
             let mut result = (0, 0);
             for _ in 0..iterations {
-                result = analyze_snapshot(snapshot);
+                result = analyze_snapshot(std::hint::black_box(snapshot));
+                std::hint::black_box(result);
             }
             result
         }

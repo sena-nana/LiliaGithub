@@ -85,6 +85,7 @@ fn main() -> Result<(), String> {
             "minimum_background_work_ms": options.min_background_ms,
             "calibration_safety_factor": 10,
             "calibration_attempts_per_step": 3,
+            "calibration_max_iterations": 67_108_864,
             "pressure_establishment_attempts": 3,
             "calibrated": calibrated,
             "workspace": options.workspace,
@@ -187,7 +188,7 @@ fn calibrate_work(
         }
         iterations = iterations
             .checked_mul(2)
-            .filter(|value| *value <= 1_048_576)
+            .filter(|value| *value <= 67_108_864)
             .ok_or_else(|| format!("unable to calibrate {kind:?} to {minimum_ms}ms"))?;
     }
 }
