@@ -10,6 +10,10 @@ use crate::workspace::github::{
     remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
 };
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
+use crate::workspace::path_relocation::{
+    ensure_git_repo_path, path_already_matches_group, prepare_directory_relocation,
+    recover_directory_relocation, remap_repo_id_in_settings, target_path_for_group,
+};
 use crate::workspace::repo_guard::{
     canonical_repo_guard_key, repo_resource_id, with_repo_guard, with_repo_guards, RepoAccess,
 };
@@ -24,10 +28,6 @@ use crate::workspace::shared::{
     compatible_path_text, contribution_identity_key, contribution_identity_matches,
     current_utc_day_index, format_day_index, local_contribution_identities, now_millis,
     remove_local_contribution_cache, repo_git_identity,
-};
-use crate::workspace::path_relocation::{
-    ensure_git_repo_path, path_already_matches_group, relocate_directory, remap_repo_id_in_settings,
-    target_path_for_group,
 };
 use lilia_github_contracts::workspace::{
     AccountPreferences, CachedContributionResult, CachedRepoSummary, ContributionIdentity,
@@ -47,9 +47,11 @@ pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v2";
 const LEGACY_STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
+const REPO_RELOCATION_INTENT_KEY: &str = "workspace.repoRelocationIntent";
 #[cfg(target_os = "windows")]
 const NTFS_REQUIRED: &str = "工作区必须位于 NTFS 文件系统";
 const SETTINGS_VERSION: u32 = 3;
+const REPO_RELOCATION_INTENT_VERSION: u32 = 1;
 const RECENT_LOCAL_REPO_LIMIT: usize = 12;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -96,6 +98,40 @@ struct WorkspaceStartupCacheDocument {
     anonymous: HashMap<String, WorkspaceStartupCache>,
     #[serde(default)]
     profiles: HashMap<String, HashMap<String, WorkspaceStartupCache>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RepoRelocationPhase {
+    Prepared,
+    FilesystemApplied,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoRelocationIntent {
+    version: u32,
+    profile_login: Option<String>,
+    workspace_id: String,
+    root_id: String,
+    old_repo_id: String,
+    new_repo_id: String,
+    source_path: String,
+    destination_path: String,
+    old_common_dir: String,
+    new_common_dir: String,
+    path_mode: WorkspaceRepoPathMode,
+    previous_group_id: Option<String>,
+    target_group_id: Option<String>,
+    destination_parent_existed: bool,
+    phase: RepoRelocationPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RepoRelocationSettingsState {
+    Old,
+    New,
+    Equivalent,
 }
 
 fn startup_cache_write_lock() -> &'static Mutex<()> {
@@ -330,6 +366,224 @@ fn write_settings_document(
         serde_json::to_value(document).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| format!("保存配置失败：{e}"))
+}
+
+fn read_repo_relocation_intent(app: &AppHandle) -> Result<Option<RepoRelocationIntent>, String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("打开迁移恢复记录失败：{error}"))?;
+    let Some(value) = store.get(REPO_RELOCATION_INTENT_KEY) else {
+        return Ok(None);
+    };
+    let intent = serde_json::from_value::<RepoRelocationIntent>(value)
+        .map_err(|error| format!("读取迁移恢复记录失败：{error}"))?;
+    if intent.version != REPO_RELOCATION_INTENT_VERSION {
+        return Err(format!("不支持的迁移恢复记录版本：{}", intent.version));
+    }
+    Ok(Some(intent))
+}
+
+fn write_repo_relocation_intent(
+    app: &AppHandle,
+    intent: &RepoRelocationIntent,
+) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("打开迁移恢复记录失败：{error}"))?;
+    store.set(
+        REPO_RELOCATION_INTENT_KEY,
+        serde_json::to_value(intent).map_err(|error| error.to_string())?,
+    );
+    store
+        .save()
+        .map_err(|error| format!("保存迁移恢复记录失败：{error}"))
+}
+
+fn clear_repo_relocation_intent_and_cache(
+    app: &AppHandle,
+    intent: &RepoRelocationIntent,
+) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("打开迁移恢复记录失败：{error}"))?;
+    if let Some(mut cache) = store
+        .get(STARTUP_CACHE_KEY)
+        .and_then(|value| serde_json::from_value::<WorkspaceStartupCacheDocument>(value).ok())
+    {
+        let slots = match intent.profile_login.as_deref() {
+            Some(login) => cache.profiles.entry(login.to_string()).or_default(),
+            None => &mut cache.anonymous,
+        };
+        slots.remove(&intent.workspace_id);
+        store.set(
+            STARTUP_CACHE_KEY,
+            serde_json::to_value(cache).map_err(|error| error.to_string())?,
+        );
+    }
+    store.delete(LEGACY_STARTUP_CACHE_KEY);
+    store.delete(REPO_RELOCATION_INTENT_KEY);
+    if let Err(error) = store.save() {
+        store.set(
+            REPO_RELOCATION_INTENT_KEY,
+            serde_json::to_value(intent).map_err(|serialize_error| serialize_error.to_string())?,
+        );
+        return Err(format!("清理迁移恢复记录失败：{error}"));
+    }
+    Ok(())
+}
+
+fn workspace_references_repo_id(workspace: &NamedWorkspace, repo_id: &str) -> bool {
+    workspace.managed_repo_ids.iter().any(|id| id == repo_id)
+        || workspace.hidden_repo_ids.iter().any(|id| id == repo_id)
+        || workspace.system_git_repo_ids.iter().any(|id| id == repo_id)
+        || workspace.favorite_repo_ids.iter().any(|id| id == repo_id)
+        || workspace
+            .organization_grouping_resolved_repo_ids
+            .iter()
+            .any(|id| id == repo_id)
+        || workspace
+            .repo_groups
+            .iter()
+            .any(|group| group.repo_ids.iter().any(|id| id == repo_id))
+        || workspace
+            .recent_local_repos
+            .iter()
+            .any(|visit| visit.repo_id == repo_id)
+        || workspace.project_launch_configs.contains_key(repo_id)
+        || workspace.repo_sync_preferences.contains_key(repo_id)
+        || workspace.repo_remote_sync_policies.contains_key(repo_id)
+        || workspace.local_contribution_cache.contains_key(repo_id)
+        || workspace.repo_bindings.contains_key(repo_id)
+}
+
+fn settings_reference_repo_id(settings: &WorkspaceSettings, repo_id: &str) -> bool {
+    settings
+        .active_workspace
+        .as_ref()
+        .is_some_and(|workspace| workspace_references_repo_id(workspace, repo_id))
+}
+
+fn workspace_repo_group_id(
+    workspace: &NamedWorkspace,
+    repo_id: &str,
+) -> Result<Option<String>, String> {
+    let mut groups = workspace
+        .repo_groups
+        .iter()
+        .filter(|group| group.repo_ids.iter().any(|id| id == repo_id));
+    let group_id = groups.next().map(|group| group.id.clone());
+    if groups.next().is_some() {
+        return Err(format!("仓库同时存在于多个分组：{repo_id}"));
+    }
+    Ok(group_id)
+}
+
+fn relocation_settings_state(
+    document: &WorkspaceSettingsDocument,
+    intent: &RepoRelocationIntent,
+) -> Result<RepoRelocationSettingsState, String> {
+    let profile = match intent.profile_login.as_deref() {
+        Some(login) => document
+            .profiles
+            .get(login)
+            .ok_or_else(|| format!("迁移恢复找不到账户配置：{login}"))?,
+        None => &document.anonymous,
+    };
+    let workspace = profile
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == intent.workspace_id)
+        .ok_or_else(|| format!("迁移恢复找不到工作区：{}", intent.workspace_id))?;
+    if !workspace.roots.iter().any(|root| root.id == intent.root_id) {
+        return Err(format!("迁移恢复找不到工作区根目录：{}", intent.root_id));
+    }
+    let expected_prefix = format!("local:{}/", intent.root_id);
+    if !intent.old_repo_id.starts_with(&expected_prefix)
+        || !intent.new_repo_id.starts_with(&expected_prefix)
+    {
+        return Err(format!(
+            "迁移恢复记录的仓库 ID 与根目录不匹配：{}；{}",
+            intent.old_repo_id, intent.new_repo_id
+        ));
+    }
+    if intent.path_mode == WorkspaceRepoPathMode::Move {
+        let has_old = workspace_references_repo_id(workspace, &intent.old_repo_id);
+        let has_new = workspace_references_repo_id(workspace, &intent.new_repo_id);
+        return match (has_old, has_new) {
+            (true, false) => Ok(RepoRelocationSettingsState::Old),
+            (false, true) => Ok(RepoRelocationSettingsState::New),
+            _ => Err(format!(
+                "迁移恢复无法判断设置状态：旧仓库 ID {}；新仓库 ID {}",
+                intent.old_repo_id, intent.new_repo_id
+            )),
+        };
+    }
+    if !workspace.managed_repo_ids.contains(&intent.old_repo_id) {
+        return Err(format!("迁移恢复找不到仓库设置：{}", intent.old_repo_id));
+    }
+    if intent.previous_group_id == intent.target_group_id {
+        return Ok(RepoRelocationSettingsState::Equivalent);
+    }
+    let current_group = workspace_repo_group_id(workspace, &intent.old_repo_id)?;
+    if current_group == intent.previous_group_id {
+        Ok(RepoRelocationSettingsState::Old)
+    } else if current_group == intent.target_group_id {
+        Ok(RepoRelocationSettingsState::New)
+    } else {
+        Err(format!(
+            "迁移恢复无法判断仓库分组状态：{}",
+            intent.old_repo_id
+        ))
+    }
+}
+
+fn reconcile_pending_repo_relocation_locked(app: &AppHandle) -> Result<(), String> {
+    let Some(intent) = read_repo_relocation_intent(app)? else {
+        return Ok(());
+    };
+    let source = PathBuf::from(&intent.source_path);
+    let destination = PathBuf::from(&intent.destination_path);
+    let (document, _) = read_settings_document(app);
+    let settings_state = relocation_settings_state(&document, &intent).map_err(|error| {
+        format!(
+            "{error}；旧路径：{}；新路径：{}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    let keep_destination = match settings_state {
+        RepoRelocationSettingsState::Old => false,
+        RepoRelocationSettingsState::New => true,
+        RepoRelocationSettingsState::Equivalent => fs::symlink_metadata(&destination).is_ok(),
+    };
+    with_repo_guards(
+        [
+            PathBuf::from(&intent.old_common_dir),
+            PathBuf::from(&intent.new_common_dir),
+        ],
+        RepoAccess::Write,
+        || {
+            recover_directory_relocation(
+                &source,
+                &destination,
+                intent.path_mode,
+                intent.destination_parent_existed,
+                keep_destination,
+            )
+            .map_err(|error| {
+                format!(
+                    "{error}；迁移阶段：{:?}；旧路径：{}；新路径：{}",
+                    intent.phase,
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+            clear_repo_relocation_intent_and_cache(app, &intent)?;
+            reset_workspace_runtime_state(app);
+            crate::workspace::watcher::sync_repo_watchers(app);
+            Ok(())
+        },
+    )
 }
 
 fn profile_from_document(document: &WorkspaceSettingsDocument) -> WorkspaceProfile {
@@ -600,7 +854,10 @@ pub(super) fn switch_github_binding(
     binding: lilia_github_contracts::workspace::GitHubBindingMetadata,
 ) -> Result<WorkspaceSettings, String> {
     let (mut document, _) = read_settings_document(app);
-    let previous_login = document.binding.as_ref().map(|existing| existing.login.clone());
+    let previous_login = document
+        .binding
+        .as_ref()
+        .map(|existing| existing.login.clone());
     document.binding = Some(binding);
     write_settings_document(app, &document)?;
     reset_workspace_runtime_state(app);
@@ -614,7 +871,10 @@ pub(super) fn switch_github_binding(
 
 pub(super) fn clear_github_binding(app: &AppHandle) -> Result<WorkspaceSettings, String> {
     let (mut document, _) = read_settings_document(app);
-    let previous_login = document.binding.as_ref().map(|binding| binding.login.clone());
+    let previous_login = document
+        .binding
+        .as_ref()
+        .map(|binding| binding.login.clone());
     document.binding = None;
     write_settings_document(app, &document)?;
     reset_workspace_runtime_state(app);
@@ -1495,7 +1755,7 @@ fn prune_workspace_root_settings(workspace: &mut NamedWorkspace, root_id: &str) 
     workspace.local_contribution_cache.retain(|id, _| keep(id));
 }
 
-pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
+fn workspace_get_settings_unlocked(app: &AppHandle) -> WorkspaceSettings {
     let mut settings = load_settings(&app);
     if migrate_remote_repo_shortcuts(&mut settings) {
         let _ = save_settings(&app, &settings);
@@ -1503,15 +1763,31 @@ pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
     visible_workspace_settings(settings)
 }
 
-pub fn workspace_get_bootstrap(app: AppHandle) -> WorkspaceBootstrap {
-    let settings = workspace_get_settings(app.clone());
+pub fn workspace_get_settings(app: AppHandle) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    reconcile_pending_repo_relocation_locked(&app)?;
+    Ok(workspace_get_settings_unlocked(&app))
+}
+
+fn workspace_get_bootstrap_unlocked(app: &AppHandle) -> WorkspaceBootstrap {
+    let settings = workspace_get_settings_unlocked(app);
     let startup_cache =
-        load_startup_cache(&app).filter(|cache| startup_cache_matches_settings(cache, &settings));
+        load_startup_cache(app).filter(|cache| startup_cache_matches_settings(cache, &settings));
     WorkspaceBootstrap {
         settings,
         startup_cache,
         context_revision: current_context_revision(),
     }
+}
+
+pub fn workspace_get_bootstrap(app: AppHandle) -> Result<WorkspaceBootstrap, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    reconcile_pending_repo_relocation_locked(&app)?;
+    Ok(workspace_get_bootstrap_unlocked(&app))
 }
 
 fn validate_workspace_name(
@@ -1583,7 +1859,7 @@ fn write_workspace_document(
     if reset_runtime {
         reset_workspace_runtime_state(app);
     }
-    Ok(workspace_get_bootstrap(app.clone()))
+    Ok(workspace_get_bootstrap_unlocked(app))
 }
 
 pub fn workspace_create(
@@ -1633,7 +1909,7 @@ pub fn workspace_rename(
         .ok_or_else(|| "未找到工作区".to_string())?;
     workspace.name = name;
     write_settings_document(&app, &document)?;
-    Ok(workspace_get_settings(app))
+    Ok(workspace_get_settings_unlocked(&app))
 }
 
 pub fn workspace_update_recent_context(
@@ -1672,7 +1948,7 @@ pub fn workspace_switch(
         return Err("未找到工作区".to_string());
     }
     if profile.active_workspace_id.as_deref() == Some(workspace_id) {
-        return Ok(workspace_get_bootstrap(app));
+        return Ok(workspace_get_bootstrap_unlocked(&app));
     }
     if let Some(active_id) = profile.active_workspace_id.as_deref() {
         if crate::workspace::tasks::has_active_workspace_mutation(active_id) {
@@ -1829,7 +2105,7 @@ pub fn workspace_update_view_preferences(
         .ok_or_else(|| "未找到工作区".to_string())?;
     workspace.view_preferences = preferences;
     write_settings_document(&app, &document)?;
-    Ok(workspace_get_settings(app))
+    Ok(workspace_get_settings_unlocked(&app))
 }
 
 pub fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache> {
@@ -2539,6 +2815,12 @@ pub async fn workspace_move_repo_to_group(
     if operation_repo_id.is_empty() {
         return Err("仓库 ID 不能为空".to_string());
     }
+    {
+        let _guard = settings_write_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        reconcile_pending_repo_relocation_locked(&app)?;
+    }
     run_repo_visible_write_blocking_with_launch(
         app.clone(),
         operation_repo_id,
@@ -2559,11 +2841,11 @@ fn workspace_move_repo_to_group_guarded(
     if crate::workspace::launch::has_running_launch_for_repo(normalized) {
         return Err("该仓库有正在运行的启动任务，请先停止后再迁移".to_string());
     }
-    let (root, current_path) = repo_root_and_path_by_id(&app, normalized)?;
     let path_mode = path_mode.unwrap_or_default();
     let _guard = settings_write_lock()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
+    let (root, current_path) = repo_root_and_path_by_id(&app, normalized)?;
     let mut settings = load_settings(&app);
     let requested_group_id = group_id
         .as_deref()
@@ -2602,36 +2884,139 @@ fn workspace_move_repo_to_group_guarded(
     }
 
     let old_settings = settings.clone();
-    let old_common_dir =
-        git_common_dir(&current_path).unwrap_or_else(|| current_path.clone());
-    move_repo_to_group(&mut settings, &active_repo_id, requested_group_id)?;
+    let previous_groups = settings
+        .repo_groups
+        .iter()
+        .filter(|group| group.repo_ids.iter().any(|id| id == normalized))
+        .map(|group| group.id.clone())
+        .collect::<Vec<_>>();
+    let previous_group_id = match previous_groups.as_slice() {
+        [] => None,
+        [group_id] => Some(group_id.clone()),
+        _ => return Err("仓库不能同时属于多个分组".to_string()),
+    };
+    let workspace_id = settings
+        .active_workspace_id
+        .clone()
+        .ok_or_else(|| "当前没有工作区".to_string())?;
+    let root_id = normalized
+        .strip_prefix("local:")
+        .and_then(|value| value.split_once('/'))
+        .map(|(root_id, _)| root_id.to_string())
+        .ok_or_else(|| "仓库 ID 不属于工作区根目录".to_string())?;
+    let profile_login = settings
+        .github_binding
+        .as_ref()
+        .and_then(|binding| normalized_login(&binding.login));
     let destination = target_path_for_group(&root, &current_path, target_group.as_ref())?;
-    let watcher = crate::workspace::watcher::suspend_repo_watcher(&app, normalized);
-    let relocation = relocate_directory(&current_path, &destination, effective_mode)?;
+    let prepared = prepare_directory_relocation(&current_path, &destination, effective_mode)?;
+    let new_repo_id = if effective_mode == WorkspaceRepoPathMode::Move {
+        crate::workspace::repos::repo_id(&root, &destination)
+    } else {
+        active_repo_id.clone()
+    };
+    if new_repo_id != active_repo_id {
+        if settings_reference_repo_id(&settings, &new_repo_id)
+            || load_startup_cache(&app)
+                .is_some_and(|cache| cache.repos_by_id.contains_key(&new_repo_id))
+        {
+            return Err(format!("目标仓库 ID 已存在：{new_repo_id}"));
+        }
+    }
+    let old_common_dir = git_common_dir(&current_path).unwrap_or_else(|| current_path.clone());
+    let new_common_dir = if effective_mode == WorkspaceRepoPathMode::Move {
+        old_common_dir
+            .strip_prefix(&current_path)
+            .map(|relative| destination.join(relative))
+            .unwrap_or_else(|_| old_common_dir.clone())
+    } else {
+        old_common_dir.clone()
+    };
+    move_repo_to_group(&mut settings, &active_repo_id, requested_group_id)?;
     if effective_mode == WorkspaceRepoPathMode::Move {
         active_path = canonical_repo_path(&destination);
-        let new_id = crate::workspace::repos::repo_id(&root, &active_path);
         let new_path_text = compatible_path_text(&active_path);
-        remap_repo_id_in_settings(&mut settings, &active_repo_id, &new_id, Some(&new_path_text));
+        remap_repo_id_in_settings(
+            &mut settings,
+            &active_repo_id,
+            &new_repo_id,
+            Some(&new_path_text),
+        );
     }
-
-    let repo = summarize_repo(&root, &active_path);
-    let new_common_dir =
-        git_common_dir(&active_path).unwrap_or_else(|| active_path.clone());
+    let mut intent = RepoRelocationIntent {
+        version: REPO_RELOCATION_INTENT_VERSION,
+        profile_login,
+        workspace_id,
+        root_id,
+        old_repo_id: active_repo_id.clone(),
+        new_repo_id,
+        source_path: compatible_path_text(&prepared.source),
+        destination_path: compatible_path_text(&prepared.destination),
+        old_common_dir: compatible_path_text(&old_common_dir),
+        new_common_dir: compatible_path_text(&new_common_dir),
+        path_mode: effective_mode,
+        previous_group_id,
+        target_group_id: requested_group_id.map(str::to_string),
+        destination_parent_existed: prepared.destination_parent_existed,
+        phase: RepoRelocationPhase::Prepared,
+    };
     let finish = move || {
-        if let Err(error) = save_settings(&app, &settings) {
-            let rollback = relocation.rollback();
-            let settings_restore = save_settings(&app, &old_settings);
-            return Err(relocation_rollback_error(
-                format!("保存工作区设置失败：{error}"),
-                rollback,
-                settings_restore,
+        write_repo_relocation_intent(&app, &intent)?;
+        let watcher = crate::workspace::watcher::suspend_repo_watcher(&app, normalized);
+        let relocation = match prepared.apply() {
+            Ok(relocation) => relocation,
+            Err(error) => {
+                let filesystem_restore = recover_directory_relocation(
+                    &current_path,
+                    &destination,
+                    effective_mode,
+                    intent.destination_parent_existed,
+                    false,
+                );
+                return Err(compensate_repo_relocation_failure(
+                    &app,
+                    &intent,
+                    &old_settings,
+                    error,
+                    filesystem_restore,
+                    &current_path,
+                    &destination,
+                ));
+            }
+        };
+        intent.phase = RepoRelocationPhase::FilesystemApplied;
+        if let Err(error) = write_repo_relocation_intent(&app, &intent) {
+            return Err(compensate_repo_relocation_failure(
+                &app,
+                &intent,
+                &old_settings,
+                error,
+                relocation.rollback(),
                 &current_path,
                 &destination,
             ));
         }
-        let _ = remove_startup_cache_repo(&app, normalized);
+        if let Err(error) = save_settings(&app, &settings) {
+            return Err(compensate_repo_relocation_failure(
+                &app,
+                &intent,
+                &old_settings,
+                format!("保存工作区设置失败：{error}"),
+                relocation.rollback(),
+                &current_path,
+                &destination,
+            ));
+        }
+        if let Err(error) = clear_repo_relocation_intent_and_cache(&app, &intent) {
+            drop(watcher);
+            return Err(format!(
+                "仓库迁移已完成，但恢复记录清理失败：{error}；旧路径：{}；新路径：{}",
+                current_path.display(),
+                destination.display()
+            ));
+        }
         drop(watcher);
+        let repo = summarize_repo(&root, &active_path);
         Ok(WorkspaceRepoRelocationResult {
             settings: visible_workspace_settings(settings),
             previous_repo_id: normalized.to_string(),
@@ -2647,16 +3032,30 @@ fn workspace_move_repo_to_group_guarded(
     }
 }
 
-fn relocation_rollback_error(
+fn compensate_repo_relocation_failure(
+    app: &AppHandle,
+    intent: &RepoRelocationIntent,
+    old_settings: &WorkspaceSettings,
     error: String,
     filesystem_rollback: Result<(), String>,
-    settings_restore: Result<(), String>,
     old_path: &Path,
     new_path: &Path,
 ) -> String {
+    let settings_restore = save_settings(app, old_settings);
+    let journal_cleanup = if filesystem_rollback.is_ok() && settings_restore.is_ok() {
+        Some(clear_repo_relocation_intent_and_cache(app, intent))
+    } else {
+        None
+    };
     let filesystem_error = filesystem_rollback.err();
     let settings_error = settings_restore.err();
-    if filesystem_error.is_none() && settings_error.is_none() {
+    let journal_retained = journal_cleanup.is_none();
+    let journal_error = journal_cleanup.and_then(Result::err);
+    if filesystem_error.is_none()
+        && settings_error.is_none()
+        && journal_error.is_none()
+        && !journal_retained
+    {
         return format!(
             "{error}；迁移已回滚（旧路径：{}；新路径：{}）",
             old_path.display(),
@@ -2669,6 +3068,12 @@ fn relocation_rollback_error(
     }
     if let Some(error) = settings_error {
         failures.push(format!("旧设置恢复失败：{error}"));
+    }
+    if let Some(error) = journal_error {
+        failures.push(format!("恢复记录清理失败：{error}"));
+    }
+    if journal_retained {
+        failures.push("恢复记录已保留，等待下次启动恢复".to_string());
     }
     format!(
         "{error}；迁移补偿不完整（旧路径：{}；新路径：{}；{}）",
@@ -2694,8 +3099,7 @@ pub fn workspace_relocate_local_repo(
         .filter(|value| !value.is_empty())
     {
         Some(path) => path.to_string(),
-        None => workspace_pick_repo(app.clone())?
-            .ok_or_else(|| "已取消选择仓库".to_string())?,
+        None => workspace_pick_repo(app.clone())?.ok_or_else(|| "已取消选择仓库".to_string())?,
     };
 
     let new_path = ensure_git_repo_path(Path::new(&selected_path))?;
@@ -2923,21 +3327,24 @@ mod account_profile_storage_tests {
         SortDirection,
     };
     use serde_json::Value;
-    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    use std::collections::VecDeque;
     use std::sync::Arc;
 
     #[derive(Default)]
     struct MemoryRuntime {
         values: Mutex<HashMap<(String, String), Value>>,
-        fail_next_save: AtomicBool,
+        persisted: Mutex<HashMap<(String, String), Value>>,
+        save_failures: Mutex<VecDeque<bool>>,
     }
 
     impl MemoryRuntime {
-        fn insert(&self, file: &str, key: &str, value: Value) {
+        fn seed(&self, file: &str, key: &str, value: Value) {
+            let key = (file.to_string(), key.to_string());
             self.values
                 .lock()
                 .unwrap()
-                .insert((file.to_string(), key.to_string()), value);
+                .insert(key.clone(), value.clone());
+            self.persisted.lock().unwrap().insert(key, value);
         }
 
         fn value(&self, file: &str, key: &str) -> Option<Value> {
@@ -2948,8 +3355,23 @@ mod account_profile_storage_tests {
                 .cloned()
         }
 
-        fn fail_next_save(&self) {
-            self.fail_next_save.store(true, AtomicOrdering::SeqCst);
+        fn fail_save_after(&self, saves: usize) {
+            self.fail_saves_after(&[saves]);
+        }
+
+        fn fail_saves_after(&self, saves: &[usize]) {
+            let last = saves.iter().copied().max().unwrap_or_default();
+            let mut failures = self.save_failures.lock().unwrap();
+            *failures = (1..=last).map(|save| saves.contains(&save)).collect();
+        }
+
+        fn restarted(&self) -> Arc<Self> {
+            let persisted = self.persisted.lock().unwrap().clone();
+            Arc::new(Self {
+                values: Mutex::new(persisted.clone()),
+                persisted: Mutex::new(persisted),
+                save_failures: Mutex::new(VecDeque::new()),
+            })
         }
     }
 
@@ -2959,7 +3381,10 @@ mod account_profile_storage_tests {
         }
 
         fn store_set(&self, file: &str, key: &str, value: Value) -> Result<(), String> {
-            self.insert(file, key, value);
+            self.values
+                .lock()
+                .unwrap()
+                .insert((file.to_string(), key.to_string()), value);
             Ok(())
         }
 
@@ -2971,10 +3396,25 @@ mod account_profile_storage_tests {
             Ok(())
         }
 
-        fn store_save(&self, _file: &str) -> Result<(), String> {
-            if self.fail_next_save.swap(false, AtomicOrdering::SeqCst) {
+        fn store_save(&self, file: &str) -> Result<(), String> {
+            if self
+                .save_failures
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(false)
+            {
                 return Err("injected settings save failure".to_string());
             }
+            let current = self.values.lock().unwrap();
+            let mut persisted = self.persisted.lock().unwrap();
+            persisted.retain(|(stored_file, _), _| stored_file != file);
+            persisted.extend(
+                current
+                    .iter()
+                    .filter(|((stored_file, _), _)| stored_file == file)
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
             Ok(())
         }
 
@@ -3028,10 +3468,7 @@ mod account_profile_storage_tests {
     ) {
         let runtime = Arc::new(MemoryRuntime::default());
         let app = WorkspaceContext::new(runtime.clone());
-        let root = std::env::temp_dir().join(format!(
-            "lilia-relocation-{label}-{}",
-            now_millis()
-        ));
+        let root = std::env::temp_dir().join(format!("lilia-relocation-{label}-{}", now_millis()));
         let source = root.join("repo");
         fs::create_dir_all(&source).unwrap();
         assert!(std::process::Command::new("git")
@@ -3067,6 +3504,518 @@ mod account_profile_storage_tests {
             .unwrap_or_else(|error| error.into_inner())
     }
 
+    fn relocation_intent(
+        app: &AppHandle,
+        root: &Path,
+        source: &Path,
+        repo_id: &str,
+        group_id: &str,
+        path_mode: WorkspaceRepoPathMode,
+    ) -> (RepoRelocationIntent, PathBuf, String) {
+        let settings = load_settings(app);
+        let group = settings
+            .repo_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .unwrap();
+        let destination = target_path_for_group(root, source, Some(group)).unwrap();
+        let new_repo_id = if path_mode == WorkspaceRepoPathMode::Move {
+            crate::workspace::repos::repo_id(root, &destination)
+        } else {
+            repo_id.to_string()
+        };
+        let old_common_dir = git_common_dir(source).unwrap_or_else(|| source.to_path_buf());
+        let new_common_dir = if path_mode == WorkspaceRepoPathMode::Move {
+            old_common_dir
+                .strip_prefix(source)
+                .map(|relative| destination.join(relative))
+                .unwrap_or_else(|_| old_common_dir.clone())
+        } else {
+            old_common_dir.clone()
+        };
+        (
+            RepoRelocationIntent {
+                version: REPO_RELOCATION_INTENT_VERSION,
+                profile_login: None,
+                workspace_id: settings.active_workspace_id.unwrap(),
+                root_id: root_id_for_path(root),
+                old_repo_id: repo_id.to_string(),
+                new_repo_id: new_repo_id.clone(),
+                source_path: compatible_path_text(source),
+                destination_path: compatible_path_text(&destination),
+                old_common_dir: compatible_path_text(&old_common_dir),
+                new_common_dir: compatible_path_text(&new_common_dir),
+                path_mode,
+                previous_group_id: None,
+                target_group_id: Some(group_id.to_string()),
+                destination_parent_existed: destination.parent().is_some_and(Path::exists),
+                phase: RepoRelocationPhase::Prepared,
+            },
+            destination,
+            new_repo_id,
+        )
+    }
+
+    fn save_new_relocation_settings(
+        app: &AppHandle,
+        old_repo_id: &str,
+        new_repo_id: &str,
+        destination: &Path,
+        group_id: &str,
+        path_mode: WorkspaceRepoPathMode,
+    ) {
+        let mut settings = load_settings(app);
+        move_repo_to_group(&mut settings, old_repo_id, Some(group_id)).unwrap();
+        if path_mode == WorkspaceRepoPathMode::Move {
+            remap_repo_id_in_settings(
+                &mut settings,
+                old_repo_id,
+                new_repo_id,
+                Some(&compatible_path_text(destination)),
+            );
+        }
+        save_settings(app, &settings).unwrap();
+    }
+
+    fn restarted_app(runtime: &MemoryRuntime) -> AppHandle {
+        WorkspaceContext::new(runtime.restarted())
+    }
+
+    #[test]
+    fn bootstrap_cleans_prepared_move_journal_and_created_parent_for_old_settings() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("prepared-recovery");
+        let (intent, destination, _) = relocation_intent(
+            &app,
+            &root,
+            &source,
+            &repo_id,
+            &group_id,
+            WorkspaceRepoPathMode::Move,
+        );
+        write_repo_relocation_intent(&app, &intent).unwrap();
+        fs::create_dir(destination.parent().unwrap()).unwrap();
+
+        let restarted = restarted_app(&runtime);
+        workspace_get_bootstrap(restarted.clone()).unwrap();
+
+        assert!(source.exists());
+        assert!(!destination.exists());
+        assert!(!destination.parent().unwrap().exists());
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_rolls_back_filesystem_applied_move_when_settings_are_old() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("move-old-recovery");
+        fs::write(source.join("marker.txt"), "old").unwrap();
+        let (mut intent, destination, _) = relocation_intent(
+            &app,
+            &root,
+            &source,
+            &repo_id,
+            &group_id,
+            WorkspaceRepoPathMode::Move,
+        );
+        write_repo_relocation_intent(&app, &intent).unwrap();
+        prepare_directory_relocation(&source, &destination, WorkspaceRepoPathMode::Move)
+            .unwrap()
+            .apply()
+            .unwrap();
+        intent.phase = RepoRelocationPhase::FilesystemApplied;
+        write_repo_relocation_intent(&app, &intent).unwrap();
+
+        let restarted = restarted_app(&runtime);
+        workspace_get_bootstrap(restarted.clone()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(source.join("marker.txt")).unwrap(),
+            "old"
+        );
+        assert!(!destination.exists());
+        let settings = load_settings(&restarted);
+        assert!(settings.managed_repo_ids.contains(&repo_id));
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_completes_missing_move_and_link_when_settings_are_new() {
+        let _test_guard = relocation_test_guard();
+        for path_mode in [WorkspaceRepoPathMode::Move, WorkspaceRepoPathMode::Link] {
+            let label = match path_mode {
+                WorkspaceRepoPathMode::Move => "move-forward",
+                WorkspaceRepoPathMode::Link => "link-forward",
+                WorkspaceRepoPathMode::Keep => unreachable!(),
+            };
+            let (runtime, app, root, source, repo_id, group_id) = relocation_fixture(label);
+            let (intent, destination, new_repo_id) =
+                relocation_intent(&app, &root, &source, &repo_id, &group_id, path_mode);
+            write_repo_relocation_intent(&app, &intent).unwrap();
+            save_new_relocation_settings(
+                &app,
+                &repo_id,
+                &new_repo_id,
+                &destination,
+                &group_id,
+                path_mode,
+            );
+
+            let restarted = restarted_app(&runtime);
+            workspace_get_bootstrap(restarted.clone()).unwrap();
+
+            assert!(destination.exists());
+            assert_eq!(source.exists(), path_mode == WorkspaceRepoPathMode::Link);
+            if path_mode == WorkspaceRepoPathMode::Link {
+                crate::workspace::path_relocation::recover_directory_relocation(
+                    &source,
+                    &destination,
+                    WorkspaceRepoPathMode::Link,
+                    false,
+                    false,
+                )
+                .unwrap();
+            }
+            crate::workspace::watcher::clear_repo_watchers();
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn bootstrap_rolls_back_or_keeps_link_according_to_saved_group() {
+        let _test_guard = relocation_test_guard();
+        for keep in [false, true] {
+            let label = if keep { "link-new" } else { "link-old" };
+            let (runtime, app, root, source, repo_id, group_id) = relocation_fixture(label);
+            let (mut intent, destination, new_repo_id) = relocation_intent(
+                &app,
+                &root,
+                &source,
+                &repo_id,
+                &group_id,
+                WorkspaceRepoPathMode::Link,
+            );
+            write_repo_relocation_intent(&app, &intent).unwrap();
+            prepare_directory_relocation(&source, &destination, WorkspaceRepoPathMode::Link)
+                .unwrap()
+                .apply()
+                .unwrap();
+            intent.phase = RepoRelocationPhase::FilesystemApplied;
+            write_repo_relocation_intent(&app, &intent).unwrap();
+            if keep {
+                save_new_relocation_settings(
+                    &app,
+                    &repo_id,
+                    &new_repo_id,
+                    &destination,
+                    &group_id,
+                    WorkspaceRepoPathMode::Link,
+                );
+            }
+
+            let restarted = restarted_app(&runtime);
+            workspace_get_bootstrap(restarted.clone()).unwrap();
+
+            assert!(source.exists());
+            assert_eq!(fs::symlink_metadata(&destination).is_ok(), keep);
+            assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn bootstrap_preserves_ambiguous_move_and_journal() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) = relocation_fixture("ambiguous-move");
+        let (intent, destination, _) = relocation_intent(
+            &app,
+            &root,
+            &source,
+            &repo_id,
+            &group_id,
+            WorkspaceRepoPathMode::Move,
+        );
+        write_repo_relocation_intent(&app, &intent).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+
+        let restarted = restarted_app(&runtime);
+        let error = workspace_get_bootstrap(restarted.clone()).unwrap_err();
+
+        assert!(error.contains("同时存在"));
+        assert!(error.contains(&compatible_path_text(&source)));
+        assert!(error.contains(&compatible_path_text(&destination)));
+        assert!(source.exists());
+        assert!(destination.exists());
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_preserves_wrong_link_target_and_journal() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) = relocation_fixture("wrong-link");
+        let (intent, destination, _) = relocation_intent(
+            &app,
+            &root,
+            &source,
+            &repo_id,
+            &group_id,
+            WorkspaceRepoPathMode::Link,
+        );
+        write_repo_relocation_intent(&app, &intent).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+
+        let restarted = restarted_app(&runtime);
+        let error = workspace_get_bootstrap(restarted.clone()).unwrap_err();
+
+        assert!(error.contains("指向其它位置"));
+        assert!(destination.exists());
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_preserves_missing_paths_and_conflicting_repo_ids() {
+        let _test_guard = relocation_test_guard();
+        for conflict_ids in [false, true] {
+            let label = if conflict_ids {
+                "conflicting-ids"
+            } else {
+                "missing-paths"
+            };
+            let (runtime, app, root, source, repo_id, group_id) = relocation_fixture(label);
+            let (intent, _destination, new_repo_id) = relocation_intent(
+                &app,
+                &root,
+                &source,
+                &repo_id,
+                &group_id,
+                WorkspaceRepoPathMode::Move,
+            );
+            write_repo_relocation_intent(&app, &intent).unwrap();
+            if conflict_ids {
+                let mut settings = load_settings(&app);
+                settings.managed_repo_ids.push(new_repo_id);
+                save_settings(&app, &settings).unwrap();
+            } else {
+                fs::remove_dir_all(&source).unwrap();
+            }
+
+            let restarted = restarted_app(&runtime);
+            let error = workspace_get_bootstrap(restarted.clone()).unwrap_err();
+
+            if conflict_ids {
+                assert!(error.contains("无法判断设置状态"));
+            } else {
+                assert!(error.contains("找不到旧路径和新路径"));
+            }
+            assert!(error.contains(&intent.source_path));
+            assert!(error.contains(&intent.destination_path));
+            assert!(read_repo_relocation_intent(&restarted).unwrap().is_some());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn successful_move_rekeys_every_repo_id_keyed_setting_without_overwrite() {
+        let _test_guard = relocation_test_guard();
+        let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("data-integrity");
+        let destination = root.join("group").join("repo");
+        let new_repo_id = crate::workspace::repos::repo_id(&root, &destination);
+        let mut settings = load_settings(&app);
+        settings.hidden_repo_ids.push(repo_id.clone());
+        settings.system_git_repo_ids.push(repo_id.clone());
+        settings.favorite_repo_ids.push(repo_id.clone());
+        settings
+            .organization_grouping_resolved_repo_ids
+            .push(repo_id.clone());
+        settings.recent_local_repos.push(RecentLocalRepoVisit {
+            repo_id: repo_id.clone(),
+            opened_at: 42,
+        });
+        settings.project_launch_configs.insert(
+            repo_id.clone(),
+            serde_json::from_value(serde_json::json!({
+                "command": "yarn dev",
+                "cwd": null,
+                "source": "manual",
+                "updatedAt": 42
+            }))
+            .unwrap(),
+        );
+        settings
+            .repo_sync_preferences
+            .insert(repo_id.clone(), RepoSyncPreference::default());
+        settings
+            .repo_remote_sync_policies
+            .insert(repo_id.clone(), RepoRemoteSyncPolicy::default());
+        settings.repo_bindings.insert(
+            repo_id.clone(),
+            serde_json::from_value(serde_json::json!({
+                "repositoryId": 30,
+                "remoteFullName": "owner/repo",
+                "canonicalRemoteUrl": "https://github.com/owner/repo.git",
+                "localPath": compatible_path_text(&source)
+            }))
+            .unwrap(),
+        );
+        settings.local_contribution_cache.insert(
+            repo_id.clone(),
+            HashMap::from([("2026-07-26".to_string(), Default::default())]),
+        );
+        save_settings(&app, &settings).unwrap();
+        let mut cache = startup_cache_shell(&settings);
+        cache.repos_by_id.insert(
+            repo_id.clone(),
+            CachedRepoSummary {
+                summary: summarize_repo(&root, &source),
+                cached_at: 42,
+                remote_checked_at: None,
+            },
+        );
+        save_startup_cache(&app, &cache).unwrap();
+
+        let result = workspace_move_repo_to_group_guarded(
+            app.clone(),
+            repo_id.clone(),
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap();
+
+        assert_eq!(result.repo.id, new_repo_id);
+        let settings = load_settings(&app);
+        assert!(!settings_reference_repo_id(&settings, &repo_id));
+        assert!(settings_reference_repo_id(&settings, &new_repo_id));
+        for values in [
+            &settings.hidden_repo_ids,
+            &settings.managed_repo_ids,
+            &settings.system_git_repo_ids,
+            &settings.favorite_repo_ids,
+            &settings.organization_grouping_resolved_repo_ids,
+        ] {
+            assert!(values.contains(&new_repo_id));
+            assert!(!values.contains(&repo_id));
+        }
+        assert!(settings
+            .repo_groups
+            .iter()
+            .flat_map(|group| &group.repo_ids)
+            .any(|id| id == &new_repo_id));
+        assert!(settings
+            .recent_local_repos
+            .iter()
+            .any(|visit| visit.repo_id == new_repo_id && visit.opened_at == 42));
+        for values in [
+            settings.project_launch_configs.keys().collect::<Vec<_>>(),
+            settings.repo_sync_preferences.keys().collect::<Vec<_>>(),
+            settings
+                .repo_remote_sync_policies
+                .keys()
+                .collect::<Vec<_>>(),
+            settings.repo_bindings.keys().collect::<Vec<_>>(),
+            settings.local_contribution_cache.keys().collect::<Vec<_>>(),
+        ] {
+            assert!(values.contains(&&new_repo_id));
+            assert!(!values.contains(&&repo_id));
+        }
+        assert_eq!(
+            canonical_repo_path(Path::new(&settings.repo_bindings[&new_repo_id].local_path)),
+            canonical_repo_path(&destination)
+        );
+        assert!(load_startup_cache(&app).is_none());
+        crate::workspace::watcher::clear_repo_watchers();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_preflight_rejects_existing_new_repo_id_data_before_filesystem_changes() {
+        let _test_guard = relocation_test_guard();
+        let (_runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("new-id-conflict");
+        let destination = root.join("group").join("repo");
+        let new_repo_id = crate::workspace::repos::repo_id(&root, &destination);
+        let mut settings = load_settings(&app);
+        settings.favorite_repo_ids.push(new_repo_id.clone());
+        save_settings(&app, &settings).unwrap();
+
+        let error = workspace_move_repo_to_group_guarded(
+            app,
+            repo_id,
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("目标仓库 ID 已存在"));
+        assert!(source.exists());
+        assert!(!destination.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn journal_cleanup_save_failure_is_reconciled_on_next_bootstrap() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("cleanup-save-failure");
+        let destination = root.join("group").join("repo");
+        runtime.fail_save_after(4);
+
+        let error = workspace_move_repo_to_group_guarded(
+            app,
+            repo_id.clone(),
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap_err();
+        assert!(error.contains("恢复记录清理失败"));
+
+        let restarted = restarted_app(&runtime);
+        let bootstrap = workspace_get_bootstrap(restarted.clone()).unwrap();
+        assert!(bootstrap
+            .settings
+            .managed_repo_ids
+            .iter()
+            .all(|id| id != &repo_id));
+        assert!(!source.exists());
+        assert!(destination.exists());
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
+        crate::workspace::watcher::clear_repo_watchers();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incomplete_settings_compensation_retains_journal_for_next_bootstrap() {
+        let _test_guard = relocation_test_guard();
+        let (runtime, app, root, source, repo_id, group_id) =
+            relocation_fixture("retained-journal");
+        runtime.fail_saves_after(&[3, 4]);
+
+        let error = workspace_move_repo_to_group_guarded(
+            app,
+            repo_id.clone(),
+            Some(group_id),
+            Some(WorkspaceRepoPathMode::Move),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("旧设置恢复失败"));
+        assert!(error.contains("恢复记录已保留"));
+        assert!(source.exists());
+        let restarted = restarted_app(&runtime);
+        workspace_get_bootstrap(restarted.clone()).unwrap();
+        assert!(load_settings(&restarted)
+            .managed_repo_ids
+            .contains(&repo_id));
+        assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
+        crate::workspace::watcher::clear_repo_watchers();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn move_settings_save_failure_restores_filesystem_and_settings() {
         let _test_guard = relocation_test_guard();
@@ -3075,7 +4024,7 @@ mod account_profile_storage_tests {
         fs::write(source.join("marker.txt"), "old").unwrap();
         crate::workspace::watcher::clear_repo_watchers();
         crate::workspace::watcher::sync_repo_watchers(&app);
-        runtime.fail_next_save();
+        runtime.fail_save_after(3);
 
         let error = workspace_move_repo_to_group_guarded(
             app.clone(),
@@ -3088,7 +4037,10 @@ mod account_profile_storage_tests {
         let destination = root.join("group").join("repo");
         assert!(error.contains("保存工作区设置失败"));
         assert!(error.contains("迁移已回滚"));
-        assert_eq!(fs::read_to_string(source.join("marker.txt")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(source.join("marker.txt")).unwrap(),
+            "old"
+        );
         assert!(!destination.exists());
         assert!(!root.join("group").exists());
         let restored = load_settings(&app);
@@ -3114,7 +4066,7 @@ mod account_profile_storage_tests {
         let (runtime, app, root, source, repo_id, group_id) =
             relocation_fixture("link-save-failure");
         fs::write(source.join("marker.txt"), "old").unwrap();
-        runtime.fail_next_save();
+        runtime.fail_save_after(3);
 
         let error = workspace_move_repo_to_group_guarded(
             app.clone(),
@@ -3128,15 +4080,17 @@ mod account_profile_storage_tests {
         assert!(error.contains("保存工作区设置失败"));
         assert!(fs::symlink_metadata(&destination).is_err());
         assert!(!root.join("group").exists());
-        assert_eq!(fs::read_to_string(source.join("marker.txt")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(source.join("marker.txt")).unwrap(),
+            "old"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn active_launch_rejects_move_before_filesystem_changes() {
         let _test_guard = relocation_test_guard();
-        let (_runtime, app, root, source, repo_id, group_id) =
-            relocation_fixture("active-launch");
+        let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("active-launch");
         let launch_key = format!("relocation-{repo_id}");
         crate::workspace::launch::launch_runtime()
             .lock()
@@ -3179,8 +4133,7 @@ mod account_profile_storage_tests {
     #[test]
     fn move_success_rebinds_watcher_to_new_repo_id_and_path() {
         let _test_guard = relocation_test_guard();
-        let (_runtime, app, root, source, repo_id, group_id) =
-            relocation_fixture("watcher-rebind");
+        let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("watcher-rebind");
         let mut cache = startup_cache_shell(&load_settings(&app));
         cache.repos_by_id.insert(
             repo_id.clone(),
@@ -3232,7 +4185,7 @@ mod account_profile_storage_tests {
             .as_object_mut()
             .unwrap()
             .remove("accountPreferences");
-        runtime.insert(STORE_FILE, SETTINGS_KEY, legacy_value);
+        runtime.seed(STORE_FILE, SETTINGS_KEY, legacy_value);
         let app = WorkspaceContext::new(runtime.clone());
 
         let alice = load_settings(&app);
@@ -3280,7 +4233,7 @@ mod account_profile_storage_tests {
             .as_object_mut()
             .unwrap()
             .remove("accountPreferences");
-        runtime.insert(STORE_FILE, SETTINGS_KEY, legacy_value);
+        runtime.seed(STORE_FILE, SETTINGS_KEY, legacy_value);
         let app = WorkspaceContext::new(runtime.clone());
 
         let migrated = load_settings(&app);
@@ -3303,7 +4256,7 @@ mod account_profile_storage_tests {
     #[test]
     fn v2_document_migration_is_idempotent() {
         let runtime = Arc::new(MemoryRuntime::default());
-        runtime.insert(
+        runtime.seed(
             STORE_FILE,
             SETTINGS_KEY,
             serde_json::json!({
@@ -3337,7 +4290,7 @@ mod account_profile_storage_tests {
     #[test]
     fn existing_v3_workspace_defaults_recent_context_to_none() {
         let runtime = Arc::new(MemoryRuntime::default());
-        runtime.insert(
+        runtime.seed(
             STORE_FILE,
             SETTINGS_KEY,
             serde_json::json!({
