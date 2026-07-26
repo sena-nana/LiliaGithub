@@ -37,3 +37,5 @@ Calibration accepts an iteration count only when the fastest of three warmed att
 ten times the declared 20 ms minimum. A sample is included only after both shared-path workers,
 or the multi-path CPU worker, are observably occupied; an unestablished pressure sample
 is drained and retried up to three times. The multi-path p99 must improve by at least 50%.
+The CPU loop is protected from compiler hoisting and can scale to 67,108,864 iterations so a
+shallow checkout with a short captured history calibrates by duration instead of repository size.
