@@ -8,6 +8,7 @@ import {
   provideLiliaSettings,
   setLiliaUiConfig,
 } from "./ui";
+import { installTauriNativeAppearanceAdapter } from "@lilia/ui/runtime/tauri";
 import type { RouterHistory } from "vue-router";
 import { createLiliaGithubRouter } from "./router";
 import { installLiliaGithubAgentDebugCompat } from "./agentDebug/compat";
@@ -32,6 +33,7 @@ export function createLiliaGithubApp(options: CreateLiliaGithubAppOptions = {}) 
   installLiliaContextMenu(app);
   installGlobalScrollbarVisibility();
   installCornerStyle();
+  installTauriNativeAppearanceAdapter();
   installNativeAppearance();
   if (LILIA_AGENT_DEBUG_ENABLED) {
     installAgentDebugHarness({ enabled: true });
