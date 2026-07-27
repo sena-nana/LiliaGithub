@@ -120,7 +120,7 @@ vi.mock("../src/composables/workspace/state", async (importOriginal) => {
 
 const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
 
-async function renderPanel() {
+async function renderPanel(props: Record<string, unknown> = {}) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -134,6 +134,7 @@ async function renderPanel() {
   await router.push("/");
   await router.isReady();
   render(SecondaryPanel, {
+    props,
     global: { plugins: [router, liliaContextMenuPlugin] },
   });
 }
@@ -161,6 +162,23 @@ describe("侧边栏组织加载", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetSessionContextForTests();
+  });
+
+  it("将完整 Surface 契约转发给侧边栏框架", async () => {
+    workspace.getAccountRepositoryOwners.mockResolvedValueOnce([]);
+
+    await renderPanel({
+      surfaceMode: "translucent",
+      backdropEffect: "none",
+      surfaceLevel: "base",
+      surfaceBoundary: true,
+    });
+
+    const sidebar = document.querySelector('[data-agent-id="sidebar"]');
+    expect(sidebar).toHaveAttribute("data-lilia-surface-mode", "translucent");
+    expect(sidebar).toHaveAttribute("data-lilia-backdrop", "none");
+    expect(sidebar).toHaveAttribute("data-lilia-surface-level", "base");
+    expect(sidebar).toHaveAttribute("data-lilia-surface-boundary", "");
   });
 
   it("session 失效后仍会结束组织加载", async () => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, onUnmounted, ref, shallowRef, watch, type Component } from "vue";
+import type { SurfaceProps } from "@lilia/ui-contract";
 import {
   ArrowDownAZ,
   ChevronRight,
@@ -66,6 +67,13 @@ import {
   type RepoSortOption,
   type RepoSortState,
 } from "../utils/repoSort";
+
+const props = withDefaults(defineProps<SurfaceProps>(), {
+  surfaceMode: "solid",
+  backdropEffect: "none",
+  surfaceLevel: "base",
+  surfaceBoundary: true,
+});
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -931,7 +939,13 @@ async function deleteGroup(group: { id: string }) {
 </script>
 
 <template>
-  <LiliaSidebarFrame agent-id="sidebar">
+  <LiliaSidebarFrame
+    agent-id="sidebar"
+    :surface-mode="props.surfaceMode"
+    :backdrop-effect="props.backdropEffect"
+    :surface-level="props.surfaceLevel"
+    :surface-boundary="props.surfaceBoundary"
+  >
     <template #top>
       <div class="sb-section">
         <nav class="sb-tree" aria-label="主导航">
