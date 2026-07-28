@@ -22,7 +22,7 @@ import {
 } from "./repoMilestoneGroups";
 
 type IssueState = "open" | "closed" | "all";
-type IssueSort = "created" | "updated" | "comments";
+type IssueSort = "number" | "created" | "updated" | "comments";
 type IssueDirection = "asc" | "desc";
 type IssuePanelFilters = {
   creator: string | null;

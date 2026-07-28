@@ -3333,6 +3333,17 @@ pub(super) fn github_pull_request_search_required(
             .any(|label| !label.trim().is_empty())
 }
 
+fn sort_items_by_number<T>(items: &mut [T], direction: &str, number: impl Fn(&T) -> u64) {
+    items.sort_by(|left, right| {
+        let cmp = number(left).cmp(&number(right));
+        if direction == "asc" {
+            cmp
+        } else {
+            cmp.reverse()
+        }
+    });
+}
+
 fn github_issue_search_query(
     repo_full_name: &str,
     state: &str,
@@ -7268,8 +7279,9 @@ pub async fn github_list_pull_requests(
                 _ => "open",
             };
             let pull_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let sort_by_number = sort.as_deref() == Some("number");
             let pull_sort = match sort.as_deref() {
-                Some("created") => "created",
+                Some("created") | Some("number") => "created",
                 Some("comments") => "comments",
                 _ => "updated",
             };
@@ -7313,13 +7325,16 @@ pub async fn github_list_pull_requests(
                         response,
                     ));
                 }
-                let pulls = github_json::<Vec<GitHubPullRequestResponse>>(
+                let mut pulls = github_json::<Vec<GitHubPullRequestResponse>>(
                     "读取 GitHub Pull Requests 失败",
                     response,
                 )?
                 .into_iter()
                 .map(github_pull_request_from_response)
                 .collect::<Vec<_>>();
+                if sort_by_number {
+                    sort_items_by_number(&mut pulls, pull_direction, |item| item.number);
+                }
                 update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
                     repo_cache.pull_requests.insert(pull_key, pulls.clone());
                 })?;
@@ -7387,6 +7402,9 @@ pub async fn github_list_pull_requests(
                     github_pull_request_from_response(pull_request),
                     issue,
                 ));
+            }
+            if sort_by_number {
+                sort_items_by_number(&mut pulls, pull_direction, |item| item.number);
             }
             update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
                 repo_cache.pull_requests.insert(pull_key, pulls.clone());
@@ -7873,6 +7891,7 @@ pub async fn github_list_issues(
             let (binding, token) = github_require_token(&app)?;
             let issue_state = state.unwrap_or_else(|| "open".to_string());
             let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let sort_by_number = sort.as_deref() == Some("number");
             let issue_sort = match sort.as_deref() {
                 Some("updated") => "updated",
                 Some("comments") => "comments",
@@ -7973,6 +7992,9 @@ pub async fn github_list_issues(
                         .iter()
                         .any(|item| item.id == project_filter || item.title == project_filter)
                 });
+            }
+            if sort_by_number {
+                sort_items_by_number(&mut issues, issue_direction, |item| item.number);
             }
             update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
                 repo_cache.issues.insert(issue_key, issues.clone());
@@ -9511,8 +9533,9 @@ pub async fn github_list_account_issues(
             let (_binding, token) = github_require_token(&app)?;
             let issue_state = state.unwrap_or_else(|| "open".to_string());
             let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let sort_by_number = sort.as_deref() == Some("number");
             let issue_sort = match sort.as_deref() {
-                Some("created") => "created",
+                Some("created") | Some("number") => "created",
                 Some("comments") => "comments",
                 _ => "updated",
             };
@@ -9537,10 +9560,14 @@ pub async fn github_list_account_issues(
             )?;
             let items =
                 github_json::<Vec<GitHubIssueResponse>>("读取 GitHub 待处理 Issue 失败", response)?;
-            Ok(items
+            let mut items = items
                 .into_iter()
                 .filter_map(github_account_issue_item_from_response)
-                .collect())
+                .collect::<Vec<_>>();
+            if sort_by_number {
+                sort_items_by_number(&mut items, issue_direction, |item| item.issue.number);
+            }
+            Ok(items)
         },
     )
     .await

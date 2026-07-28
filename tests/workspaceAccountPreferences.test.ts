@@ -153,7 +153,7 @@ describe("workspace account preferences fallback", () => {
     const newAccount = await getWorkspaceSettings();
     expect(newAccount.workspaceRoot).toBeNull();
     expect(newAccount.accountPreferences).toMatchObject({
-      pullRequests: { state: "open", sort: "updated", direction: "desc" },
+      pullRequests: { state: "open", sort: "number", direction: "desc" },
     });
     expect(newAccount.contributionIdentities).toEqual([]);
     const accountBWorkspace = await createWorkspace("Account B", "C:\\Accounts\\B");

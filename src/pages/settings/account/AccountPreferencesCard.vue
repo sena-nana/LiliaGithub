@@ -60,7 +60,7 @@ const directionOptions = [{ value: "asc", label: "升序" }, { value: "desc", la
 const issueStateOptions = [{ value: "open", label: "开启" }, { value: "closed", label: "已关闭" }, { value: "all", label: "全部" }] as const;
 const pullStateOptions = [{ value: "open", label: "开启" }, { value: "closed", label: "已关闭" }, { value: "merged", label: "已合并" }] as const;
 const actionStateOptions = [{ value: "all", label: "全部" }, { value: "active", label: "进行中" }, { value: "completed", label: "已完成" }] as const;
-const listSortOptions = [{ value: "created", label: "创建时间" }, { value: "updated", label: "更新时间" }, { value: "comments", label: "评论数" }] as const;
+const listSortOptions = [{ value: "number", label: "编号" }, { value: "created", label: "创建时间" }, { value: "updated", label: "更新时间" }, { value: "comments", label: "评论数" }] as const;
 const actionSortOptions = [{ value: "updated", label: "更新时间" }, { value: "created", label: "创建时间" }, { value: "run-number", label: "运行编号" }] as const;
 
 async function loadOwners() {
