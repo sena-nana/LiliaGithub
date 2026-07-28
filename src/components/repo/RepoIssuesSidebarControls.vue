@@ -5,7 +5,7 @@ import type { GitHubIssueFilterMetadata } from "../../services/workspace/types";
 import RepoGitHubListSidebarControls from "./RepoGitHubListSidebarControls.vue";
 
 type IssueState = "open" | "closed" | "all";
-type IssueSort = "created" | "updated" | "comments";
+type IssueSort = "number" | "created" | "updated" | "comments";
 type IssueDirection = "asc" | "desc";
 type IssuePanelFilters = {
   creator: string | null;
@@ -40,6 +40,8 @@ const states: readonly { value: IssueState; label: string }[] = [
 ];
 
 const sortOptions = [
+  { value: "number-desc", label: "编号（降序）" },
+  { value: "number-asc", label: "编号（升序）" },
   { value: "created-desc", label: "最新创建" },
   { value: "created-asc", label: "最早创建" },
   { value: "updated-desc", label: "最近更新" },

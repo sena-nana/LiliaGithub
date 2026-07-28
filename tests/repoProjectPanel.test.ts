@@ -2473,7 +2473,7 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
-      expect.objectContaining({ state: "open", sort: "updated", direction: "desc" }),
+      expect.objectContaining({ state: "open", sort: "number", direction: "desc" }),
     );
     expect(listGitHubPullRequestChecks).not.toHaveBeenCalled();
 
@@ -2510,7 +2510,7 @@ describe("RepoProjectPanel", () => {
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
-        expect.objectContaining({ state: "open", sort: "updated", direction: "desc" }),
+        expect.objectContaining({ state: "open", sort: "number", direction: "desc" }),
         { forceRefresh: true },
       );
       expect(getGitHubPullRequestDiscussion).toHaveBeenLastCalledWith(
@@ -2679,7 +2679,7 @@ describe("RepoProjectPanel", () => {
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
-        expect.objectContaining({ state: "closed", sort: "updated", direction: "desc" }),
+        expect.objectContaining({ state: "closed", sort: "number", direction: "desc" }),
       );
     });
 
@@ -2688,7 +2688,7 @@ describe("RepoProjectPanel", () => {
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
-        expect.objectContaining({ state: "merged", sort: "updated", direction: "desc" }),
+        expect.objectContaining({ state: "merged", sort: "number", direction: "desc" }),
       );
     });
   });
@@ -2780,7 +2780,7 @@ describe("RepoProjectPanel", () => {
       );
     });
 
-    await fireEvent.click(within(filters).getByRole("button", { name: "最近更新" }));
+    await fireEvent.click(within(filters).getByRole("button", { name: "编号（降序）" }));
     await fireEvent.click(await view.findByRole("option", { name: "评论最多" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
@@ -3006,7 +3006,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#34 已关闭问题")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenLastCalledWith(
       "sena-nana/remote-repo",
-      expect.objectContaining({ state: "closed", sort: "created", direction: "desc" }),
+      expect.objectContaining({ state: "closed", sort: "number", direction: "desc" }),
     );
   });
 
@@ -3191,7 +3191,7 @@ describe("RepoProjectPanel", () => {
       );
     });
 
-    await fireEvent.click(within(filters).getByRole("button", { name: "最新创建" }));
+    await fireEvent.click(within(filters).getByRole("button", { name: "编号（降序）" }));
     await fireEvent.click(await view.findByRole("option", { name: "评论最多" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
@@ -3256,7 +3256,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByRole("heading", { level: 3, name: "#12 修复懒加载" })).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
-      expect.objectContaining({ state: "open", query: "Roadmap", sort: "created", direction: "desc" }),
+      expect.objectContaining({ state: "open", query: "Roadmap", sort: "number", direction: "desc" }),
     );
 
     await view.refreshCurrentPage();
@@ -3265,7 +3265,7 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("刷新后的正文", { exact: false })).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenLastCalledWith(
       "sena-nana/remote-repo",
-      expect.objectContaining({ state: "open", query: "Roadmap", sort: "created", direction: "desc" }),
+      expect.objectContaining({ state: "open", query: "Roadmap", sort: "number", direction: "desc" }),
       { forceRefresh: true },
     );
     expect(getGitHubIssueFilterMetadata).toHaveBeenLastCalledWith(

@@ -107,8 +107,8 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     accountPreferences: {
       repositoryScope: { kind: "all" },
       repositorySort: { key: "updated", direction: "desc" },
-      issues: { state: "open", sort: "created", direction: "desc" },
-      pullRequests: { state: "open", sort: "updated", direction: "desc" },
+      issues: { state: "open", sort: "number", direction: "desc" },
+      pullRequests: { state: "open", sort: "number", direction: "desc" },
       actions: { state: "all", sort: "updated", direction: "desc" },
     },
     projectLaunchConfigs: {},

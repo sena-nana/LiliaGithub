@@ -1,5 +1,5 @@
 export type PullRequestState = "open" | "closed" | "merged";
-export type PullRequestSort = "created" | "updated" | "comments";
+export type PullRequestSort = "number" | "created" | "updated" | "comments";
 export type PullRequestDirection = "asc" | "desc";
 export type PullRequestReview = "none" | "required" | "approved" | "changes_requested" | null;
 
@@ -23,7 +23,7 @@ export function blankPullRequestPanelFilters(): PullRequestPanelFilters {
     milestone: null,
     project: null,
     review: null,
-    sort: "updated",
+    sort: "number",
     direction: "desc",
     query: "",
   };

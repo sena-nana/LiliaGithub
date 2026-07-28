@@ -216,7 +216,7 @@ type IssuePanelFilters = {
   labels: string[];
   milestone: string | number | null;
   project: string | null;
-  sort: "created" | "updated" | "comments";
+  sort: "number" | "created" | "updated" | "comments";
   direction: "asc" | "desc";
   query: string;
 };
@@ -273,7 +273,7 @@ const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
 const issueStates = ["open", "closed", "all"] as const;
 const pullRequestStates = ["open", "closed", "merged"] as const;
 const actionStates = ["all", "active", "completed"] as const;
-const listSorts = ["created", "updated", "comments"] as const;
+const listSorts = ["number", "created", "updated", "comments"] as const;
 const actionSorts = ["updated", "created", "run-number"] as const;
 const listDirections = ["asc", "desc"] as const;
 const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
@@ -325,7 +325,7 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
   labels: [],
   milestone: null,
   project: null,
-  sort: "created",
+  sort: "number",
   direction: "desc",
   query: "",
 });

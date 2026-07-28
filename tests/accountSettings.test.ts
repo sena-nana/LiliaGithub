@@ -7,8 +7,8 @@ const { preferences, workspace } = vi.hoisted(() => {
   const preferences = {
     repositoryScope: { kind: "all" as const },
     repositorySort: { key: "updated" as const, direction: "desc" as const },
-    issues: { state: "open" as const, sort: "created" as const, direction: "desc" as const },
-    pullRequests: { state: "open" as const, sort: "updated" as const, direction: "desc" as const },
+    issues: { state: "open" as const, sort: "number" as const, direction: "desc" as const },
+    pullRequests: { state: "open" as const, sort: "number" as const, direction: "desc" as const },
     actions: { state: "all" as const, sort: "updated" as const, direction: "desc" as const },
   };
   return { preferences, workspace: {
@@ -70,8 +70,8 @@ describe("账户设置", () => {
       expect(workspace.updateAccountPreferences).toHaveBeenCalledWith({
         repositoryScope: { kind: "all" },
         repositorySort: { key: "updated", direction: "desc" },
-        issues: { state: "open", sort: "created", direction: "desc" },
-        pullRequests: { state: "open", sort: "updated", direction: "desc" },
+        issues: { state: "open", sort: "number", direction: "desc" },
+        pullRequests: { state: "open", sort: "number", direction: "desc" },
         actions: { state: "all", sort: "updated", direction: "desc" },
       });
     });

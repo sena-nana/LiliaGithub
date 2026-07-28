@@ -90,12 +90,12 @@ export interface AccountPreferences {
   };
   issues: {
     state: "open" | "closed" | "all";
-    sort: "created" | "updated" | "comments";
+    sort: "number" | "created" | "updated" | "comments";
     direction: AccountPreferenceDirection;
   };
   pullRequests: {
     state: "open" | "closed" | "merged";
-    sort: "created" | "updated" | "comments";
+    sort: "number" | "created" | "updated" | "comments";
     direction: AccountPreferenceDirection;
   };
   actions: {
@@ -991,7 +991,7 @@ export interface GitHubAttachWorkflowArtifactAssetRequest {
 export interface GitHubIssueListOptions {
   state?: "open" | "closed" | "all" | string | null;
   perPage?: number | null;
-  sort?: "created" | "updated" | "comments" | string | null;
+  sort?: "number" | "created" | "updated" | "comments" | string | null;
   direction?: "asc" | "desc" | string | null;
   since?: string | null;
   creator?: string | null;

@@ -228,6 +228,7 @@ pub enum IssueListState {
 #[serde(rename_all = "lowercase")]
 pub enum IssueListSortKey {
     #[default]
+    Number,
     Created,
     Updated,
     Comments,
@@ -245,7 +246,7 @@ impl Default for IssueListPreferences {
     fn default() -> Self {
         Self {
             state: IssueListState::Open,
-            sort: IssueListSortKey::Created,
+            sort: IssueListSortKey::Number,
             direction: SortDirection::Desc,
         }
     }
@@ -263,8 +264,9 @@ pub enum PullRequestListState {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PullRequestListSortKey {
-    Created,
     #[default]
+    Number,
+    Created,
     Updated,
     Comments,
 }
@@ -281,7 +283,7 @@ impl Default for PullRequestListPreferences {
     fn default() -> Self {
         Self {
             state: PullRequestListState::Open,
-            sort: PullRequestListSortKey::Updated,
+            sort: PullRequestListSortKey::Number,
             direction: SortDirection::Desc,
         }
     }

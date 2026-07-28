@@ -37,6 +37,8 @@ const states: readonly { value: PullRequestState; label: string }[] = [
 ];
 
 const sortOptions = [
+  { value: "number-desc", label: "编号（降序）" },
+  { value: "number-asc", label: "编号（升序）" },
   { value: "updated-desc", label: "最近更新" },
   { value: "updated-asc", label: "最早更新" },
   { value: "created-desc", label: "最新创建" },

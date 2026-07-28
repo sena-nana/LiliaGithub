@@ -2479,8 +2479,8 @@ function createDefaultAccountPreferences(_workspaceRoot: string | null): Account
   return {
     repositoryScope: { kind: "all" },
     repositorySort: { key: "updated", direction: "desc" },
-    issues: { state: "open", sort: "created", direction: "desc" },
-    pullRequests: { state: "open", sort: "updated", direction: "desc" },
+    issues: { state: "open", sort: "number", direction: "desc" },
+    pullRequests: { state: "open", sort: "number", direction: "desc" },
     actions: { state: "all", sort: "updated", direction: "desc" },
   };
 }
@@ -4450,12 +4450,12 @@ function normalizeAccountPreferences(preferences: AccountPreferences): AccountPr
     },
     issues: {
       state: oneOf(preferences.issues.state, ["open", "closed", "all"] as const),
-      sort: oneOf(preferences.issues.sort, ["created", "updated", "comments"] as const),
+      sort: oneOf(preferences.issues.sort, ["number", "created", "updated", "comments"] as const),
       direction: direction(preferences.issues.direction),
     },
     pullRequests: {
       state: oneOf(preferences.pullRequests.state, ["open", "closed", "merged"] as const),
-      sort: oneOf(preferences.pullRequests.sort, ["created", "updated", "comments"] as const),
+      sort: oneOf(preferences.pullRequests.sort, ["number", "created", "updated", "comments"] as const),
       direction: direction(preferences.pullRequests.direction),
     },
     actions: {
@@ -6639,6 +6639,10 @@ export function listGitHubAccountIssues(
         .map((pullRequest) => fallbackPullRequestAccountIssueItem(repoFullName, pullRequest)),
     );
     const sorted = [...issueItems, ...pullItems].sort((left, right) => {
+      if (sort === "number") {
+        const compared = left.issue.number - right.issue.number;
+        return direction === "asc" ? compared : -compared;
+      }
       const leftValue = sort === "created" ? left.issue.createdAt : left.issue.updatedAt;
       const rightValue = sort === "created" ? right.issue.createdAt : right.issue.updatedAt;
       const delta = Date.parse(rightValue) - Date.parse(leftValue) || right.issue.number - left.issue.number;
@@ -6793,6 +6797,10 @@ function compareFallbackGitHubPullRequests(
   sort: string | null,
   direction: string | null,
 ) {
+  if (sort === "number") {
+    const comparedNumber = a.number - b.number;
+    return direction === "asc" ? comparedNumber : -comparedNumber;
+  }
   if (sort === "comments") {
     const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
     return direction === "asc" ? comparedComments : -comparedComments;
@@ -7184,6 +7192,10 @@ function compareFallbackGitHubIssues(
   sort: string | null,
   direction: string | null,
 ) {
+  if (sort === "number") {
+    const comparedNumber = a.number - b.number;
+    return direction === "asc" ? comparedNumber : -comparedNumber;
+  }
   if (sort === "comments") {
     const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
     return direction === "asc" ? comparedComments : -comparedComments;
