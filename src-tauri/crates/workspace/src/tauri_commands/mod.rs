@@ -1,8 +1,5 @@
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
-use mutsuki_tauri_bridge::TaskResultRequest;
-use mutsuki_tauri_host::MutsukiTauriHost;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
@@ -10,6 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
 
 use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
+use crate::task_runtime::WorkspaceTaskRuntime;
 
 macro_rules! delegate_command {
     (async $module:ident; fn $name:ident($app:ident: AppHandle $(, $arg:ident: $arg_ty:ty)* $(,)?) -> $ret:ty) => {
@@ -79,20 +77,28 @@ struct TauriWorkspaceRuntime<R: Runtime> {
 }
 
 fn workspace_context<R: Runtime>(app: AppHandle<R>) -> WorkspaceContext {
-    WorkspaceContext::new(Arc::new(TauriWorkspaceRuntime {
-        app,
-        parent_window_label: None,
-    }))
+    let task_runtime = app.state::<Arc<WorkspaceTaskRuntime>>().inner().clone();
+    WorkspaceContext::with_task_runtime(
+        Arc::new(TauriWorkspaceRuntime {
+            app,
+            parent_window_label: None,
+        }),
+        task_runtime,
+    )
 }
 
 fn workspace_dialog_context<R: Runtime>(
     app: AppHandle<R>,
     parent_window_label: String,
 ) -> WorkspaceContext {
-    WorkspaceContext::new(Arc::new(TauriWorkspaceRuntime {
-        app,
-        parent_window_label: Some(parent_window_label),
-    }))
+    let task_runtime = app.state::<Arc<WorkspaceTaskRuntime>>().inner().clone();
+    WorkspaceContext::with_task_runtime(
+        Arc::new(TauriWorkspaceRuntime {
+            app,
+            parent_window_label: Some(parent_window_label),
+        }),
+        task_runtime,
+    )
 }
 
 impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
@@ -163,39 +169,6 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String> {
         self.app
             .emit(event, payload)
-            .map_err(|error| error.to_string())
-    }
-
-    fn submit_mutsuki_task(&self, task: Task) -> Result<TaskHandle, String> {
-        self.app
-            .state::<Arc<MutsukiTauriHost>>()
-            .submit_task(task)
-            .map_err(|error| error.to_string())
-    }
-
-    fn submit_mutsuki_batch(&self, batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
-        self.app
-            .state::<Arc<MutsukiTauriHost>>()
-            .submit_batch(batch)
-            .map_err(|error| error.to_string())
-    }
-
-    fn wait_mutsuki_task(&self, task_id: &str) -> Result<TaskOutcome, String> {
-        self.app
-            .state::<Arc<MutsukiTauriHost>>()
-            .task_result(TaskResultRequest {
-                task_id: task_id.to_string(),
-            })
-            .map_err(|error| error.to_string())?
-            .outcome
-            .ok_or_else(|| format!("Mutsuki task {task_id} ended without an outcome"))
-    }
-
-    fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {
-        self.app
-            .state::<Arc<MutsukiTauriHost>>()
-            .cancel_task_handle(handle)
-            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
