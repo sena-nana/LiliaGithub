@@ -22,7 +22,7 @@ pub mod tasks;
 pub(crate) mod watcher;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use mutsuki_runtime_contracts::DispatchLane;
+use crate::task_runtime::DispatchLane;
 use operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 
 async fn run_core_operation<T, F>(
