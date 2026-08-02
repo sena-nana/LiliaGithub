@@ -1,4 +1,9 @@
-import type { GitHubWorkflowRun, RepoChange, RepoSummary } from "../services/workspace";
+import type {
+  GitHubWorkflowRun,
+  RepoChange,
+  RepoConflictOperation,
+  RepoSummary,
+} from "../services/workspace";
 
 type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName" | "worktree">;
 export type RepoDisplaySource = "worktree" | "remote" | "local";
@@ -23,6 +28,31 @@ export function repoDisplayName(repo: RepoIdentity | null | undefined) {
 
 export function repoDisplayTitle(repo: RepoIdentity) {
   return [repo.githubFullName, repo.path].filter(Boolean).join(" · ") || repo.name;
+}
+
+export function repoConflictOperationText(operation: RepoConflictOperation | null | undefined) {
+  switch (operation ?? "none") {
+    case "merge":
+      return "合并";
+    case "rebase":
+      return "rebase";
+    case "cherry-pick":
+      return "cherry-pick";
+    case "none":
+      return "冲突";
+    default:
+      return operation || "冲突";
+  }
+}
+
+export function repoConflictContinueText(operation: RepoConflictOperation | null | undefined) {
+  const text = repoConflictOperationText(operation);
+  return operation === "merge" ? `继续${text}` : `继续 ${text}`;
+}
+
+export function repoConflictContinuationMessage(operation: RepoConflictOperation | null | undefined) {
+  const text = repoConflictOperationText(operation);
+  return operation === "merge" ? `继续${text}操作` : `继续 ${text} 操作`;
 }
 
 export function changeStatusText(change: RepoChange) {

@@ -1045,6 +1045,8 @@ pub struct RepoSummary {
     pub unstaged_count: usize,
     pub untracked_count: usize,
     pub conflict_count: usize,
+    #[serde(default = "default_conflict_operation")]
+    pub conflict_operation: String,
     pub last_commit_at: Option<i64>,
     pub last_commit_message: Option<String>,
     #[serde(default)]
@@ -1052,6 +1054,10 @@ pub struct RepoSummary {
     #[serde(default)]
     pub language_stats_updated_at: i64,
     pub worktree: RepoWorktree,
+}
+
+fn default_conflict_operation() -> String {
+    "none".to_string()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

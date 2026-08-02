@@ -1073,6 +1073,88 @@ describe("workspace incremental refresh", () => {
     });
   });
 
+  it("根据当前仓库状态隐藏过期冲突错误并保留普通同步错误", () => {
+    const conflicted = repoSummary("Lilia", { conflictCount: 1 });
+    state.repos = [conflicted];
+    state.recentSync = {
+      preview: {
+        operation: "sync",
+        eligible: [],
+        blocked: [],
+        warnings: [],
+      },
+      results: [{
+        repoId: conflicted.id,
+        status: "error",
+        message: "合并产生冲突，请处理后推送",
+        summary: conflicted,
+      }],
+      retryingRepoIds: [],
+      updatedAt: 1,
+    };
+
+    expect(repoSyncIssueForRepo(conflicted.id)).toBeNull();
+
+    state.recentSync = {
+      ...state.recentSync,
+      results: [{
+        repoId: conflicted.id,
+        status: "error",
+        message: "认证失败",
+        summary: null,
+      }],
+    };
+    expect(repoSyncIssueForRepo(conflicted.id)).toMatchObject({
+      label: "最近同步失败",
+      message: "认证失败",
+    });
+
+    state.recentSync = {
+      ...state.recentSync,
+      results: [{
+        repoId: conflicted.id,
+        status: "error",
+        message: "合并产生冲突，请处理后推送",
+        summary: conflicted,
+      }],
+    };
+
+    const resolved = repoSummary(conflicted.id, { conflictCount: 0 });
+    state.repos = [resolved];
+    expect(repoSyncIssueForRepo(resolved.id)).toBeNull();
+
+    state.recentSync = {
+      ...state.recentSync,
+      results: [{
+        repoId: resolved.id,
+        status: "error",
+        message: "认证失败",
+        summary: resolved,
+      }],
+    };
+    expect(repoSyncIssueForRepo(resolved.id)).toMatchObject({
+      label: "最近同步失败",
+      message: "认证失败",
+    });
+
+    state.recentSync = null;
+    state.bulkPreview = {
+      operation: "push",
+      eligible: [],
+      blocked: [],
+      warnings: [],
+    };
+    state.bulkResults = [{
+      repoId: resolved.id,
+      status: "error",
+      message: "合并产生冲突，请处理后推送",
+      summary: conflicted,
+      steps: [],
+    }];
+    state.repos = [resolved];
+    expect(repoSyncIssueForRepo(resolved.id)).toBeNull();
+  });
+
   it("最近同步成功后不再回退到旧批量失败结果", () => {
     const repo = repoSummary("LiliaGithub", { ahead: 0 });
     state.bulkPreview = {

@@ -4798,7 +4798,19 @@ export function refreshRepoSummary(
 }
 
 function allFallbackRepos() {
-  return [...fallbackRepos, ...fallbackClonedRepos].map((repo) => fallbackRepoOverrides[repo.id] ?? repo);
+  return [...fallbackRepos, ...fallbackClonedRepos]
+    .map((repo) => fallbackRepoOverrides[repo.id] ?? repo)
+    .map((repo) => ({
+      ...repo,
+      conflictOperation: fallbackConflictOperationForRepo(repo),
+    }));
+}
+
+function fallbackConflictOperationForRepo(repo: RepoSummary) {
+  const conflicts = fallbackConflictStates.get(repo.id)
+    ?? fallbackConflictOverride?.(repo.id)
+    ?? (repo.id === "Lilia" ? initialFallbackConflictState(repo.id) : null);
+  return conflicts?.operation ?? repo.conflictOperation ?? "none";
 }
 
 function visibleManagedFallbackRepos() {
@@ -8870,6 +8882,7 @@ function resolveFallbackConflictFile(repoId: string, path: string, stage: boolea
   return updateFallbackRepo({
     ...repo,
     conflictCount: files.length,
+    conflictOperation: conflicts.operation,
     stagedCount: repo.stagedCount + (stage ? 1 : 0),
   });
 }
@@ -8884,7 +8897,7 @@ function assertFallbackConflictOperation(operation: string, action: "继续" | "
 function finishFallbackConflictOperation(repoId: string): RepoSummary {
   setFallbackConflictState(repoId, emptyConflictState());
   const repo = fallbackRepo(repoId);
-  return updateFallbackRepo({ ...repo, conflictCount: 0 });
+  return updateFallbackRepo({ ...repo, conflictCount: 0, conflictOperation: "none" });
 }
 
 export function acceptConflictFile(

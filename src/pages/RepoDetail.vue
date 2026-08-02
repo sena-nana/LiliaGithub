@@ -222,6 +222,7 @@ async function refreshCurrentPage() {
         :summary-path="summary?.path"
         :has-conflicts="hasConflicts"
         :has-conflict-files="conflicts.files.length > 0"
+        :conflict-operation="conflicts.operation"
         :needs-publish="needsPublish"
         :ahead-count="aheadCount"
         :behind-count="behindCount"

@@ -16,6 +16,7 @@ import type {
 } from "../services/homeAttention/types";
 import {
   type WorkflowRunTone,
+  repoConflictContinuationMessage,
   workflowRunStatusText,
   workflowRunStatusTone,
 } from "./repoDisplay";
@@ -176,6 +177,20 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       detail: `${localRepo.conflictCount} 个冲突文件${dirty ? `，另有 ${dirty} 项本地改动` : ""}`,
       summary: githubRepo.fullName,
       reason: "Git 冲突阻塞后续同步与提交",
+      timestamp: repoPendingTimestamp(githubRepo, localRepo),
+      priority: PRIORITY_CONFLICT,
+      target: { kind: "repo", repoId: localRepo.id, view: "conflicts" },
+      tone: "error",
+    }));
+  } else if (localRepo && localRepo.conflictOperation && localRepo.conflictOperation !== "none") {
+    const operation = repoConflictContinuationMessage(localRepo.conflictOperation);
+    items.push(createHomePendingItem({
+      id: `operation-conflict:${localRepo.id}:${localRepo.conflictOperation}`,
+      kind: "operation",
+      title: "冲突操作待完成",
+      detail: `冲突文件已解决，可以${operation}`,
+      summary: githubRepo.fullName,
+      reason: "当前 Git 操作仍需继续或终止",
       timestamp: repoPendingTimestamp(githubRepo, localRepo),
       priority: PRIORITY_CONFLICT,
       target: { kind: "repo", repoId: localRepo.id, view: "conflicts" },

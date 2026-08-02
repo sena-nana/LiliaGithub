@@ -73,6 +73,7 @@ export interface RepoListChangeState {
 export interface RepoActionErrorState {
   message: string;
   updatedAt: number;
+  status?: string;
 }
 
 export interface RepoSyncIssueDisplay {
@@ -397,6 +398,7 @@ function sameRepoSummary(left: RepoSummary | undefined, right: RepoSummary | und
     left.unstagedCount === right.unstagedCount &&
     left.untrackedCount === right.untrackedCount &&
     left.conflictCount === right.conflictCount &&
+    (left.conflictOperation ?? "none") === (right.conflictOperation ?? "none") &&
     left.lastCommitAt === right.lastCommitAt &&
     left.lastCommitMessage === right.lastCommitMessage &&
     left.languageStatsUpdatedAt === right.languageStatsUpdatedAt &&
@@ -439,28 +441,32 @@ function sameLanguageStats(left: RepoSummary, right: RepoSummary) {
 }
 
 export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
-  let normalizedDetail = detail;
-  if (detail.summary.id !== repoId) {
-    normalizedDetail = {
-      ...detail,
-      summary: {
+  const summary = detail.summary.id === repoId
+    ? detail.summary
+    : {
         ...detail.summary,
         id: repoId,
         relativePath: repoId,
-      },
-    };
-  }
+      };
+  const normalizedDetail = {
+    ...detail,
+    summary: {
+      ...summary,
+      conflictOperation: detail.conflicts.operation,
+    },
+  };
   state.repoDetails[repoId] = normalizedDetail;
   upsertRepo(normalizedDetail.summary);
 }
 
 export function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summary.id) {
   const normalizedSummary = patch.summary.id === repoId
-    ? patch.summary
+    ? { ...patch.summary, conflictOperation: patch.conflicts.operation }
     : {
         ...patch.summary,
         id: repoId,
         relativePath: repoId,
+        conflictOperation: patch.conflicts.operation,
       };
   const current = state.repoDetails[repoId];
   const currentSummary = current?.summary ?? state.repos.find((repo) => repo.id === repoId);
@@ -527,7 +533,7 @@ export function syncErrorDetailsByRepoId() {
   }
   return new Map(
     state.bulkResults
-      .filter((result) => result.status !== "success")
+      .filter((result) => result.status !== "success" && !shouldSuppressConflictResult(result.repoId, result))
       .map((result) => [result.repoId, { message: result.message, updatedAt: state.recentSync?.updatedAt ?? 0 }]),
   );
 }
@@ -565,7 +571,7 @@ export function repoSyncIssuesByRepoId() {
   }
 
   for (const [repoId, error] of Object.entries(state.repoActionErrors)) {
-    if (error && !issues.has(repoId)) {
+    if (error && !issues.has(repoId) && !shouldSuppressRepoActionError(repoId, error)) {
       issues.set(
         repoId,
         createRepoSyncIssue(error.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败", error),
@@ -576,8 +582,8 @@ export function repoSyncIssuesByRepoId() {
 }
 
 export function recentSyncErrorForRepo(repoId: string) {
-  const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status !== "success");
-  if (!result) return null;
+  const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status !== "success") ?? null;
+  if (!result || shouldSuppressConflictResult(repoId, result)) return null;
   return {
     message: result.message,
     retrying: state.recentSync?.retryingRepoIds.includes(repoId) ?? false,
@@ -596,12 +602,13 @@ export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | nul
   return repoSyncIssuesByRepoId().get(repoId) ?? null;
 }
 
-export function setRepoActionError(repoId: string, message: string) {
+export function setRepoActionError(repoId: string, message: string, status?: string) {
   state.repoActionErrors = {
     ...state.repoActionErrors,
     [repoId]: {
       message,
       updatedAt: Date.now(),
+      status,
     },
   };
 }
@@ -676,7 +683,7 @@ function isRecentSyncIssue(repoId: string) {
 function recentSyncErrorsByRepoId() {
   const errors = new Map<string, RepoActionErrorState>();
   for (const result of state.recentSync?.results ?? []) {
-    if (result.status !== "success") {
+    if (result.status !== "success" && !shouldSuppressConflictResult(result.repoId, result)) {
       errors.set(result.repoId, {
         message: result.message,
         updatedAt: state.recentSync?.updatedAt ?? 0,
@@ -684,6 +691,29 @@ function recentSyncErrorsByRepoId() {
     }
   }
   return errors;
+}
+
+function repoSummaryForState(repoId: string) {
+  return state.repos.find((repo) => repo.id === repoId) ?? state.repoDetails[repoId]?.summary ?? null;
+}
+
+function isConflictSyncResult(result: { status: string; summary?: RepoSummary | null }) {
+  return result.status === "conflicts" || Boolean(result.summary && (
+    result.summary.conflictCount > 0 ||
+    (result.summary.conflictOperation ?? "none") !== "none"
+  ));
+}
+
+function shouldSuppressConflictResult(
+  repoId: string,
+  result: { status: string; summary?: RepoSummary | null },
+) {
+  if (!isConflictSyncResult(result)) return false;
+  return repoSummaryForState(repoId) != null;
+}
+
+function shouldSuppressRepoActionError(repoId: string, error: RepoActionErrorState) {
+  return error.status === "conflicts" && repoSummaryForState(repoId) != null;
 }
 
 export function resetWorkspaceStateForTests() {

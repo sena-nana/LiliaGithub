@@ -20,6 +20,7 @@ function repo(overrides: Partial<RepoSummary> = {}): RepoSummary {
     unstagedCount: 0,
     untrackedCount: 0,
     conflictCount: 0,
+    conflictOperation: "none",
     lastCommitAt: 1_782_390_000,
     lastCommitMessage: "最近提交",
     languageStats: [],
