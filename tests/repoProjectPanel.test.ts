@@ -1066,6 +1066,14 @@ describe("RepoProjectPanel", () => {
     state.repos = [];
   });
 
+  it("项目详情工作区为右栏保留右侧留白", async () => {
+    const view = await renderProjectPanel();
+
+    const workspace = view.container.querySelector('[aria-label="仓库工作区"]') as HTMLElement;
+    expect(workspace).toBeInTheDocument();
+    expect(workspace.style.paddingInlineEnd).toBe("24px");
+  });
+
   it("本地仓库在命令运行页无日志时只显示空输出状态", async () => {
     const view = await renderProjectPanel({ activeGitTab: "run" });
 
