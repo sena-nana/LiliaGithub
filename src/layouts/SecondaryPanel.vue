@@ -37,7 +37,12 @@ import {
   type ContextMenuProvider,
 } from "../ui";
 import { repoRoute } from "../utils/repoRoutes";
-import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
+import {
+  repoConflictContinuationMessage,
+  repoDisplayInfo,
+  repoDisplayTitle,
+  type RepoDisplaySource,
+} from "../utils/repoDisplay";
 import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
@@ -308,6 +313,7 @@ interface RepoItem {
   ahead: number;
   behind: number;
   conflictCount: number;
+  conflictOperation: string;
   lastCommitAt: number | null;
   sourceIndex: number;
 }
@@ -343,6 +349,7 @@ function sameRepoItem(current: RepoItem, next: RepoItem) {
     current.ahead === next.ahead &&
     current.behind === next.behind &&
     current.conflictCount === next.conflictCount &&
+    current.conflictOperation === next.conflictOperation &&
     current.lastCommitAt === next.lastCommitAt &&
     current.sourceIndex === next.sourceIndex;
 }
@@ -378,6 +385,7 @@ function repoItem(repo: RepoSummary, sourceIndex: number) {
     ahead: repo.ahead,
     behind: repo.behind,
     conflictCount: repo.conflictCount,
+    conflictOperation: repo.conflictOperation ?? "none",
     lastCommitAt: repo.lastCommitAt,
     sourceIndex,
   };
@@ -471,15 +479,24 @@ const pinnedRemoteRepoItems = computed(() => favoriteRepos.value.flatMap((favori
 const repoConflictIssueById = computed(() => {
   const issues = new Map<string, RepoIssue>();
   for (const item of repoItems.value) {
-    if (item.conflictCount <= 0) continue;
-    issues.set(item.id, CONFLICT_REPO_ISSUE);
+    if (item.conflictCount > 0) {
+      issues.set(item.id, CONFLICT_REPO_ISSUE);
+    } else if (item.conflictOperation !== "none") {
+      issues.set(item.id, {
+        label: "冲突操作待完成",
+        message: `冲突文件已解决，可以${repoConflictContinuationMessage(item.conflictOperation)}`,
+        retryable: false,
+        retrying: false,
+        updatedAt: 0,
+      });
+    }
   }
   return issues;
 });
 const repoIssueById = computed(() => {
   const issues = new Map<string, RepoIssue>(syncIssueByRepoId.value);
   for (const [repoId, issue] of repoConflictIssueById.value) {
-    if (!issues.has(repoId)) issues.set(repoId, issue);
+    issues.set(repoId, issue);
   }
   return issues;
 });

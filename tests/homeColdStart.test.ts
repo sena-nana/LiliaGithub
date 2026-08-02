@@ -15,6 +15,7 @@ import {
   clearHomeGitHubOverviewSnapshot,
 } from "../src/pages/homeOverviewCache";
 import Home from "../src/pages/Home.vue";
+import { upsertRepo } from "../src/composables/workspace/state";
 import { repoSummary } from "./fixtures/workspace";
 
 const STORAGE_KEY = "lilia-github.home.overviewSnapshot.v1";
@@ -147,6 +148,44 @@ afterEach(() => {
 });
 
 describe("Home cold start repository status", () => {
+  it("rebuilds the overview snapshot when conflict state changes externally", async () => {
+    const rendered = await renderHomeFromStoredSnapshot();
+
+    await waitFor(() => {
+      expect(screen.getByText(repoFullName)).toBeInTheDocument();
+    });
+
+    upsertRepo(repoSummary("LiliaGithub", {
+      githubFullName: repoFullName,
+      conflictCount: 1,
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "处理冲突" })).toBeInTheDocument();
+    });
+
+    upsertRepo(repoSummary("LiliaGithub", {
+      githubFullName: repoFullName,
+      conflictCount: 0,
+      conflictOperation: "rebase",
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "继续 rebase" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "处理冲突" })).toBeNull();
+    });
+
+    upsertRepo(repoSummary("LiliaGithub", {
+      githubFullName: repoFullName,
+      conflictCount: 0,
+      conflictOperation: "none",
+    }));
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: "继续 rebase" })).toBeNull();
+      expect(screen.queryByRole("link", { name: "处理冲突" })).toBeNull();
+    });
+
+    rendered.unmount();
+  });
+
   it("sorts repo status rows from a persisted local preference", async () => {
     const repos = [
       githubRepoSummary({

@@ -96,7 +96,12 @@ import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
+import {
+  bulkResultTone,
+  repoConflictContinuationMessage,
+  repoConflictContinueText,
+  repoDisplayName,
+} from "../utils/repoDisplay";
 import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
@@ -954,6 +959,27 @@ watch(
 
 watch(
   () => [
+    workspace.state.repos,
+    workspace.state.repoListChange.revision,
+    workspace.state.recentSync?.updatedAt ?? 0,
+    workspace.state.recentSync?.retryingRepoIds.join(",") ?? "",
+    Object.entries(workspace.state.repoActionErrors)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([repoId, error]) => `${repoId}:${error?.updatedAt ?? 0}:${error?.status ?? ""}`)
+      .join("|"),
+    Object.entries(workspace.state.repoSyncResults)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([repoId, result]) => `${repoId}:${result?.status ?? ""}`)
+      .join("|"),
+  ] as const,
+  () => {
+    if (!homeOverviewInitialized || !homeOverviewSnapshot.value) return;
+    commitHomeOverviewSnapshot();
+  },
+);
+
+watch(
+  () => [
     workspace.isReady.value,
     activeNamedWorkspace.value?.id,
     activeNamedWorkspace.value?.viewPreferences.homeRepositoryStatusSort,
@@ -1511,6 +1537,14 @@ function repoAction(repo: RepoSummary): RepoAction | null {
       kind: "conflict",
       label: "处理冲突",
       title: `${repo.conflictCount} 个冲突文件待处理`,
+      to: repoConflictRoute(repo.id),
+    };
+  }
+  if (repo.conflictOperation && repo.conflictOperation !== "none") {
+    return {
+      kind: "conflict",
+      label: repoConflictContinueText(repo.conflictOperation),
+      title: `冲突文件已解决，可以${repoConflictContinuationMessage(repo.conflictOperation)}`,
       to: repoConflictRoute(repo.id),
     };
   }

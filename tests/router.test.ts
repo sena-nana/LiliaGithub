@@ -1013,7 +1013,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("进行中操作但无冲突文件时工具栏显示推送而非处理冲突", async () => {
+  it("进行中操作但无冲突文件时工具栏显示继续操作入口", async () => {
     const summary = repoSummary("LiliaGithub", { conflictCount: 0, ahead: 1 });
     mockRepoDetail(summary, {
       conflicts: { operation: "merge", files: [], allResolved: true },
@@ -1021,7 +1021,7 @@ describe("基础路由", () => {
 
     await renderAt("/repos/LiliaGithub/changes");
 
-    expect(await screen.findByRole("button", { name: "推送" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "继续合并" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "处理冲突" })).toBeNull();
   });
 

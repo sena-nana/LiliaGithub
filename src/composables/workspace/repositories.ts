@@ -335,7 +335,7 @@ function applyAutoSyncResult(result: BulkSyncResult) {
   if (result.status === "success") {
     clearRepoActionError(result.repoId);
   } else {
-    setRepoActionError(result.repoId, result.message);
+    setRepoActionError(result.repoId, result.message, result.status);
   }
 }
 
@@ -377,7 +377,7 @@ export async function autoSyncRepoIfNeeded(
         steps: [],
       };
       rememberAutoSyncFailure(summary, operation, failedResult);
-      setRepoActionError(summary.id, failedResult.message);
+      setRepoActionError(summary.id, failedResult.message, failedResult.status);
       if (options.throwOnError) throw err;
       return null;
     }
@@ -1070,7 +1070,7 @@ export async function commit(repoId: string, files: string[], message: string, p
     if (result?.pushResult) {
       recordRepoSyncResult(repoId, result.pushResult);
       if (result.pushResult.status === "success") clearRepoActionError(repoId);
-      else setRepoActionError(repoId, result.pushResult.message);
+      else setRepoActionError(repoId, result.pushResult.message, result.pushResult.status);
     }
     return result;
   } catch (err) {
@@ -1135,7 +1135,7 @@ async function applyRepoSyncOperation(
   upsertRepo(result.summary);
   recordRepoSyncResult(repoId, result);
   if (result.status === "success") clearRepoActionError(repoId);
-  else setRepoActionError(repoId, result.message);
+  else setRepoActionError(repoId, result.message, result.status);
   await requestRepoStatusRefresh(repoId, refreshScope, { immediate: true });
   return result;
 }
