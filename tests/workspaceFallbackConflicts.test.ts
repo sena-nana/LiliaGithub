@@ -66,14 +66,17 @@ describe("workspace fallback conflicts", () => {
     expect(resolved).toMatchObject({ conflictCount: 1, stagedCount: 2 });
 
     const marked = await markFileResolved(repoId, "src/mark.ts");
-    expect(marked).toMatchObject({ conflictCount: 0, stagedCount: 3 });
+    expect(marked).toMatchObject({ conflictCount: 0, conflictOperation: "rebase", stagedCount: 3 });
     expect(await getRepoConflicts(repoId)).toEqual({
       operation: "rebase",
       files: [],
       allResolved: true,
     });
 
-    await expect(continueConflictOperation(repoId)).resolves.toMatchObject({ conflictCount: 0 });
+    await expect(continueConflictOperation(repoId)).resolves.toMatchObject({
+      conflictCount: 0,
+      conflictOperation: "none",
+    });
     expect(await getRepoConflicts(repoId)).toEqual({
       operation: "none",
       files: [],

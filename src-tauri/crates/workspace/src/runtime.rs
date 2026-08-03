@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+
+use crate::task_runtime::{CancelResult, TaskHandle, TaskJob, TaskSpec, WorkspaceTaskRuntime};
 
 pub trait WorkspaceRuntime: Send + Sync {
     fn store_get(&self, file: &str, key: &str) -> Result<Option<JsonValue>, String>;
@@ -15,18 +16,6 @@ pub trait WorkspaceRuntime: Send + Sync {
     fn open_path(&self, path: &str, with: Option<&str>) -> Result<(), String>;
     fn open_url(&self, url: &str, with: Option<&str>) -> Result<(), String>;
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String>;
-    fn submit_mutsuki_task(&self, _task: Task) -> Result<TaskHandle, String> {
-        Err("Mutsuki runtime is unavailable".to_string())
-    }
-    fn submit_mutsuki_batch(&self, _batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
-        Err("Mutsuki runtime is unavailable".to_string())
-    }
-    fn wait_mutsuki_task(&self, _task_id: &str) -> Result<TaskOutcome, String> {
-        Err("Mutsuki runtime is unavailable".to_string())
-    }
-    fn cancel_mutsuki_task(&self, _handle: TaskHandle) -> Result<(), String> {
-        Err("Mutsuki runtime is unavailable".to_string())
-    }
     fn resource_dir(&self) -> Option<PathBuf> {
         None
     }
@@ -35,11 +24,25 @@ pub trait WorkspaceRuntime: Send + Sync {
 #[derive(Clone)]
 pub struct WorkspaceContext {
     runtime: Arc<dyn WorkspaceRuntime>,
+    task_runtime: Arc<WorkspaceTaskRuntime>,
 }
 
 impl WorkspaceContext {
     pub fn new(runtime: Arc<dyn WorkspaceRuntime>) -> Self {
-        Self { runtime }
+        Self {
+            runtime,
+            task_runtime: WorkspaceTaskRuntime::new(),
+        }
+    }
+
+    pub fn with_task_runtime(
+        runtime: Arc<dyn WorkspaceRuntime>,
+        task_runtime: Arc<WorkspaceTaskRuntime>,
+    ) -> Self {
+        Self {
+            runtime,
+            task_runtime,
+        }
     }
 
     pub fn store(&self, file: &str) -> Result<WorkspaceStore, String> {
@@ -70,20 +73,12 @@ impl WorkspaceContext {
         self.runtime.resource_dir()
     }
 
-    pub fn submit_mutsuki_task(&self, task: Task) -> Result<TaskHandle, String> {
-        self.runtime.submit_mutsuki_task(task)
+    pub fn submit_task(&self, spec: TaskSpec, job: TaskJob) -> Result<TaskHandle, String> {
+        self.task_runtime.submit(spec, job)
     }
 
-    pub fn submit_mutsuki_batch(&self, batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
-        self.runtime.submit_mutsuki_batch(batch)
-    }
-
-    pub fn wait_mutsuki_task(&self, task_id: &str) -> Result<TaskOutcome, String> {
-        self.runtime.wait_mutsuki_task(task_id)
-    }
-
-    pub fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {
-        self.runtime.cancel_mutsuki_task(handle)
+    pub fn cancel_task(&self, handle: &TaskHandle) -> CancelResult {
+        self.task_runtime.cancel(handle)
     }
 }
 

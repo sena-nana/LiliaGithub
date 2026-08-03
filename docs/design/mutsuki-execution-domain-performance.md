@@ -1,41 +1,28 @@
-# LiliaGithub ExecutionDomain performance reference
+# LiliaGithub Tokio execution-domain performance reference
 
-LiliaGithub keeps one `github-domain` consistency domain because status, stage, commit, branch,
-watcher and remote synchronization share repository truth. The production workspace runtime maps
-operation kinds into independent physical execution paths inside that domain.
+LiliaGithub keeps four application-owned Tokio execution domains:
 
-`lilia_github_workspace_runtime_reference` is a separate, non-published workspace crate. It uses
-the production `OperationKind` protocol IDs and the production Git command/parser crate to compare:
+- `interactive-orchestration`: one worker;
+- `github-io`: two workers;
+- `workspace-cpu`: one worker;
+- `local-blocking`: two workers.
 
-- one shared two-worker path;
-- one `local-blocking` worker plus one `workspace-cpu` worker.
+Each domain has a bounded queue of 64 entries. Priority ordering is applied inside a domain;
+repository read/write serialization remains enforced by the existing repository guards.
+Mutsuki is no longer part of the production runtime or this benchmark.
 
-Both topologies keep the same RuntimeDomain, two-worker budget, protocols, runners, payloads and
-outputs. The measured business operation is production `git status --porcelain=v1 -z --branch`
-plus status parsing while CPU derivation from captured production `git ls-files -z` and
-`git log --all` snapshots saturates the background workers. Capturing the versioned input before
-analysis follows the product rule that an index is derived data, and avoids pretending that
-ExecutionDomain isolation can remove physical Git, disk or process contention.
-
-The percentile is measured from task submission until the real status runner starts. Every sample
-still waits for that runner to finish and requires its parsed business output. This isolates the
-submit-to-dispatch latency promised by ExecutionDomain while keeping end-to-end correctness as a
-hard condition; full Git command duration remains subject to external disk, process and repository
-contention that worker-path separation does not control.
+The benchmark submits CPU work that occupies the isolated `workspace-cpu` lane, then measures
+the time from submitting an interactive blocking task until that task actually starts. It uses
+one monotonic clock epoch and waits for every task to reach a terminal result.
 
 ```powershell
 cargo run --release --locked `
   --manifest-path src-tauri/Cargo.toml `
-  -p lilia_github_workspace_runtime_reference `
+  -p lilia_github_workspace_execution_bench `
   --bin workspace-execution-domain-bench -- `
-  --samples 300 --min-background-ms 20 --workspace . `
+  --samples 300 --min-background-ms 5 --workspace . `
   --output artifacts/perf/issue43-liliagithub-execution-domains.json
 ```
 
-The gate uses warmed long-lived runtimes, alternating paired sample order and nearest-rank p99.
-Calibration accepts an iteration count only when the fastest of three warmed attempts reaches
-ten times the declared 20 ms minimum. A sample is included only after both shared-path workers,
-or the multi-path CPU worker, are observably occupied; an unestablished pressure sample
-is drained and retried up to three times. The multi-path p99 must improve by at least 50%.
-The CPU loop is protected from compiler hoisting and can scale to 67,108,864 iterations so a
-shallow checkout with a short captured history calibrates by duration instead of repository size.
+The current 300-sample run reports p50 `0.0167 ms`, p95 `0.0238 ms`, p99 `0.0353 ms` and max
+`0.2553 ms`; the p99 gate is `0.05 ms`.

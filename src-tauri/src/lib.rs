@@ -1,13 +1,11 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .manage(lilia_github_workspace::WorkspaceTaskRuntime::new())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_lilia::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_mutsuki::init_with_app(|_app| {
-            Ok(lilia_github_workspace::mutsuki_host_builder())
-        }));
+        .plugin(tauri_plugin_dialog::init());
 
     #[cfg(feature = "agent-debug-webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());

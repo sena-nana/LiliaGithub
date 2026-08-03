@@ -54,7 +54,8 @@ use super::repos::{
     add_repo_files_to_gitignore, bootstrap_unborn_from_remotes, cached_managed_repos,
     canonical_repo_path, checkout_branch_at, commit_file_change_from_status,
     commit_file_changes_from_outputs, commit_file_numstats, commit_file_patches,
-    commit_file_statuses, configured_rebase_target, conflict_operation_args, create_branch_at,
+    commit_file_statuses, configured_rebase_target, conflict_operation, conflict_operation_args,
+    create_branch_at,
     create_clone_parent_directories, current_branch_upstream, delete_branch_at,
     discard_all_repo_local_changes, discard_repo_files, ensure_clone_checkout,
     expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
@@ -945,6 +946,7 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         unstaged_count: 0,
         untracked_count: 0,
         conflict_count: 0,
+        conflict_operation: "none".to_string(),
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),
@@ -3480,6 +3482,31 @@ fn rejects_missing_or_unknown_conflict_operations() {
         conflict_operation_args("am", "继续").unwrap_err(),
         "不支持继续 am 冲突"
     );
+}
+
+#[test]
+fn repo_summary_exposes_active_conflict_operation_without_conflict_files() {
+    let root = temp_dir("summary-conflict-operation");
+    let repo = root.join("repo");
+    init_git_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "initial\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "initial"]);
+    let head = git_stdout(&repo, &["rev-parse", "HEAD"]);
+
+    for (marker, expected) in [
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ] {
+        fs::write(repo.join(".git").join(marker), format!("{head}\n")).unwrap();
+        assert_eq!(conflict_operation(&repo), expected);
+        assert_eq!(summarize_repo(&root, &repo).conflict_operation, expected);
+        fs::remove_file(repo.join(".git").join(marker)).unwrap();
+    }
+
+    fs::create_dir_all(repo.join(".git").join("rebase-merge")).unwrap();
+    assert_eq!(conflict_operation(&repo), "rebase");
+    assert_eq!(summarize_repo(&root, &repo).conflict_operation, "rebase");
 }
 
 #[test]

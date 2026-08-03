@@ -36,6 +36,7 @@ const workspace = vi.hoisted(() => ({
         unstagedCount: 0,
         untrackedCount: 0,
         conflictCount: 0,
+        conflictOperation: "none",
         lastCommitAt: null,
         lastCommitMessage: null,
         languageStats: [],

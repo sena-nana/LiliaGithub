@@ -24,6 +24,11 @@ import type { RepoSettingKey } from "../../config/repoSettingsManifest";
 import { createCachedAsyncComponent } from "../../utils/asyncComponent";
 import type { RepoContext } from "../../utils/repoContext";
 import { repoRoute, type RepoRouteTab } from "../../utils/repoRoutes";
+import {
+  repoConflictContinuationMessage,
+  repoConflictContinueText,
+} from "../../utils/repoDisplay";
+import type { RepoConflictOperation } from "../../services/workspace";
 
 type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type DropdownOption<T extends string = string> = {
@@ -81,6 +86,7 @@ const props = defineProps<{
   summaryPath?: string | null;
   hasConflicts: boolean;
   hasConflictFiles: boolean;
+  conflictOperation: RepoConflictOperation;
   needsPublish: boolean;
   aheadCount: number;
   behindCount: number;
@@ -137,6 +143,12 @@ const pushTargetLabel = computed(() => {
   if (!props.pushRemoteNames.length) return "未配置推送目标";
   return `推送至 ${props.pushRemoteNames.join("、")}`;
 });
+const conflictActionLabel = computed(() => props.hasConflictFiles
+  ? "处理冲突"
+  : repoConflictContinueText(props.conflictOperation));
+const conflictActionTitle = computed(() => props.hasConflictFiles
+  ? "处理未解决冲突"
+  : `冲突文件已解决，可以${repoConflictContinuationMessage(props.conflictOperation)}`);
 const launchCommandRunnable = computed(() => launchCommandDraft.value.trim().length > 0);
 const filteredLaunchCommandOptions = computed(() => {
   const query = launchCommandDraft.value.trim().toLowerCase();
@@ -428,17 +440,17 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             />
           </div>
           <button
-            v-if="hasConflictFiles"
+            v-if="hasConflictFiles || conflictOperation !== 'none'"
             type="button"
             class="repo-toolbar__btn repo-toolbar__btn--status"
-            title="处理未解决冲突"
-            aria-label="处理冲突"
+            :title="conflictActionTitle"
+            :aria-label="conflictActionLabel"
             data-agent-id="repo.toolbar.conflict.resolve"
             :disabled="actionRunning"
             @click="emit('openConflicts')"
           >
             <TriangleAlert :size="17" aria-hidden="true" />
-            <span class="repo-toolbar__sync-label">处理冲突</span>
+            <span class="repo-toolbar__sync-label">{{ conflictActionLabel }}</span>
           </button>
           <button
             v-else

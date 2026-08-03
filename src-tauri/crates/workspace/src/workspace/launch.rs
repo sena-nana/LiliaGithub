@@ -11,6 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::settings::{
     load_settings, repo_path_by_id, save_settings, workspace_context_identity, STORE_FILE,
@@ -22,7 +23,6 @@ use lilia_github_contracts::workspace::{
     ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
     ProjectLaunchStatus,
 };
-use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 pub(super) const LAUNCH_HISTORY_KEY: &str = "workspace.launchHistory.v1";

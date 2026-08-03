@@ -1048,6 +1048,8 @@ export interface RepoWorktree {
   mainRepoId: string | null;
 }
 
+export type RepoConflictOperation = "none" | "merge" | "rebase" | "cherry-pick" | string;
+
 export interface RepoSummary {
   id: string;
   name: string;
@@ -1067,6 +1069,8 @@ export interface RepoSummary {
   unstagedCount: number;
   untrackedCount: number;
   conflictCount: number;
+  /** Backward-compatible for summaries restored from older startup caches. */
+  conflictOperation?: RepoConflictOperation;
   lastCommitAt: number | null;
   lastCommitMessage: string | null;
   languageStats: readonly LanguageStat[];
@@ -1111,7 +1115,7 @@ export interface RepoChange {
 }
 
 export interface RepoConflictState {
-  operation: "none" | "merge" | "rebase" | "cherry-pick" | string;
+  operation: RepoConflictOperation;
   files: RepoConflictFile[];
   allResolved: boolean;
 }

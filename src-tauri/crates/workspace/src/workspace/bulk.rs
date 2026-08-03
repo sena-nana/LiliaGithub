@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::operations::{
     run_operation, submit_operation, OperationKind, OperationSpec, OperationTaskCompletion,
     OperationTicket, VisibleOperation, VisibleOperationGroup,
@@ -16,7 +17,6 @@ use lilia_github_contracts::workspace::{
     BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoRemoteSyncPolicy,
     RepoSummary,
 };
-use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BulkSyncTrigger {
