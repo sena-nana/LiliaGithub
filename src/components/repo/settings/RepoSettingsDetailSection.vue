@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle, RotateCw, Save, Trash2 } from "@lucide/vue";
-import { Dropdown, SettingsRow, UiDialog, UiSwitch } from "../../../ui";
+import { SettingsRow, UiDialog, UiSelect, UiSwitch } from "../../../ui";
 import {
   deleteGitHubBranch,
   getGitHubBranchProtection,
@@ -970,14 +970,12 @@ defineExpose({ refresh });
           </label>
           <SettingsRow class="project-settings-field" label="执行状态">
             <span class="project-settings-field__control">
-              <Dropdown
+              <UiSelect
                 v-model="rulesetDraft.enforcement"
                 :options="enforcementOptions"
-                block
-                size="large"
-                placement="bottom"
+                size="lg"
+                aria-label="执行状态"
                 agent-id="repo.settings.rules.enforcement"
-                menu-label="执行状态"
                 :disabled="Boolean(rulesetReadOnlyReason) || rulesetSaving || disabled"
               />
             </span>
@@ -1037,14 +1035,12 @@ defineExpose({ refresh });
       <div class="project-settings-fields">
         <SettingsRow class="project-settings-field" label="允许的 Actions">
           <span class="project-settings-field__control">
-            <Dropdown
+            <UiSelect
               :model-value="allowedActions"
               :options="allowedActionOptions"
-              block
-              size="large"
-              placement="bottom"
+              size="lg"
+              aria-label="允许的 Actions"
               agent-id="repo.settings.actions.allowed-actions"
-              menu-label="允许的 Actions"
               :disabled="saving || disabled || !actionsEnabled"
               @update:model-value="onAllowedActionsChange"
             />
@@ -1052,14 +1048,12 @@ defineExpose({ refresh });
         </SettingsRow>
         <SettingsRow class="project-settings-field" label="默认工作流权限">
           <span class="project-settings-field__control">
-            <Dropdown
+            <UiSelect
               :model-value="workflowDefaultPermission"
               :options="workflowPermissionOptions"
-              block
-              size="large"
-              placement="bottom"
+              size="lg"
+              aria-label="默认工作流权限"
               agent-id="repo.settings.actions.workflow-permission"
-              menu-label="默认工作流权限"
               :disabled="saving || disabled || !actionsEnabled"
               @update:model-value="onWorkflowPermissionChange"
             />
