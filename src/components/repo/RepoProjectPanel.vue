@@ -4811,7 +4811,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-main--plain {
   border: 0;
-  border-radius: 0;
   background: transparent;
 }
 
