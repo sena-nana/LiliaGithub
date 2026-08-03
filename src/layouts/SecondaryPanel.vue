@@ -217,13 +217,13 @@ async function reconcileOrganizationRepoGroups() {
   });
 }
 
-async function loadSidebarGitHubOwners() {
+async function loadSidebarGitHubOwners(opts: { force?: boolean } = {}) {
   if (!workspace.isAuthorized.value) return;
-  await githubOwnersLoader.run("sidebar-github-owners", async (runId) => {
+  await githubOwnersLoader.run(`sidebar-github-owners:${opts.force ? "force" : "cache"}`, async (runId) => {
     githubOwnersLoading.value = true;
     githubOwnersError.value = null;
     try {
-      const owners = await workspace.getAccountRepositoryOwners();
+      const owners = await workspace.getAccountRepositoryOwners(opts);
       if (!githubOwnersLoader.isCurrent(runId)) return;
       githubOwners.value = owners;
     } catch (err) {
@@ -1184,7 +1184,7 @@ async function deleteGroup(group: { id: string }) {
       <SidebarFooter
         :status="footerStatus"
         :account-menu="footerAccountMenu"
-        @retry-organizations="loadSidebarGitHubOwners"
+        @retry-organizations="loadSidebarGitHubOwners({ force: true })"
         @authorize-organizations="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
       />
     </template>

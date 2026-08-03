@@ -59,13 +59,18 @@ export async function initialize() {
         state.bindingStatus = bindingStatus;
         if (bindingStatus.state !== "bound") {
           void service.clearStartupCache().catch(() => undefined);
+          return;
         }
+        void service.listGitHubRepoOwners().catch(() => undefined);
       });
     } else {
       const bindingStatus = await bindingStatusPromise;
       if (generation !== lifecycleGeneration) return;
       if (!bindingStatus) return;
       state.bindingStatus = bindingStatus;
+      if (bindingStatus.state === "bound") {
+        void service.listGitHubRepoOwners().catch(() => undefined);
+      }
     }
     hydrateWorkspaceBootstrapCache(bootstrap);
     await ensureRepoRefreshEventsReady();

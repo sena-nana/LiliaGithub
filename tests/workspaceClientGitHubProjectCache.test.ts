@@ -3,7 +3,9 @@ import {
   attachGitHubWorkflowArtifactAsset,
   cancelGitHubWorkflowRun,
   clearGitHubRepoCache,
+  clearGitHubRepoOwnerCache,
   createGitHubRelease,
+  createGitHubRepo,
   deleteGitHubBranch,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
@@ -15,6 +17,7 @@ import {
   getGitHubWorkflowRunDetail,
   listGitHubBranches,
   listGitHubAccountIssues,
+  listGitHubRepoOwners,
   listGitHubRepos,
   listRepoFiles,
   listGitHubRepoCommits,
@@ -44,6 +47,7 @@ import type {
   GitHubPullRequest,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubRepoOwner,
   GitHubRepoSummary,
   GitHubWorkflowRunDetail,
 } from "../src/services/workspace/types";
@@ -190,6 +194,23 @@ function githubRepoSummary(overrides: Partial<GitHubRepoSummary> = {}): GitHubRe
   };
 }
 
+function githubRepoOwner(
+  login: string,
+  kind: GitHubRepoOwner["kind"],
+  overrides: Partial<GitHubRepoOwner> = {},
+): GitHubRepoOwner {
+  return {
+    login,
+    kind,
+    avatarUrl: null,
+    membershipVisible: true,
+    membershipComplete: true,
+    repositoryAccessVisible: true,
+    source: kind === "user" ? "authenticated_user" : "both",
+    ...overrides,
+  };
+}
+
 function branch(name: string, overrides: Partial<BranchSummary> = {}): BranchSummary {
   return {
     name,
@@ -239,6 +260,7 @@ describe("workspace GitHub project cache", () => {
     workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.resetWorkspaceFallbacksForTests();
     clearGitHubRepoCache();
+    clearGitHubRepoOwnerCache();
   });
 
   it("默认复用项目页远端缓存，forceRefresh 才重新读取", async () => {
@@ -428,6 +450,99 @@ describe("workspace GitHub project cache", () => {
     await getGitHubBindingStatus();
 
     expect((await listGitHubRepos()).items[0]?.description).toBe("新授权数据");
+  });
+
+  it("账号与组织归属 pending 和缓存读取只发起一次并返回隔离副本", async () => {
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("sena-nana", "organization"),
+    ]);
+
+    const firstLoad = listGitHubRepoOwners();
+    const secondLoad = listGitHubRepoOwners();
+    const [first, second] = await Promise.all([firstLoad, secondLoad]);
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    first[1]!.login = "外部污染";
+    const cached = await listGitHubRepoOwners();
+    expect(cached.map((owner) => owner.login)).toEqual(["lilia-user", "sena-nana"]);
+    expect(workspaceFallback.getFallbackGitHubRepoOwnerListCallsForTests()).toHaveLength(1);
+  });
+
+  it("账号与组织归属 force 会绕过会话缓存重新读取", async () => {
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("sena-nana", "organization"),
+    ]);
+
+    expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["lilia-user", "sena-nana"]);
+
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("new-org", "organization"),
+    ]);
+    expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["lilia-user", "sena-nana"]);
+
+    const refreshed = await listGitHubRepoOwners({ force: true });
+    expect(refreshed.map((owner) => owner.login)).toEqual(["lilia-user", "new-org"]);
+    expect(workspaceFallback.getFallbackGitHubRepoOwnerListCallsForTests()).toHaveLength(2);
+  });
+
+  it("创建仓库后继续复用账号组织归属缓存", async () => {
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("sena-nana", "organization"),
+    ]);
+    await listGitHubRepoOwners();
+
+    await createGitHubRepo({
+      owner: "sena-nana",
+      ownerKind: "organization",
+      name: "cached-owner-repo",
+      description: null,
+      private: false,
+      autoInit: true,
+      hasIssues: true,
+      hasWiki: false,
+    });
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("new-org", "organization"),
+    ]);
+
+    expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["lilia-user", "sena-nana"]);
+    expect(workspaceFallback.getFallbackGitHubRepoOwnerListCallsForTests()).toHaveLength(1);
+  });
+
+  it("重新授权后的 revision 不复用旧账号组织归属缓存", async () => {
+    await getGitHubBindingStatus();
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("lilia-user", "user"),
+      githubRepoOwner("old-org", "organization"),
+    ]);
+    expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["lilia-user", "old-org"]);
+
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: {
+        login: "another-user",
+        avatarUrl: null,
+        boundAt: Date.now() + 1,
+        scopes: ["repo", "read:org"],
+        clientIdSource: "bundled",
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoOwnersForTests([
+      githubRepoOwner("another-user", "user"),
+      githubRepoOwner("new-org", "organization"),
+    ]);
+    await getGitHubBindingStatus();
+
+    expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["another-user", "new-org"]);
+    expect(workspaceFallback.getFallbackGitHubRepoOwnerListCallsForTests()).toHaveLength(2);
   });
 
   it("默认分支和分支删除保存后刷新 branches 设置分区", async () => {

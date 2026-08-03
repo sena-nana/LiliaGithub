@@ -11,7 +11,9 @@ import {
   ALL_GITHUB_REPOSITORIES,
   githubRepoCache,
   githubRepoPreloadPromises,
+  githubRepoOwnerPromises,
   githubRepoBindingRevision,
+  githubRepoOwnerCacheGeneration,
   githubAccountIssueCache,
   githubAccountIssueCacheGeneration,
   githubActionNotificationCache,
@@ -20,6 +22,7 @@ import {
   setGitHubActionNotificationCache,
   cloneProjectData,
   cloneProjectList,
+  cloneGitHubRepoOwners,
   cloneRepoPage,
   githubProjectRepoKey,
   githubProjectRepoCache,
@@ -30,10 +33,13 @@ import {
   applyGitHubBindingRevision,
   writeGitHubRepoCache,
   clearGitHubRepoCache,
+  readCachedGitHubRepoOwners,
+  writeGitHubRepoOwnerCache,
+  clearGitHubRepoOwnerCache,
   readCachedGitHubRepos,
 } from "./cache";
 import type { GitHubProjectFetchOptions } from "./cache";
-export { readCachedGitHubRepos, clearGitHubRepoCache };
+export { readCachedGitHubRepos, clearGitHubRepoCache, clearGitHubRepoOwnerCache };
 export type { GitHubProjectFetchOptions };
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
 import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
@@ -703,6 +709,7 @@ export async function pollGitHubDeviceFlow(
 export async function unbindGitHub(): Promise<void> {
   await call("github_unbind", undefined, () => workspaceFallback().unbindGitHub());
   clearGitHubRepoCache();
+  clearGitHubRepoOwnerCache();
 }
 
 export function getGitHubAccountProfile(): Promise<GitHubAccountProfile> {
@@ -866,8 +873,42 @@ export function listGitHubActionNotifications(
     });
 }
 
-export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
-  return call("github_list_repo_owners", undefined, () => workspaceFallback().listGitHubRepoOwners());
+export function listGitHubRepoOwners(opts: { force?: boolean } = {}): Promise<GitHubRepoOwner[]> {
+  if (opts.force) {
+    clearGitHubRepoOwnerCache();
+  } else {
+    const cached = readCachedGitHubRepoOwners();
+    if (cached) return Promise.resolve(cached);
+    const pending = githubRepoOwnerPromises.get(githubRepoBindingRevision);
+    if (pending) return pending.then(cloneGitHubRepoOwners);
+  }
+
+  const requestRevision = githubRepoBindingRevision;
+  const requestGeneration = githubRepoOwnerCacheGeneration;
+  const request = call("github_list_repo_owners", undefined, () => workspaceFallback().listGitHubRepoOwners())
+    .then((owners) => {
+      if (
+        requestRevision === githubRepoBindingRevision
+        && requestGeneration === githubRepoOwnerCacheGeneration
+      ) {
+        writeGitHubRepoOwnerCache(owners);
+      }
+      return owners;
+    })
+    .catch((err) => {
+      if (isGitHubBindingExpiredError(err)) {
+        clearGitHubRepoCache();
+        clearGitHubRepoOwnerCache();
+      }
+      throw err;
+    })
+    .finally(() => {
+      if (githubRepoOwnerPromises.get(requestRevision) === request) {
+        githubRepoOwnerPromises.delete(requestRevision);
+      }
+    });
+  githubRepoOwnerPromises.set(requestRevision, request);
+  return request.then(cloneGitHubRepoOwners);
 }
 
 export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {

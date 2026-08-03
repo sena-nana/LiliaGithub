@@ -69,9 +69,9 @@ export async function getOrganizationOverview(
   return service.getGitHubOrganizationOverview(login, view);
 }
 
-export async function getAccountRepositoryOwners(): Promise<GitHubRepoOwner[]> {
+export async function getAccountRepositoryOwners(opts: { force?: boolean } = {}): Promise<GitHubRepoOwner[]> {
   const service = await loadWorkspaceService();
-  return service.listGitHubRepoOwners();
+  return service.listGitHubRepoOwners(opts);
 }
 
 export async function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
