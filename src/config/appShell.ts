@@ -116,11 +116,6 @@ export const LILIA_UI_CONFIG = {
   appearance: {
     backdropTarget: "sidebar",
     backdropOpacity: 0.64,
-    platformDefaults: {
-      macos: { backdropMode: "system" },
-      windows: { backdropMode: "mica" },
-      linux: { backdropMode: "solid" },
-    },
   },
   sidebar: {
     footerStatuses: [footerStatus],

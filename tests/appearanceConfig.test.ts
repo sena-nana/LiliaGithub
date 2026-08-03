@@ -11,11 +11,6 @@ describe("appearance shell configuration", () => {
     expect(LILIA_UI_CONFIG.appearance).toEqual({
       backdropTarget: "sidebar",
       backdropOpacity: 0.64,
-      platformDefaults: {
-        macos: { backdropMode: "system" },
-        windows: { backdropMode: "mica" },
-        linux: { backdropMode: "solid" },
-      },
     });
   });
 });
