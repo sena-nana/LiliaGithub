@@ -6432,6 +6432,62 @@ pub async fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepo
     .await
 }
 
+pub async fn github_list_repo_licenses(app: AppHandle) -> Result<Vec<GitHubRepoLicense>, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub License 模板",
+        move || {
+            let client = build_client()?;
+            let mut page = 1_u32;
+            let mut licenses = Vec::new();
+            let mut seen = HashSet::new();
+            loop {
+                let page_string = page.to_string();
+                let response = github_send(
+                    &app,
+                    "读取 GitHub License 模板失败",
+                    github_headers(
+                        client.get("https://api.github.com/licenses").query(&[
+                            ("per_page", "100"),
+                            ("page", page_string.as_str()),
+                        ]),
+                        None,
+                    ),
+                )?;
+                let next_page = parse_next_page(
+                    response
+                        .headers()
+                        .get(LINK)
+                        .and_then(|value| value.to_str().ok()),
+                );
+                let page_licenses = github_json::<Vec<GitHubRepoLicenseResponse>>(
+                    "读取 GitHub License 模板失败",
+                    response,
+                )?;
+                licenses.extend(page_licenses.into_iter().filter_map(|license| {
+                    let key = license.key.trim();
+                    if key.is_empty() || !seen.insert(key.to_ascii_lowercase()) {
+                        return None;
+                    }
+                    Some(GitHubRepoLicense {
+                        key: license.key,
+                        name: license.name,
+                        spdx_id: license.spdx_id,
+                        url: license.url,
+                    })
+                }));
+                let Some(next_page) = next_page else {
+                    break;
+                };
+                page = next_page;
+            }
+            Ok(licenses)
+        },
+    )
+    .await
+}
+
 pub async fn github_create_repo(
     app: AppHandle,
     request: GitHubCreateRepoRequest,

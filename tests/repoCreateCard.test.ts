@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoCreateCard from "../src/components/sidebar/RepoCreateCard.vue";
 import type {
+  GitHubRepoLicense,
   GitHubRepoOwner,
   GitHubRepoSummary,
   GitHubRepoTemplate,
@@ -64,6 +65,15 @@ function githubTemplate(
   };
 }
 
+function githubLicense(key: string, name: string, spdxId: string | null = key.toUpperCase()): GitHubRepoLicense {
+  return {
+    key,
+    name,
+    spdxId,
+    url: `https://api.github.com/licenses/${key}`,
+  };
+}
+
 const workspace = vi.hoisted(() => ({
   activeWorkspace: {
     value: {
@@ -76,6 +86,7 @@ const workspace = vi.hoisted(() => ({
   refreshRepos: vi.fn(),
   createGitHubRepo: vi.fn(),
   listGitHubRepoTemplates: vi.fn(async () => []),
+  listGitHubRepoLicenses: vi.fn(async () => []),
   getAccountRepositoryOwners: vi.fn(async () => []),
 }));
 
@@ -85,6 +96,7 @@ vi.mock("../src/composables/useWorkspace", () => ({
 
 const listGitHubRepoOwners = workspace.getAccountRepositoryOwners;
 const listGitHubRepoTemplates = workspace.listGitHubRepoTemplates;
+const listGitHubRepoLicenses = workspace.listGitHubRepoLicenses;
 const createGitHubRepo = workspace.createGitHubRepo;
 
 async function renderRemoteRepoCard(repoGroups?: Array<{
@@ -117,6 +129,7 @@ describe("RepoCreateCard", () => {
     vi.clearAllMocks();
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
     vi.mocked(listGitHubRepoTemplates).mockResolvedValue([]);
+    vi.mocked(listGitHubRepoLicenses).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
     workspace.cloneRepo.mockReset();
     workspace.refreshRepos.mockReset();
@@ -228,6 +241,66 @@ describe("RepoCreateCard", () => {
     expect(view.emitted("remoteCloned")).toBeUndefined();
     expect(workspace.cloneRepo).not.toHaveBeenCalled();
     expect(workspace.refreshRepos).not.toHaveBeenCalled();
+  });
+
+  it("创建仓库时可搜索并选择 License 模板 key", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
+    vi.mocked(listGitHubRepoLicenses).mockResolvedValue([
+      githubLicense("apache-2.0", "Apache License 2.0", "Apache-2.0"),
+      githubLicense("mit", "MIT License", "MIT"),
+    ]);
+    vi.mocked(createGitHubRepo).mockResolvedValue(githubRepo("licensed", 4));
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await within(dialog).findByRole("button", { name: "sena-nana · 个人" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "licensed");
+    const licenseInput = within(dialog).getByLabelText("License 模板");
+    expect(licenseInput).toHaveAttribute("data-agent-id", "repo-create.license.search");
+    await fireEvent.focus(licenseInput);
+    await waitFor(() => expect(listGitHubRepoLicenses).toHaveBeenCalledTimes(1));
+    await fireEvent.update(licenseInput, "mit");
+
+    expect(await screen.findByRole("option", { name: /MIT License.*mit/ })).toHaveAttribute(
+      "data-agent-id",
+      "repo-create.license.option.mit",
+    );
+    expect(screen.queryByRole("option", { name: /Apache License 2.0/ })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("option", { name: /MIT License.*mit/ }));
+    expect(licenseInput).toHaveValue("mit");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        name: "licensed",
+        licenseTemplate: "mit",
+      }));
+    });
+  });
+
+  it("License 模板列表加载失败后仍允许提交自定义 key", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
+    vi.mocked(listGitHubRepoLicenses).mockRejectedValue(new Error("network unavailable"));
+    vi.mocked(createGitHubRepo).mockResolvedValue(githubRepo("custom-license", 5));
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await within(dialog).findByRole("button", { name: "sena-nana · 个人" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "custom-license");
+    const licenseInput = within(dialog).getByLabelText("License 模板");
+    await fireEvent.focus(licenseInput);
+
+    const retry = await screen.findByRole("button", { name: "重试" });
+    expect(retry).toHaveAttribute("data-agent-id", "repo-create.license.retry");
+    await fireEvent.update(licenseInput, "custom-key");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        name: "custom-license",
+        licenseTemplate: "custom-key",
+      }));
+    });
   });
 
   it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {

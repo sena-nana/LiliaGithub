@@ -39,6 +39,7 @@ import type {
   GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubRepoActionsPermissionsRequest,
+  GitHubRepoLicense,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepositorySubscription,
@@ -267,6 +268,7 @@ export interface WorkspaceCommandContracts {
   github_list_repo_contribution: CommandContract<{ repoFullName: string }, GitHubContributionResult>;
   github_list_repo_owners: CommandContract<NoArgs, GitHubRepoOwner[]>;
   github_list_repo_templates: CommandContract<NoArgs, GitHubRepoTemplate[]>;
+  github_list_repo_licenses: CommandContract<NoArgs, GitHubRepoLicense[]>;
   github_create_repo: CommandContract<{ request: GitHubCreateRepoRequest }, GitHubRepoSummary>;
   github_get_repo_management: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRepoManagement>;
   github_update_repo_settings: CommandContract<

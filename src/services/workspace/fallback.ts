@@ -52,6 +52,7 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoActionsPermissionsRequest,
+  GitHubRepoLicense,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -798,6 +799,16 @@ function createFallbackGitHubRepoTemplates(): GitHubRepoTemplate[] {
       private: false,
       description: "Lilia desktop application template",
     },
+  ];
+}
+
+function createFallbackGitHubRepoLicenses(): GitHubRepoLicense[] {
+  return [
+    { key: "mit", name: "MIT License", spdxId: "MIT", url: "https://api.github.com/licenses/mit" },
+    { key: "apache-2.0", name: "Apache License 2.0", spdxId: "Apache-2.0", url: "https://api.github.com/licenses/apache-2.0" },
+    { key: "gpl-3.0", name: "GNU General Public License v3.0", spdxId: "GPL-3.0", url: "https://api.github.com/licenses/gpl-3.0" },
+    { key: "bsd-3-clause", name: "BSD 3-Clause License", spdxId: "BSD-3-Clause", url: "https://api.github.com/licenses/bsd-3-clause" },
+    { key: "mpl-2.0", name: "Mozilla Public License 2.0", spdxId: "MPL-2.0", url: "https://api.github.com/licenses/mpl-2.0" },
   ];
 }
 
@@ -2396,6 +2407,7 @@ function fallbackPullRequestDiscussion(pullRequest: GitHubPullRequest): GitHubPu
 
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoTemplates = createFallbackGitHubRepoTemplates();
+let fallbackGitHubRepoLicenses = createFallbackGitHubRepoLicenses();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
@@ -2659,6 +2671,7 @@ let fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscr
 let fallbackGitHubAccountIssuesOverride: FallbackGitHubAccountIssuesOverride | null = null;
 let fallbackGitHubActionNotificationsOverride: FallbackGitHubActionNotificationsOverride | null = null;
 let fallbackGitHubRepoOwnerListCalls: Array<Record<string, never>> = [];
+let fallbackGitHubRepoLicenseListCalls: Array<Record<string, never>> = [];
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubAccountIssueListCalls: Array<{
   state: string | null;
@@ -2795,6 +2808,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscriptions();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoTemplates = createFallbackGitHubRepoTemplates();
+  fallbackGitHubRepoLicenses = createFallbackGitHubRepoLicenses();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
@@ -2839,6 +2853,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoFileListCalls = [];
   fallbackGitHubRepoFilePreviewCalls = [];
   fallbackGitHubRepoOwnerListCalls = [];
+  fallbackGitHubRepoLicenseListCalls = [];
   fallbackOpenPathCalls = [];
   fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
@@ -2996,6 +3011,10 @@ export function setFallbackGitHubRepoOwnersForTests(owners: GitHubRepoOwner[]) {
   fallbackGitHubRepoOwners = owners.map((owner) => ({ ...owner }));
 }
 
+export function setFallbackGitHubRepoLicensesForTests(licenses: GitHubRepoLicense[]) {
+  fallbackGitHubRepoLicenses = licenses.map((license) => ({ ...license }));
+}
+
 export function setFallbackGitHubRepositorySubscriptionsForTests(
   subscriptions: Record<string, GitHubRepositorySubscriptionMode>,
 ) {
@@ -3053,6 +3072,10 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
 
 export function getFallbackGitHubRepoOwnerListCallsForTests() {
   return fallbackGitHubRepoOwnerListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoLicenseListCallsForTests() {
+  return fallbackGitHubRepoLicenseListCalls.map((call) => ({ ...call }));
 }
 
 export function getFallbackGitHubAccountIssueListCallsForTests() {
@@ -6120,6 +6143,13 @@ export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
 
 export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
   return call("github_list_repo_templates", undefined, () => fallbackGitHubRepoTemplates.map((template) => ({ ...template })));
+}
+
+export function listGitHubRepoLicenses(): Promise<GitHubRepoLicense[]> {
+  return call("github_list_repo_licenses", undefined, () => {
+    fallbackGitHubRepoLicenseListCalls.push({});
+    return fallbackGitHubRepoLicenses.map((license) => ({ ...license }));
+  });
 }
 
 export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {

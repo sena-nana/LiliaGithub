@@ -15,6 +15,7 @@ delegate_command!(async github; fn github_get_repo_subscription(app: AppHandle, 
 delegate_command!(async github; fn github_update_repo_subscription(app: AppHandle, repo_full_name: String, mode: GitHubRepositorySubscriptionMode,) -> Result<GitHubRepositorySubscription, String>);
 delegate_command!(async github; fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String>);
 delegate_command!(async github; fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepoTemplate>, String>);
+delegate_command!(async github; fn github_list_repo_licenses(app: AppHandle) -> Result<Vec<GitHubRepoLicense>, String>);
 delegate_command!(async github; fn github_create_repo(app: AppHandle, request: GitHubCreateRepoRequest,) -> Result<GitHubRepoSummary, String>);
 delegate_command!(async github; fn github_get_repo_management(app: AppHandle, repo_full_name: String, force_refresh: Option<bool>,) -> Result<GitHubRepoManagement, String>);
 delegate_command!(async github; fn github_update_repo_settings(app: AppHandle, repo_full_name: String, request: GitHubUpdateRepoSettingsRequest,) -> Result<GitHubRepoManagement, String>);

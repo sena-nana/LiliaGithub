@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { FolderGit2, FolderInput, GitBranchPlus, LoaderCircle, X } from "@lucide/vue";
+import { Check, FolderGit2, FolderInput, GitBranchPlus, LoaderCircle, Search, X } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
-import { Dropdown } from "../../ui";
+import { Dropdown, SearchDropdown } from "../../ui";
 import {
   type GitHubCreateRepoRequest,
+  type GitHubRepoLicense,
   type GitHubRepoOwner,
   type GitHubRepoSummary,
   type GitHubRepoTemplate,
@@ -26,6 +27,7 @@ import {
 type RepoCreateMode = "local" | "remote";
 type RepoCreateAction = "local" | "remote-only" | "remote-clone";
 type RepoTemplatesStatus = "idle" | "loading" | "loaded" | "error";
+type RepoLicensesStatus = "idle" | "loading" | "loaded" | "error";
 type RepoOwnersStatus = "idle" | "loading" | "loaded" | "error";
 type RepoCreateGroup = {
   readonly id: string;
@@ -52,6 +54,7 @@ const workspace = useWorkspace();
 const componentEpoch = useComponentEpoch();
 const repoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
 const repoTemplatesLoader = createLatestAsyncLoader({ componentEpoch });
+const repoLicensesLoader = createLatestAsyncLoader({ componentEpoch });
 const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
 const createActionTracker = createPendingTaskTracker();
 const firstInput = ref<HTMLInputElement | null>(null);
@@ -60,6 +63,10 @@ const repoOwnersStatus = ref<RepoOwnersStatus>("idle");
 const repoOwnersError = ref<string | null>(null);
 const repoTemplates = ref<GitHubRepoTemplate[]>([]);
 const repoTemplatesStatus = ref<RepoTemplatesStatus>("idle");
+const repoLicenses = ref<GitHubRepoLicense[]>([]);
+const repoLicensesStatus = ref<RepoLicensesStatus>("idle");
+const repoLicensesError = ref<string | null>(null);
+const licenseMenuOpen = ref(false);
 const activeCreateAction = ref<RepoCreateAction | null>(null);
 const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
@@ -145,6 +152,18 @@ const repoTemplateOptions = computed(() =>
     agentId: `repo-create.template.option.${template.id}`,
   }))
 );
+const normalizedLicenseQuery = computed(() => form.value.licenseTemplate.trim().toLocaleLowerCase());
+const filteredRepoLicenses = computed(() => {
+  const query = normalizedLicenseQuery.value;
+  return repoLicenses.value.filter((license) => {
+    if (!query) return true;
+    return [
+      license.name,
+      license.key,
+      license.spdxId ?? "",
+    ].some((value) => value.toLocaleLowerCase().includes(query));
+  });
+});
 const selectedOwnerValue = computed({
   get: () => form.value.owner,
   set: (value: string) => {
@@ -189,6 +208,7 @@ const groupPickerDisabled = computed(() => (
 
 function resetForm() {
   repoTemplatesLoader.invalidate();
+  cancelLicenseLoading();
   repoTemplates.value = [];
   repoTemplatesStatus.value = "idle";
   const defaultOwner = repoOwners.value[0];
@@ -223,6 +243,14 @@ function cancelTemplateLoading() {
   if (repoTemplatesStatus.value !== "loaded") repoTemplatesStatus.value = "idle";
   form.value.templateFullName = "";
   form.value.includeAllBranches = false;
+}
+
+function cancelLicenseLoading() {
+  repoLicensesLoader.invalidate();
+  repoLicenses.value = [];
+  repoLicensesStatus.value = "idle";
+  repoLicensesError.value = null;
+  licenseMenuOpen.value = false;
 }
 
 function sortRepoOwners(owners: readonly GitHubRepoOwner[]) {
@@ -272,6 +300,44 @@ async function loadRepoTemplates() {
   }, { reusePending: true });
 }
 
+async function loadRepoLicenses() {
+  if (repoLicensesStatus.value === "loaded") return;
+  await repoLicensesLoader.run("repo-licenses", async (runId) => {
+    repoLicensesStatus.value = "loading";
+    repoLicensesError.value = null;
+    try {
+      const licenses = await workspace.listGitHubRepoLicenses();
+      if (!repoLicensesLoader.isCurrent(runId) || !props.open) return;
+      repoLicenses.value = licenses;
+      repoLicensesStatus.value = "loaded";
+    } catch (err) {
+      if (!repoLicensesLoader.isCurrent(runId) || !props.open) return;
+      repoLicensesStatus.value = "error";
+      repoLicensesError.value = `License 模板加载失败：${githubUserFacingError(err)}`;
+    }
+  }, { reusePending: true });
+}
+
+function setLicenseMenuOpen(open: boolean) {
+  licenseMenuOpen.value = open;
+  if (open) void loadRepoLicenses();
+}
+
+function selectLicenseTemplate(license: GitHubRepoLicense) {
+  form.value.licenseTemplate = license.key;
+  licenseMenuOpen.value = false;
+}
+
+function clearLicenseTemplate() {
+  form.value.licenseTemplate = "";
+}
+
+function licenseOptionHint(license: GitHubRepoLicense) {
+  return [license.key, license.spdxId && license.spdxId !== license.key ? license.spdxId : ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function syncOwnerKind() {
   const owner = repoOwners.value.find((item) => item.login === form.value.owner);
   if (owner) form.value.ownerKind = owner.kind;
@@ -297,6 +363,7 @@ function buildGitHubCreateRepoRequest(): GitHubCreateRepoRequest {
 
 function closeCard() {
   cancelTemplateLoading();
+  cancelLicenseLoading();
   createRepoLoader.invalidate();
   emit("close");
 }
@@ -418,6 +485,7 @@ watch(
       cancelTemplateLoading();
       return;
     }
+    cancelLicenseLoading();
     if (props.open && isRemoteMode.value) void loadRepoTemplates();
   },
 );
@@ -425,6 +493,7 @@ watch(
 onUnmounted(() => {
   repoOwnersLoader.invalidate();
   repoTemplatesLoader.invalidate();
+  repoLicensesLoader.invalidate();
   createRepoLoader.invalidate();
   createActionTracker.reset();
 });
@@ -588,9 +657,91 @@ onUnmounted(() => {
             <span>.gitignore 模板</span>
             <input v-model="form.gitignoreTemplate" type="text" placeholder="Node" />
           </label>
-          <label>
+          <label class="repo-create-license-field">
             <span>License 模板</span>
-            <input v-model="form.licenseTemplate" type="text" placeholder="mit" />
+            <SearchDropdown
+              v-model="form.licenseTemplate"
+              :open="licenseMenuOpen"
+              class="repo-create-license-dropdown"
+              placeholder="搜索或输入 license key"
+              input-agent-id="repo-create.license.search"
+              close-on-outside
+              close-on-escape
+              @update:open="setLicenseMenuOpen"
+            >
+              <template #leading>
+                <Search :size="13" aria-hidden="true" />
+              </template>
+              <template #trailing>
+                <LoaderCircle
+                  v-if="repoLicensesStatus === 'loading'"
+                  :size="13"
+                  aria-hidden="true"
+                  class="sb-spin search-dropdown__leading"
+                />
+                <button
+                  v-else-if="form.licenseTemplate"
+                  type="button"
+                  class="search-dropdown__action"
+                  data-agent-id="repo-create.license.clear"
+                  title="清空 License 模板"
+                  aria-label="清空 License 模板"
+                  @click.stop.prevent="clearLicenseTemplate"
+                >
+                  <X :size="13" aria-hidden="true" />
+                </button>
+              </template>
+              <template #default="{ highlightQuerySegments }">
+                <button
+                  v-for="license in filteredRepoLicenses"
+                  :key="license.key"
+                  type="button"
+                  class="search-dropdown__item repo-create-license-option"
+                  role="option"
+                  :aria-selected="license.key === form.licenseTemplate"
+                  :data-agent-id="`repo-create.license.option.${license.key}`"
+                  @click="selectLicenseTemplate(license)"
+                >
+                  <span class="search-dropdown__title">
+                    <template
+                      v-for="(segment, index) in highlightQuerySegments(license.name)"
+                      :key="`${license.key}:name:${index}`"
+                    >
+                      <mark v-if="segment.mark">{{ segment.text }}</mark>
+                      <template v-else>{{ segment.text }}</template>
+                    </template>
+                  </span>
+                  <span class="search-dropdown__scope">{{ licenseOptionHint(license) }}</span>
+                  <Check
+                    v-if="license.key === form.licenseTemplate"
+                    :size="13"
+                    aria-hidden="true"
+                    class="repo-create-license-option__check"
+                  />
+                </button>
+                <p v-if="repoLicensesStatus === 'loading'" class="search-dropdown__hint" role="status">
+                  <LoaderCircle :size="13" aria-hidden="true" class="sb-spin" />
+                  正在加载 License 模板…
+                </p>
+                <p v-else-if="repoLicensesStatus === 'error'" class="search-dropdown__empty repo-create-license-error">
+                  <span>{{ repoLicensesError }}</span>
+                  <button
+                    type="button"
+                    class="ghost repo-create-license-retry"
+                    data-agent-id="repo-create.license.retry"
+                    @click="loadRepoLicenses"
+                  >
+                    重试
+                  </button>
+                </p>
+                <p
+                  v-else-if="repoLicensesStatus === 'loaded' && !filteredRepoLicenses.length"
+                  class="search-dropdown__empty"
+                >
+                  没有匹配的 License 模板
+                </p>
+              </template>
+            </SearchDropdown>
           </label>
         </div>
         <div class="repo-create-checks">
@@ -741,6 +892,54 @@ onUnmounted(() => {
 :deep(.repo-create-owner-picker .chat-chip__label),
 :deep(.repo-create-template-picker .dd__button-label) {
   max-width: none;
+}
+
+.repo-create-license-field {
+  min-width: 0;
+}
+
+.repo-create-license-dropdown {
+  width: 100%;
+}
+
+.repo-create-license-dropdown :deep(.search-dropdown__field) {
+  height: 32px;
+  border-color: var(--border-soft);
+  background: var(--bg-subtle);
+}
+
+.repo-create-license-dropdown :deep(.search-dropdown__input) {
+  height: 30px;
+  font-size: 12px;
+}
+
+.repo-create-license-option {
+  min-width: 0;
+}
+
+.repo-create-license-option .search-dropdown__title {
+  color: var(--text);
+}
+
+.repo-create-license-option__check {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.repo-create-license-error {
+  justify-content: space-between;
+  text-align: left;
+}
+
+.repo-create-license-error span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repo-create-license-retry {
+  min-height: 24px;
+  padding: 0 6px;
 }
 
 .repo-create-checks {

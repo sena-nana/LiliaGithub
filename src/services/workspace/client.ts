@@ -22,6 +22,7 @@ import {
   setGitHubActionNotificationCache,
   cloneProjectData,
   cloneProjectList,
+  cloneGitHubRepoLicenses,
   cloneGitHubRepoOwners,
   cloneRepoPage,
   githubProjectRepoKey,
@@ -37,9 +38,12 @@ import {
   writeGitHubRepoOwnerCache,
   clearGitHubRepoOwnerCache,
   readCachedGitHubRepos,
+  readCachedGitHubRepoLicenses,
+  writeGitHubRepoLicenseCache,
+  clearGitHubRepoLicenseCache,
 } from "./cache";
 import type { GitHubProjectFetchOptions } from "./cache";
-export { readCachedGitHubRepos, clearGitHubRepoCache, clearGitHubRepoOwnerCache };
+export { readCachedGitHubRepos, clearGitHubRepoCache, clearGitHubRepoOwnerCache, clearGitHubRepoLicenseCache };
 export type { GitHubProjectFetchOptions };
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
 import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
@@ -83,6 +87,7 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoActionsPermissionsRequest,
+  GitHubRepoLicense,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -204,6 +209,7 @@ export async function resetWorkspaceFallbacksForTests(): Promise<void> {
     throw new Error("Workspace fallback test helpers are only available in test mode.");
   }
   workspaceFallbackModule?.resetWorkspaceFallbacksForTests();
+  clearGitHubRepoLicenseCache();
 }
 
 export async function call<TCommand extends WorkspaceCommandName>(
@@ -913,6 +919,18 @@ export function listGitHubRepoOwners(opts: { force?: boolean } = {}): Promise<Gi
 
 export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
   return call("github_list_repo_templates", undefined, () => workspaceFallback().listGitHubRepoTemplates());
+}
+
+export async function listGitHubRepoLicenses(): Promise<GitHubRepoLicense[]> {
+  const cached = readCachedGitHubRepoLicenses();
+  if (cached) return cached;
+  const result = await cachedCall(
+    "github_list_repo_licenses",
+    undefined,
+    () => workspaceFallback().listGitHubRepoLicenses(),
+  );
+  writeGitHubRepoLicenseCache(result);
+  return cloneGitHubRepoLicenses(result);
 }
 
 export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {

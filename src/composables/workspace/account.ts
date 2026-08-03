@@ -7,6 +7,7 @@ import type {
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
   GitHubProfileReadmeSection,
+  GitHubRepoLicense,
   GitHubRepoOwner,
   GitHubRepoSummary,
   GitHubRepoTemplate,
@@ -104,6 +105,11 @@ export async function createGitHubRepo(
 export async function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubRepoTemplates();
+}
+
+export async function listGitHubRepoLicenses(): Promise<GitHubRepoLicense[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubRepoLicenses();
 }
 
 export async function listGitHubRepos(
