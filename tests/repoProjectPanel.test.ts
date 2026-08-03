@@ -3481,6 +3481,7 @@ describe("RepoProjectPanel", () => {
     const accessCard = await view.findByRole("region", { name: "协作与访问" }, { timeout: 5000 });
     const featureCard = view.getByRole("region", { name: "GitHub 功能" });
     const mergeCard = view.getByRole("region", { name: "拉取请求与合并" });
+    const mergeDefaultsCard = await view.findByRole("region", { name: "合并默认值" });
     const dangerCard = view.getByRole("region", { name: "危险操作" });
     const settingsNav = view.getByRole("navigation", { name: "设置分类" });
     expect(within(settingsNav).getByRole("button", { name: "协作与访问" })).toBeInTheDocument();
@@ -3511,6 +3512,12 @@ describe("RepoProjectPanel", () => {
     expect(within(mergeCard).getByRole("switch", { name: /自动合并/ })).toBeInTheDocument();
     expect(within(mergeCard).getByRole("switch", { name: /合并后删分支/ })).toBeInTheDocument();
     expect(within(mergeCard).getByRole("switch", { name: /更新分支/ })).toBeInTheDocument();
+    const pullRequestCreation = await within(mergeDefaultsCard).findByRole("combobox", { name: "拉取请求创建" });
+    expect(pullRequestCreation).toHaveValue("all");
+    expect(await within(mergeDefaultsCard).findByRole("combobox", { name: "Squash 标题" })).toHaveValue("COMMIT_OR_PR_TITLE");
+    expect(await within(mergeDefaultsCard).findByRole("combobox", { name: "Squash 正文" })).toHaveValue("COMMIT_MESSAGES");
+    expect(await within(mergeDefaultsCard).findByRole("combobox", { name: "合并标题" })).toHaveValue("MERGE_MESSAGE");
+    expect(await within(mergeDefaultsCard).findByRole("combobox", { name: "合并正文" })).toHaveValue("PR_TITLE");
     expect(within(dangerCard).getByLabelText("本地危险操作")).toBeInTheDocument();
     expect(within(dangerCard).getByLabelText("归档操作")).toBeInTheDocument();
     expect(within(dangerCard).getByLabelText("远端危险操作")).toBeInTheDocument();
@@ -3532,6 +3539,15 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText(/\/repos\/\{owner\}\/\{repo\}/)).toBeNull();
     expect(view.queryByText(/allowed_actions/)).toBeNull();
 
+    await fireEvent.update(pullRequestCreation, "collaborators_only");
+    await fireEvent.click(within(mergeDefaultsCard).getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ pullRequestCreationPolicy: "collaborators_only" }),
+      );
+    });
+
     const wikiSwitch = within(featureCard).getByRole("switch", { name: /Wiki/ });
     await fireEvent.click(wikiSwitch);
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
@@ -3543,6 +3559,29 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("项目设置中的 Actions 单选保留权限更新行为", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const actionsCard = await view.findByRole("region", { name: "Actions" });
+    const allowedActions = await within(actionsCard).findByRole("combobox", { name: "允许的 Actions" });
+    expect(allowedActions).toHaveValue("all");
+    expect(await within(actionsCard).findByRole("combobox", { name: "默认工作流权限" })).toHaveValue("read");
+
+    await fireEvent.update(allowedActions, "local_only");
+
+    await waitFor(() => {
+      expect(updateGitHubRepoActionsPermissions).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        enabled: true,
+        allowedActions: "local_only",
+        shaPinningRequired: false,
+      });
+    });
   });
 
   it("读取并更新主要分支保护规则", async () => {
@@ -3651,8 +3690,11 @@ describe("RepoProjectPanel", () => {
 
     const rulesCard = await view.findByRole("region", { name: "Rulesets" });
     const name = await within(rulesCard).findByRole("textbox", { name: "名称" });
+    const enforcement = await within(rulesCard).findByRole("combobox", { name: "执行状态" });
+    expect(enforcement).toHaveValue("active");
     expect(within(rulesCard).getByText("2 条，保存时保持不变")).toBeInTheDocument();
     await fireEvent.update(name, "Protect main updated");
+    await fireEvent.update(enforcement, "evaluate");
     await fireEvent.click(within(rulesCard).getByRole("button", { name: "保存规则集" }));
 
     await waitFor(() => {
@@ -3662,7 +3704,7 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({
           name: "Protect main updated",
           target: "branch",
-          enforcement: "active",
+          enforcement: "evaluate",
           conditions: ruleset.conditions,
           rules,
         }),

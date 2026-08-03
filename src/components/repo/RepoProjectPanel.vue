@@ -33,6 +33,7 @@ import {
   LiliaWorkspace,
   SettingsRow,
   UiDialog,
+  UiSelect,
   UiSwitch,
 } from "../../ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
@@ -3018,10 +3019,6 @@ function dropdownOptions(options: readonly string[]) {
   ];
 }
 
-function updateSettingsDropdown(key: SettingsDropdownKey, value: string) {
-  settingsForm[key] = value;
-}
-
 async function openIssueCreateView() {
   issueCreateView.value = true;
   cancelEditIssue();
@@ -4131,16 +4128,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     :label="dropdown.label"
                   >
                     <span class="project-settings-field__control">
-                      <Dropdown
-                        :model-value="settingsForm[dropdown.key]"
+                      <UiSelect
+                        v-model="settingsForm[dropdown.key]"
                         :options="dropdown.options"
-                        block
-                        size="large"
-                        placement="bottom"
+                        size="lg"
+                        :aria-label="dropdown.label"
                         :agent-id="dropdown.agentId"
-                        :menu-label="dropdown.label"
                         :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                        @update:model-value="updateSettingsDropdown(dropdown.key, $event)"
                       />
                     </span>
                   </SettingsRow>
