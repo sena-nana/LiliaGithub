@@ -2950,7 +2950,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :options="homeRepositoryScopeOptions"
                 :disabled="githubReposLoading || githubRepoOwnersLoading"
                 placement="bottom"
-                button-class="overview-actions__btn repo-status-sort-button"
+                button-class="repo-status-sort-button"
                 agent-id="home.repo-status.scope"
               />
               <button
@@ -3954,12 +3954,16 @@ function bulkOperationDescription(operation: BulkOperation) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  height: 22px;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 4px;
+  min-height: 22px;
+  height: auto;
   margin-bottom: 8px;
 }
 
 .repo-status-heading h2 {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -3976,12 +3980,16 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .repo-status-heading__tools {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 4px;
+  max-width: 100%;
   min-width: 0;
-  height: 22px;
+  height: auto;
+  margin-left: auto;
 }
 
 .repo-status-scope {
@@ -3990,28 +3998,25 @@ function bulkOperationDescription(operation: BulkOperation) {
   margin-bottom: 8px;
 }
 
-.repo-status-sort-button {
+.repo-status-sort-button,
+.repo-status-heading__tools :deep(.repo-status-sort-button) {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: auto;
   min-width: 0;
+  max-width: none;
   height: 22px;
-  min-height: 22px;
   padding: 0 5px;
-  font-size: 12px;
-  line-height: 22px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.repo-status-heading__tools :deep(.dd__button) {
-  max-width: min(160px, 34vw);
   border: 0;
   background: transparent;
   color: var(--text-muted);
   gap: 3px;
+  font-size: 12px;
+  line-height: 22px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .repo-status-heading__tools :deep(.dd__button:hover:not(:disabled)),
@@ -4021,9 +4026,9 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .repo-status-heading__tools :deep(.dd__button-label) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  max-width: none;
+  overflow: visible;
 }
 
 .repo-status-list {
