@@ -3,6 +3,7 @@ import {
   attachGitHubWorkflowArtifactAsset,
   cancelGitHubWorkflowRun,
   clearGitHubRepoCache,
+  clearGitHubRepoLicenseCache,
   clearGitHubRepoOwnerCache,
   createGitHubRelease,
   createGitHubRepo,
@@ -17,6 +18,7 @@ import {
   getGitHubWorkflowRunDetail,
   listGitHubBranches,
   listGitHubAccountIssues,
+  listGitHubRepoLicenses,
   listGitHubRepoOwners,
   listGitHubRepos,
   listRepoFiles,
@@ -47,6 +49,7 @@ import type {
   GitHubPullRequest,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubRepoLicense,
   GitHubRepoOwner,
   GitHubRepoSummary,
   GitHubWorkflowRunDetail,
@@ -211,6 +214,15 @@ function githubRepoOwner(
   };
 }
 
+function githubRepoLicense(key: string, name: string, spdxId: string | null = key.toUpperCase()): GitHubRepoLicense {
+  return {
+    key,
+    name,
+    spdxId,
+    url: `https://api.github.com/licenses/${key}`,
+  };
+}
+
 function branch(name: string, overrides: Partial<BranchSummary> = {}): BranchSummary {
   return {
     name,
@@ -261,6 +273,7 @@ describe("workspace GitHub project cache", () => {
     workspaceFallback.resetWorkspaceFallbacksForTests();
     clearGitHubRepoCache();
     clearGitHubRepoOwnerCache();
+    clearGitHubRepoLicenseCache();
   });
 
   it("默认复用项目页远端缓存，forceRefresh 才重新读取", async () => {
@@ -513,6 +526,25 @@ describe("workspace GitHub project cache", () => {
 
     expect((await listGitHubRepoOwners()).map((owner) => owner.login)).toEqual(["lilia-user", "sena-nana"]);
     expect(workspaceFallback.getFallbackGitHubRepoOwnerListCallsForTests()).toHaveLength(1);
+  });
+
+  it("License 模板列表跨调用复用缓存并返回隔离副本", async () => {
+    workspaceFallback.setFallbackGitHubRepoLicensesForTests([
+      githubRepoLicense("apache-2.0", "Apache License 2.0", "Apache-2.0"),
+      githubRepoLicense("mit", "MIT License", "MIT"),
+    ]);
+
+    const first = await listGitHubRepoLicenses();
+    first[0]!.name = "外部污染";
+
+    workspaceFallback.setFallbackGitHubRepoLicensesForTests([
+      githubRepoLicense("gpl-3.0", "GNU General Public License v3.0", "GPL-3.0"),
+    ]);
+    const cached = await listGitHubRepoLicenses();
+
+    expect(cached.map((license) => license.key)).toEqual(["apache-2.0", "mit"]);
+    expect(cached[0]?.name).toBe("Apache License 2.0");
+    expect(workspaceFallback.getFallbackGitHubRepoLicenseListCallsForTests()).toHaveLength(1);
   });
 
   it("重新授权后的 revision 不复用旧账号组织归属缓存", async () => {

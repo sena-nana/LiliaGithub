@@ -250,6 +250,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_list_repo_contribution,
         github::github_list_repo_owners,
         github::github_list_repo_templates,
+        github::github_list_repo_licenses,
         github::github_create_repo,
         github::github_get_repo_management,
         github::github_update_repo_settings,

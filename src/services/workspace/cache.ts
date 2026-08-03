@@ -10,6 +10,7 @@ import type {
   GitHubPullRequestDiscussion,
   GitHubRelease,
   GitHubRepoManagement,
+  GitHubRepoLicense,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSettingsSection,
@@ -250,6 +251,7 @@ export const githubRepoOwnerPromises = new Map<string, Promise<GitHubRepoOwner[]
 export let githubRepoBindingRevision = "unknown";
 export let githubRepoOwnerCache: GitHubRepoOwnerCacheEntry | null = null;
 export let githubRepoOwnerCacheGeneration = 0;
+export let githubRepoLicenseCache: GitHubRepoLicense[] | null = null;
 export let githubAccountIssueCache: {
   key: string;
   items: GitHubAccountIssueItem[];
@@ -297,6 +299,10 @@ export function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
 
 export function cloneGitHubRepoOwners(owners: readonly GitHubRepoOwner[]): GitHubRepoOwner[] {
   return owners.map((owner) => ({ ...owner }));
+}
+
+export function cloneGitHubRepoLicenses(licenses: readonly GitHubRepoLicense[]): GitHubRepoLicense[] {
+  return licenses.map((license) => ({ ...license }));
 }
 
 export function githubProjectRepoKey(repoFullName: string) {
@@ -396,6 +402,18 @@ export function writeGitHubRepoOwnerCache(owners: readonly GitHubRepoOwner[]) {
     revision: githubRepoBindingRevision,
     owners: cloneGitHubRepoOwners(owners),
   };
+}
+
+export function readCachedGitHubRepoLicenses(): GitHubRepoLicense[] | null {
+  return githubRepoLicenseCache ? cloneGitHubRepoLicenses(githubRepoLicenseCache) : null;
+}
+
+export function writeGitHubRepoLicenseCache(licenses: readonly GitHubRepoLicense[]) {
+  githubRepoLicenseCache = cloneGitHubRepoLicenses(licenses);
+}
+
+export function clearGitHubRepoLicenseCache() {
+  githubRepoLicenseCache = null;
 }
 
 export function clearGitHubRepoOwnerCache() {
