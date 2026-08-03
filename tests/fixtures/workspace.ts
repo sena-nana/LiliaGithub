@@ -28,6 +28,7 @@ export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): R
     unstagedCount: 0,
     untrackedCount: 0,
     conflictCount: 0,
+    conflictOperation: "none",
     lastCommitAt: null,
     lastCommitMessage: null,
     languageStats: [],

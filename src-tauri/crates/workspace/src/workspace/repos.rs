@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::bulk::repo_dirty_count;
 use crate::workspace::github::{
     github_auth_header, normalize_github_repo_input, normalize_optional_string, token_for_binding,
@@ -40,7 +41,6 @@ use lilia_github_contracts::workspace::{
     WorkspaceCloneResult, WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest,
     WorkspaceRepositoryBinding, WorkspaceSettings,
 };
-use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 pub(super) async fn run_repo_blocking<T, F>(
     app: AppHandle,
@@ -1647,6 +1647,7 @@ fn summarize_repo_from_status(
         unstaged_count,
         untracked_count,
         conflict_count,
+        conflict_operation: conflict_operation(path),
         last_commit_at,
         last_commit_message,
         language_stats: Vec::new(),
@@ -1682,6 +1683,7 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         unstaged_count: 0,
         untracked_count: 0,
         conflict_count: 0,
+        conflict_operation: "none".to_string(),
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),

@@ -1,8 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::task_runtime::{
+    DispatchLane, ExecutionClass, OrderingRequirement, ResourceAccessMode, ResourceRequirement,
+    TaskHandle, TaskSpec,
+};
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
 use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler, repo_common_dir_by_id};
 use crate::workspace::settings::{
@@ -12,109 +16,12 @@ use crate::workspace::settings::{
 use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
 use lilia_github_contracts::workspace::{RepoRefreshRequest, RepoRefreshedEvent};
-use mutsuki_runtime_contracts::{
-    CompletionBatch, DispatchLane, EntryCompletion, ExecutionClass, OrderingRequirement,
-    ResourceAccessMode, ResourceRequirement, RunnerBatchCapability, RunnerDescriptor, RunnerMode,
-    RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle, WorkBatch,
-};
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_host::{
-    DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
-    SchedulerPolicy,
-};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 const REPO_REFRESHED_EVENT: &str = "workspace://repo-refreshed";
 const REMOTE_CACHE_TTL_MS: i64 = 10 * 60 * 1_000;
 const ACTIVE_REMOTE_CACHE_TTL_MS: i64 = 60 * 1_000;
 const REMOTE_BACKOFF_MS: [i64; 3] = [60 * 1_000, 5 * 60 * 1_000, 15 * 60 * 1_000];
-pub const LOCAL_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.local.v1";
-pub const REMOTE_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.remote.v1";
-
-#[derive(Debug)]
-struct RefreshSchedulerPolicy;
-
-impl SchedulerPolicy for RefreshSchedulerPolicy {
-    fn decide(
-        &self,
-        input: &ScheduleInput<'_>,
-    ) -> RuntimeResult<mutsuki_runtime_core::ScheduleDecision> {
-        if input.runner.runner_id == LOCAL_REFRESH_PROTOCOL
-            && scheduler()
-                .state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .local_paused
-        {
-            return Ok(mutsuki_runtime_core::ScheduleDecision::new(
-                DefaultScheduler::POLICY_ID,
-                0,
-                "local.paused",
-            ));
-        }
-        DefaultScheduler.decide(input)
-    }
-}
-
-pub fn refresh_runtime_config() -> HostRuntimeConfig {
-    let mut config = HostRuntimeConfig {
-        execution_domains: vec![
-            ExecutionDomainConfig::new(
-                "interactive-orchestration",
-                vec![ExecutionClass::Orchestration],
-                1,
-            ),
-            ExecutionDomainConfig::new("github-io", vec![ExecutionClass::Io], 2),
-            ExecutionDomainConfig::new(
-                "workspace-cpu",
-                vec![ExecutionClass::Cpu, ExecutionClass::Script],
-                1,
-            ),
-            ExecutionDomainConfig::new("local-blocking", vec![ExecutionClass::Blocking], 2),
-        ],
-        scheduler_policy: Arc::new(RefreshSchedulerPolicy),
-        ..HostRuntimeConfig::default()
-    };
-    config.runner_limits.insert(
-        LOCAL_REFRESH_PROTOCOL.into(),
-        RunnerLimits {
-            max_running: 1,
-            max_inflight: 4,
-            ..RunnerLimits::default()
-        },
-    );
-    config.runner_limits.insert(
-        REMOTE_REFRESH_PROTOCOL.into(),
-        RunnerLimits {
-            max_running: 1,
-            max_inflight: 1,
-            ..RunnerLimits::default()
-        },
-    );
-    for kind in [
-        crate::workspace::operations::OperationKind::LocalRead,
-        crate::workspace::operations::OperationKind::LocalWrite,
-        crate::workspace::operations::OperationKind::GitHubRead,
-        crate::workspace::operations::OperationKind::GitHubWrite,
-        crate::workspace::operations::OperationKind::GitHubTransfer,
-        crate::workspace::operations::OperationKind::WorkspaceAnalysis,
-        crate::workspace::operations::OperationKind::Bulk,
-        crate::workspace::operations::OperationKind::LaunchControl,
-    ] {
-        let concurrency = kind.concurrency();
-        config.runner_limits.insert(
-            kind.protocol().into(),
-            RunnerLimits {
-                max_running: 1,
-                max_inflight: concurrency,
-                ..RunnerLimits::default()
-            },
-        );
-    }
-    config
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RefreshLane {
     Local,
@@ -170,133 +77,9 @@ struct RefreshPayload {
     run_id: String,
 }
 
-pub fn repo_refresh_runners() -> Vec<Box<dyn Runner>> {
-    vec![
-        Box::new(RepoRefreshRunner::new(RefreshLane::Local)),
-        Box::new(RepoRefreshRunner::new(RefreshLane::Remote)),
-    ]
-}
-
-struct RepoRefreshRunner {
-    lane: RefreshLane,
-    descriptor: RunnerDescriptor,
-}
-
-impl RepoRefreshRunner {
-    fn new(lane: RefreshLane) -> Self {
-        let (runner_id, protocol_id, max_entries, execution_class) = match lane {
-            RefreshLane::Local => (
-                LOCAL_REFRESH_PROTOCOL,
-                LOCAL_REFRESH_PROTOCOL,
-                4,
-                ExecutionClass::Blocking,
-            ),
-            RefreshLane::Remote => (
-                REMOTE_REFRESH_PROTOCOL,
-                REMOTE_REFRESH_PROTOCOL,
-                1,
-                ExecutionClass::Io,
-            ),
-        };
-        Self {
-            lane,
-            descriptor: RunnerDescriptor {
-                runner_id: runner_id.into(),
-                plugin_id: "lilia.github.repo.refresh".into(),
-                plugin_generation: 1,
-                accepted_protocol_ids: vec![protocol_id.into()],
-                purity: RunnerPurity::Pure,
-                execution_class,
-                invocation_mode: mutsuki_runtime_contracts::InvocationMode::SyncExclusive,
-                concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Exclusive,
-                input_schema: json!({ "type": "object" }),
-                output_schema: json!({ "type": "object" }),
-                batch: RunnerBatchCapability {
-                    mode: RunnerMode::NativeBatch,
-                    preferred_batch_size: max_entries,
-                    max_batch_entries: max_entries,
-                    max_entry_concurrency: max_entries,
-                    max_inflight_batches: 1,
-                    scalar_thread_safe: true,
-                    scalar_reentrant: false,
-                    partial_failure: true,
-                    preserve_order: false,
-                    side_effect: RunnerSideEffect::External,
-                },
-                payload: Default::default(),
-                resources: Default::default(),
-                ordering: Default::default(),
-                control: Default::default(),
-                metadata: BTreeMap::new(),
-                contract_surfaces: vec![format!("task_protocol:{protocol_id}")],
-            },
-        }
-    }
-}
-
-impl Runner for RepoRefreshRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        let tasks = match batch.row_payload_tasks() {
-            Ok(tasks) => tasks,
-            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
-        };
-        let lane = self.lane;
-        let mut by_id = std::thread::scope(|scope| {
-            tasks
-                .into_iter()
-                .map(|task| {
-                    let task_id = task.task_id.clone();
-                    let worker = scope
-                        .spawn(move || (task.task_id.clone(), execute_runtime_task(lane, task)));
-                    (task_id, worker)
-                })
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|(task_id, worker)| {
-                    worker.join().unwrap_or_else(|_| {
-                        let mut result = RunnerResult::completed(task_id.clone());
-                        result.status = RunnerStatus::Failed;
-                        (task_id, result)
-                    })
-                })
-                .collect::<HashMap<_, _>>()
-        });
-        Ok(CompletionBatch::from_results(
-            &batch,
-            batch
-                .entries
-                .iter()
-                .map(|entry| EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: Some(by_id.remove(&entry.task_id).unwrap_or_else(|| {
-                        let mut result = RunnerResult::completed(entry.task_id.clone());
-                        result.status = RunnerStatus::Failed;
-                        result
-                    })),
-                    error: None,
-                })
-                .collect(),
-        ))
-    }
-}
-
-fn execute_runtime_task(lane: RefreshLane, task: Task) -> RunnerResult {
-    let Ok(payload) = serde_json::from_value::<RefreshPayload>(task.payload.into()) else {
-        let mut result = RunnerResult::completed(task.task_id);
-        result.status = RunnerStatus::Failed;
-        return result;
-    };
+fn execute_runtime_task(lane: RefreshLane, payload: RefreshPayload) -> Result<(), String> {
     let Some((app, request, logical_task_id, include_detail)) = begin_run(lane, &payload) else {
-        return RunnerResult::completed(task.task_id);
+        return Ok(());
     };
 
     update_workspace_task_and_emit(
@@ -316,11 +99,11 @@ fn execute_runtime_task(lane: RefreshLane, task: Task) -> RunnerResult {
     }
     let failed = result.is_err();
     finish_run(lane, &payload, app, request, logical_task_id, result);
-    let mut outcome = RunnerResult::completed(task.task_id);
     if failed {
-        outcome.status = RunnerStatus::Failed;
+        Err("仓库刷新失败".to_string())
+    } else {
+        Ok(())
     }
-    outcome
 }
 
 fn begin_run(
@@ -526,7 +309,7 @@ fn schedule_rerun(
 }
 
 fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(), String> {
-    let (app, mut task, repo_id, lane) = {
+    let (app, task_spec, repo_id, lane, payload) = {
         let state = scheduler()
             .state
             .lock()
@@ -535,34 +318,37 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
             .entries
             .get(key)
             .ok_or_else(|| "刷新任务已失效".to_string())?;
-        let protocol = match request_lane(&entry.request) {
-            RefreshLane::Local => LOCAL_REFRESH_PROTOCOL,
-            RefreshLane::Remote => REMOTE_REFRESH_PROTOCOL,
-        };
-        let payload = serde_json::to_value(RefreshPayload {
+        let payload = RefreshPayload {
             key: key.to_string(),
             generation,
             run_id: run_id.clone(),
-        })
-        .map_err(|error| error.to_string())?;
-        let mut task = Task::new(run_id.clone(), protocol, payload);
-        task.priority = mutsuki_priority(&entry.request.priority);
-        task.dispatch_lane = mutsuki_lane(&entry.request.priority, &entry.request.trigger);
-        task.runner_hint = Some(protocol.to_string());
-        task.correlation_id = Some(entry.task_id.clone());
+        };
+        let execution_class = match request_lane(&entry.request) {
+            RefreshLane::Local => ExecutionClass::Blocking,
+            RefreshLane::Remote => ExecutionClass::Io,
+        };
+        let task_spec = TaskSpec::new(
+            run_id.clone(),
+            refresh_dispatch_lane(&entry.request.priority, &entry.request.trigger),
+            refresh_priority(&entry.request.priority),
+            execution_class,
+        )
+        .correlation_id(entry.task_id.clone());
         (
             entry.app.clone(),
-            task,
+            task_spec,
             entry.request.repo_id.clone(),
             request_lane(&entry.request),
+            payload,
         )
     };
     let common_dir = repo_common_dir_by_id(&app, &repo_id)?;
     let (resource_requirements, ordering) = refresh_resource_requirements(lane, common_dir);
-    task.idempotency_key = Some(run_id.clone());
-    task.resource_requirements = resource_requirements;
-    task.ordering = ordering;
-    let handle = app.submit_mutsuki_task(task)?;
+    let task_spec = task_spec
+        .resources(resource_requirements)
+        .ordering(ordering);
+    let job = Box::new(move |_| execute_runtime_task(lane, payload));
+    let handle = app.submit_task(task_spec, job)?;
     let mut state = scheduler()
         .state
         .lock()
@@ -612,7 +398,7 @@ fn discard_failed_submission(key: &str, generation: u64, run_id: &str) -> bool {
     owns
 }
 
-fn mutsuki_priority(priority: &str) -> i64 {
+fn refresh_priority(priority: &str) -> i64 {
     match priority {
         "high" => 100,
         "normal" => 0,
@@ -620,7 +406,7 @@ fn mutsuki_priority(priority: &str) -> i64 {
     }
 }
 
-fn mutsuki_lane(priority: &str, trigger: &str) -> DispatchLane {
+fn refresh_dispatch_lane(priority: &str, trigger: &str) -> DispatchLane {
     match (priority, trigger) {
         ("high", _) => DispatchLane::Interactive,
         ("low", _) | (_, "autoSync") => DispatchLane::Background,
@@ -771,7 +557,7 @@ fn finish_existing_merge(merged: ExistingMerge) -> Result<String, String> {
             previous_handle,
         } => {
             if let Some(handle) = previous_handle {
-                let _ = app.cancel_mutsuki_task(handle);
+                let _ = app.cancel_task(&handle);
             }
             if let Err(error) = submit_runtime_task(&key, generation, run_id.clone()) {
                 if discard_failed_submission(&key, generation, &run_id) {
@@ -1063,7 +849,7 @@ fn cancel_entries(entries: Vec<ScheduledRefresh>, message: &str) {
     for entry in entries {
         if entry.state == EntryState::Pending {
             if let Some(handle) = entry.runtime_handle {
-                let _ = entry.app.cancel_mutsuki_task(handle);
+                let _ = entry.app.cancel_task(&handle);
             }
         }
         update_workspace_task_and_emit(
@@ -1091,7 +877,7 @@ pub(super) fn cancel_pending_refresh(task_id: &str) -> bool {
     };
     if let Some(entry) = entry {
         if let Some(handle) = entry.runtime_handle {
-            let _ = entry.app.cancel_mutsuki_task(handle);
+            let _ = entry.app.cancel_task(&handle);
         }
         true
     } else {
@@ -1117,63 +903,41 @@ mod tests {
     }
 
     #[test]
-    fn runners_and_runtime_config_assign_real_execution_domains() {
-        let runners = repo_refresh_runners();
+    fn refresh_tasks_use_the_expected_tokio_execution_classes() {
         assert_eq!(
-            runners[0].descriptor().execution_class,
+            request_lane(&request("repo", "local", "normal")),
+            RefreshLane::Local
+        );
+        assert_eq!(
+            request_lane(&request("repo", "remote", "normal")),
+            RefreshLane::Remote
+        );
+        assert_eq!(
+            match request_lane(&request("repo", "local", "normal")) {
+                RefreshLane::Local => ExecutionClass::Blocking,
+                RefreshLane::Remote => ExecutionClass::Io,
+            },
             ExecutionClass::Blocking
         );
-        assert_eq!(runners[1].descriptor().execution_class, ExecutionClass::Io);
-        assert_eq!(runners[0].descriptor().batch.max_entry_concurrency, 4);
-        assert_eq!(runners[1].descriptor().batch.max_entry_concurrency, 1);
-        let config = refresh_runtime_config();
-        assert_eq!(config.execution_domains.len(), 4);
-        for (domain_id, execution_classes, threads) in [
-            (
-                "interactive-orchestration",
-                vec![ExecutionClass::Orchestration],
-                1,
-            ),
-            ("github-io", vec![ExecutionClass::Io], 2),
-            (
-                "workspace-cpu",
-                vec![ExecutionClass::Cpu, ExecutionClass::Script],
-                1,
-            ),
-            ("local-blocking", vec![ExecutionClass::Blocking], 2),
-        ] {
-            let domain = config
-                .execution_domains
-                .iter()
-                .find(|domain| domain.domain_id == domain_id)
-                .expect("configured execution domain");
-            assert_eq!(domain.execution_classes, execution_classes);
-            assert_eq!(domain.threads, threads);
-        }
-        assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 1);
-        assert_eq!(config.runner_limits[REMOTE_REFRESH_PROTOCOL].max_running, 1);
-        for (kind, expected) in [
-            (crate::workspace::operations::OperationKind::LocalRead, 4),
-            (crate::workspace::operations::OperationKind::LocalWrite, 2),
-            (crate::workspace::operations::OperationKind::GitHubRead, 4),
-            (crate::workspace::operations::OperationKind::GitHubWrite, 2),
-            (
-                crate::workspace::operations::OperationKind::GitHubTransfer,
-                2,
-            ),
-            (
-                crate::workspace::operations::OperationKind::WorkspaceAnalysis,
-                2,
-            ),
-            (crate::workspace::operations::OperationKind::Bulk, 4),
-            (
-                crate::workspace::operations::OperationKind::LaunchControl,
-                2,
-            ),
-        ] {
-            assert_eq!(config.runner_limits[kind.protocol()].max_running, 1);
-            assert_eq!(config.runner_limits[kind.protocol()].max_inflight, expected);
-        }
+        assert_eq!(
+            match request_lane(&request("repo", "remote", "normal")) {
+                RefreshLane::Local => ExecutionClass::Blocking,
+                RefreshLane::Remote => ExecutionClass::Io,
+            },
+            ExecutionClass::Io
+        );
+        assert_eq!(refresh_priority("high"), 100);
+        assert_eq!(refresh_priority("normal"), 0);
+        assert_eq!(refresh_priority("low"), -100);
+        assert_eq!(
+            refresh_dispatch_lane("high", "watch"),
+            DispatchLane::Interactive
+        );
+        assert_eq!(
+            refresh_dispatch_lane("low", "autoSync"),
+            DispatchLane::Background
+        );
+        assert_eq!(crate::task_runtime::TASK_QUEUE_CAPACITY, 64);
     }
 
     #[test]

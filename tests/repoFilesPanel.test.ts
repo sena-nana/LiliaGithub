@@ -115,6 +115,7 @@ function summary(overrides: Partial<RepoSummary> = {}): RepoSummary {
     unstagedCount: 0,
     untrackedCount: 0,
     conflictCount: 0,
+    conflictOperation: "none",
     lastCommitAt: null,
     lastCommitMessage: null,
     languageStats: [],

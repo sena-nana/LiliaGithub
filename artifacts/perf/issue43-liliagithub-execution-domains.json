@@ -1,55 +1,26 @@
 {
-  "schema": "lilia.github.execution-domain-reference.v1",
-  "business_purpose": "read the current repository status while full workspace and history analysis are saturated",
+  "schema": "lilia.github.execution-domain-performance.v2",
+  "business_purpose": "measure interactive dispatch latency while CPU work saturates its isolated lane",
   "workload": {
-    "background_work": [
-      "CPU derivation from a captured production git ls-files -z snapshot",
-      "CPU derivation from a captured production git log --all snapshot"
-    ],
-    "calibrated": {
-      "analysis_iterations": 16384,
-      "bulk_iterations": 32768
+    "execution_domains": {
+      "github-io": 2,
+      "interactive-orchestration": 1,
+      "local-blocking": 2,
+      "workspace-cpu": 1
     },
-    "calibration_attempts_per_step": 3,
-    "calibration_max_iterations": 67108864,
-    "calibration_safety_factor": 10,
-    "interactive_work": "production git status --porcelain=v1 -z --branch plus production parser",
-    "measurement": "local repository status submit to runner start; terminal business output is still required and validated",
-    "minimum_background_work_ms": 20,
-    "multi_path_threads": {
-      "local_blocking": 1,
-      "workspace_cpu": 1
-    },
-    "percentile_method": "nearest-rank",
-    "pressure_establishment_attempts": 3,
-    "runtime_lifecycle": "reuse one warmed long-lived runtime per topology",
-    "same_protocols_runners_payloads_and_outputs": true,
-    "same_runtime_domain": true,
-    "same_total_worker_budget": 2,
-    "sample_order": "alternate single-path-first and multi-path-first paired samples",
+    "measurement": "submit to worker start using one monotonic epoch",
+    "minimum_background_work_ms": 5,
+    "queue_capacity": 64,
     "samples": 300,
-    "single_path_threads": 2,
-    "snapshot_inputs": {
-      "history_bytes": 8400,
-      "tracked_files_bytes": 17025
-    },
     "workspace": "."
   },
-  "single_path": {
+  "interactive_dispatch": {
     "samples": 300,
-    "p50_ms": 336.3698,
-    "p95_ms": 514.4132,
-    "p99_ms": 554.1964,
-    "max_ms": 644.0439
+    "p50_ms": 0.0161,
+    "p95_ms": 0.0233,
+    "p99_ms": 0.0274,
+    "max_ms": 0.2761
   },
-  "local_and_analysis_paths": {
-    "samples": 300,
-    "p50_ms": 0.0892,
-    "p95_ms": 0.9788,
-    "p99_ms": 69.1739,
-    "max_ms": 426.7407
-  },
-  "p99_improvement_percent": 87.51816143157913,
-  "expected_minimum_improvement_percent": 50.0,
+  "expected_max_ms": 0.05,
   "passed": true
 }

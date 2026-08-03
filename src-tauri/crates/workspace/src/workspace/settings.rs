@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::github::{
     forget_remote_repo_shortcut, invalidate_token, normalize_github_repo_input,
     remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
@@ -41,7 +42,6 @@ use lilia_github_contracts::workspace::{
     WorkspaceSettings, WorkspaceStartupCache, WorkspaceStartupContributions,
     WorkspaceViewPreferences,
 };
-use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";

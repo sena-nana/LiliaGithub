@@ -47,6 +47,7 @@ function localRepo(overrides: Partial<RepoSummary> = {}): RepoSummary {
     unstagedCount: 0,
     untrackedCount: 0,
     conflictCount: 0,
+    conflictOperation: "none",
     lastCommitAt: 1_782_390_000,
     lastCommitMessage: "最近提交",
     languageStats: [],
@@ -249,6 +250,22 @@ describe("buildHomePendingItems", () => {
     expect(items[0]).toMatchObject({
       title: "冲突待处理",
       detail: "2 个冲突文件",
+      target: { kind: "repo", repoId: "repo-1", view: "conflicts" },
+      tone: "error",
+    });
+  });
+
+  it("keeps an active conflict operation actionable after all files are resolved", () => {
+    const items = buildHomePendingItems([
+      source({
+        localRepo: localRepo({ conflictOperation: "rebase" }),
+      }),
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      title: "冲突操作待完成",
+      detail: "冲突文件已解决，可以继续 rebase 操作",
       target: { kind: "repo", repoId: "repo-1", view: "conflicts" },
       tone: "error",
     });
