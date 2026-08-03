@@ -2013,6 +2013,57 @@ describe("RepoProjectPanel", () => {
     });
   });
 
+  it("点击 Issue 详情后返回列表仍保持编号降序", async () => {
+    const higherIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 44,
+      title: "更高编号 Issue",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/44",
+    };
+    vi.mocked(listGitHubIssues).mockResolvedValue([higherIssue, githubIssues[0]]);
+    vi.mocked(getGitHubIssueDiscussion).mockResolvedValue(issueDiscussion(githubIssues[0]));
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    const issueNumbers = () => [...view.container.querySelectorAll<HTMLElement>(".issues-list__item[data-issue-number]")]
+      .map((item) => item.dataset.issueNumber);
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    await view.findByText("#44 更高编号 Issue");
+    expect(issueNumbers()).toEqual(["44", "12"]);
+
+    await fireEvent.click(view.getByText("#12 修复懒加载"));
+    expect(await view.findByRole("heading", { level: 3, name: "#12 修复懒加载" })).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("button", { name: "Issues", exact: true }));
+
+    await view.findByRole("list", { name: "Issues" });
+    expect(issueNumbers()).toEqual(["44", "12"]);
+  });
+
+  it("筛选外的 Issue 深链详情不污染当前列表", async () => {
+    const visibleIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 44,
+      title: "筛选结果 Issue",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/44",
+    };
+    vi.mocked(listGitHubIssues).mockResolvedValue([visibleIssue]);
+    vi.mocked(getGitHubIssueDiscussion).mockResolvedValue(issueDiscussion(githubIssues[0]));
+    const view = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo" },
+      "/repos/local-repo?projectTab=issues&issue=12&issueQ=筛选外",
+    );
+
+    expect(await view.findByRole("heading", { level: 3, name: "#12 修复懒加载" })).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("button", { name: "Issues", exact: true }));
+
+    const issueList = await view.findByRole("list", { name: "Issues" });
+    expect(issueList).toHaveTextContent("#44 筛选结果 Issue");
+    expect(issueList).not.toHaveTextContent("#12 修复懒加载");
+    expect(view.getByLabelText("搜索 Issues")).toHaveValue("筛选外");
+  });
+
   it("Issues 默认按里程碑分组且相同标题的里程碑保持独立", async () => {
     const issues: GitHubIssue[] = [
       githubIssues[0],

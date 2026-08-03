@@ -2277,7 +2277,8 @@ async function loadIssueDiscussion(issueNumber: number, force = false): Promise<
         : await getGitHubIssueDiscussion(repoFullName, issueNumber);
       if (!issueDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issueDiscussion.value = discussion;
-      issues.value = [discussion.issue, ...issues.value.filter((issue) => issue.number !== discussion.issue.number)];
+      const issueIndex = issues.value.findIndex((issue) => issue.number === discussion.issue.number);
+      if (issueIndex >= 0) issues.value.splice(issueIndex, 1, discussion.issue);
       outcome = "loaded";
     } catch (err) {
       if (issueDiscussionLoader.isCurrent(runId)) {
@@ -3860,7 +3861,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             v-model:editing-labels="editingIssueLabels"
             v-model:editing-assignees="editingIssueAssignees"
             v-model:editing-body="editingIssueBody"
-            :focused-issue-number="focusedIssueNumber"
+            :focused-issue="focusedIssueDetail"
             :issue-timeline="issueDiscussion?.timeline ?? []"
             :issue-discussion-loading="issueDiscussionLoading"
             :issue-discussion-error="issueDiscussionError"

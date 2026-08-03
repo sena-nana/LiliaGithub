@@ -53,7 +53,7 @@ const props = defineProps<{
   editingLabels: string;
   editingAssignees: string;
   editingBody: string;
-  focusedIssueNumber: number | null;
+  focusedIssue: GitHubIssue | null;
   issueTimeline: readonly GitHubDiscussionTimelineItem[];
   issueDiscussionLoading: boolean;
   issueDiscussionError: string | null;
@@ -77,11 +77,7 @@ const emit = defineEmits<{
 
 const ISSUE_RENDER_PAGE_SIZE = 50;
 const visibleIssueCount = ref(ISSUE_RENDER_PAGE_SIZE);
-const focusedIssue = computed(() =>
-  props.focusedIssueNumber == null
-    ? null
-    : props.issues.find((issue) => issue.number === props.focusedIssueNumber) ?? null
-);
+const focusedIssue = computed(() => props.focusedIssue);
 
 const issueRows = computed<IssueDisplayRow[]>(() =>
   props.issues.map((issue) => ({
