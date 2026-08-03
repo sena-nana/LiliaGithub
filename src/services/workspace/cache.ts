@@ -10,6 +10,7 @@ import type {
   GitHubPullRequestDiscussion,
   GitHubRelease,
   GitHubRepoManagement,
+  GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
@@ -236,11 +237,19 @@ type GitHubRepoCacheEntry = {
   fetchedAt: number;
 };
 
+type GitHubRepoOwnerCacheEntry = {
+  revision: string;
+  owners: GitHubRepoOwner[];
+};
+
 export const ALL_GITHUB_REPOSITORIES: GitHubRepositoryScope = { kind: "all" };
 
 export const githubRepoCache = new Map<string, GitHubRepoCacheEntry>();
 export const githubRepoPreloadPromises = new Map<string, Promise<GitHubRepoPage>>();
+export const githubRepoOwnerPromises = new Map<string, Promise<GitHubRepoOwner[]>>();
 export let githubRepoBindingRevision = "unknown";
+export let githubRepoOwnerCache: GitHubRepoOwnerCacheEntry | null = null;
+export let githubRepoOwnerCacheGeneration = 0;
 export let githubAccountIssueCache: {
   key: string;
   items: GitHubAccountIssueItem[];
@@ -284,6 +293,10 @@ export function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
     nextPage: page.nextPage,
     scope: page.scope ? { ...page.scope } : page.scope,
   };
+}
+
+export function cloneGitHubRepoOwners(owners: readonly GitHubRepoOwner[]): GitHubRepoOwner[] {
+  return owners.map((owner) => ({ ...owner }));
 }
 
 export function githubProjectRepoKey(repoFullName: string) {
@@ -351,6 +364,7 @@ export function applyGitHubBindingRevision(status: GitHubBindingStatus) {
   const next = bindingRevision(status);
   if (next === githubRepoBindingRevision) return;
   clearGitHubRepoCache();
+  clearGitHubRepoOwnerCache();
   githubRepoBindingRevision = next;
 }
 
@@ -369,6 +383,25 @@ export function readCachedGitHubRepos(
 ): GitHubRepoPage | null {
   const cached = githubRepoCache.get(githubRepositoryCacheKey(scope, page));
   return cached ? cloneRepoPage(cached) : null;
+}
+
+export function readCachedGitHubRepoOwners(): GitHubRepoOwner[] | null {
+  return githubRepoOwnerCache?.revision === githubRepoBindingRevision
+    ? cloneGitHubRepoOwners(githubRepoOwnerCache.owners)
+    : null;
+}
+
+export function writeGitHubRepoOwnerCache(owners: readonly GitHubRepoOwner[]) {
+  githubRepoOwnerCache = {
+    revision: githubRepoBindingRevision,
+    owners: cloneGitHubRepoOwners(owners),
+  };
+}
+
+export function clearGitHubRepoOwnerCache() {
+  githubRepoOwnerCache = null;
+  githubRepoOwnerCacheGeneration += 1;
+  githubRepoOwnerPromises.clear();
 }
 
 export function clearGitHubRepoCache() {

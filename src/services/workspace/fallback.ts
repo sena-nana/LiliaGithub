@@ -2658,6 +2658,7 @@ let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscriptions();
 let fallbackGitHubAccountIssuesOverride: FallbackGitHubAccountIssuesOverride | null = null;
 let fallbackGitHubActionNotificationsOverride: FallbackGitHubActionNotificationsOverride | null = null;
+let fallbackGitHubRepoOwnerListCalls: Array<Record<string, never>> = [];
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubAccountIssueListCalls: Array<{
   state: string | null;
@@ -2837,6 +2838,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubCommitDetailCalls = [];
   fallbackGitHubRepoFileListCalls = [];
   fallbackGitHubRepoFilePreviewCalls = [];
+  fallbackGitHubRepoOwnerListCalls = [];
   fallbackOpenPathCalls = [];
   fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
@@ -2990,6 +2992,10 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
   })) ?? null;
 }
 
+export function setFallbackGitHubRepoOwnersForTests(owners: GitHubRepoOwner[]) {
+  fallbackGitHubRepoOwners = owners.map((owner) => ({ ...owner }));
+}
+
 export function setFallbackGitHubRepositorySubscriptionsForTests(
   subscriptions: Record<string, GitHubRepositorySubscriptionMode>,
 ) {
@@ -3043,6 +3049,10 @@ export function setFallbackGitHubRulesetsForTests(
 
 export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoOwnerListCallsForTests() {
+  return fallbackGitHubRepoOwnerListCalls.map((call) => ({ ...call }));
 }
 
 export function getFallbackGitHubAccountIssueListCallsForTests() {
@@ -6102,7 +6112,10 @@ function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: st
 }
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
-  return call("github_list_repo_owners", undefined, () => fallbackGitHubRepoOwners.map((owner) => ({ ...owner })));
+  return call("github_list_repo_owners", undefined, () => {
+    fallbackGitHubRepoOwnerListCalls.push({});
+    return fallbackGitHubRepoOwners.map((owner) => ({ ...owner }));
+  });
 }
 
 export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
