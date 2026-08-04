@@ -4,15 +4,15 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 dunce = "1"
 futures-util = "0.3"
-keyring = "4.0.1"
+keyring = "4.1.6"
 libc = "0.2"
 lilia_github_contracts = { path = "../lilia_github_contracts" }
 lilia_github_git = { path = "../git" }
 lilia_github_github = { path = "../github" }
-notify = "6.1"
+notify = "8.2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,5 +24,5 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt", "
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
-libloading = "0.8"
+libloading = "0.9"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

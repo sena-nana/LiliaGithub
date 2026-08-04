@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { RouterView, useRoute } from "vue-router";
+import { resolveBackdropSurfaces } from "@lilia/ui/composables/resolveBackdropSurfaces";
 import {
   LiliaAppShell,
   LiliaPrimaryContent,
   LiliaResourcePanel,
   LiliaSettingsSidebar,
   LiliaWorkspace,
-  UiIconButton,
   useContextMenu,
   useNativeAppearance,
   usePersistentBoolean,
@@ -50,24 +49,14 @@ const effectiveSidebarCollapsed = computed(() => {
   return sidebarCollapsed.value;
 });
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
-const shellTranslucent = computed(() => appearance.backdropMode.value !== "solid");
-const sidebarTranslucent = computed(() => (
-  shellTranslucent.value && appearance.backdropTarget.value === "sidebar"
+const surfaces = computed(() => resolveBackdropSurfaces(
+  appearance.backdropMode.value,
+  appearance.backdropTarget.value,
 ));
-const mainTranslucent = computed(() => (
-  shellTranslucent.value && appearance.backdropTarget.value === "main"
-));
-const workspaceTranslucent = computed(() => sidebarTranslucent.value || mainTranslucent.value);
 const shouldMountContextMenuHost = computed(() => contextMenuState.openSeq > 0);
 const workspaceContextKey = computed(() =>
   `${workspace.activeWorkspace.value?.id ?? "none"}:${workspace.contextRevision.value}`,
 );
-const sidebarToggleLabel = computed(() => (
-  effectiveSidebarCollapsed.value ? "展开左侧栏" : "折叠左侧栏"
-));
-const sidebarToggleIcon = computed(() => (
-  effectiveSidebarCollapsed.value ? PanelLeftOpen : PanelLeftClose
-));
 
 watch(
   () => route.fullPath,
@@ -90,22 +79,16 @@ function toggleSidebar() {
 </script>
 
 <template>
-  <LiliaAppShell :title="APP_TITLE">
-    <template #header-leading>
-      <UiIconButton
-        class="app-shell__sidebar-toggle"
-        :icon="sidebarToggleIcon"
-        :label="sidebarToggleLabel"
-        :active="effectiveSidebarCollapsed"
-        :disabled="sidebarDisabled"
-        agent-id="titlebar.left-sidebar.toggle"
-        @click="toggleSidebar"
-      />
-    </template>
-
+  <LiliaAppShell
+    :title="APP_TITLE"
+    show-sidebar-toggle
+    :left-sidebar-collapsed="effectiveSidebarCollapsed"
+    :sidebar-toggles-disabled="sidebarDisabled"
+    @toggle-left-sidebar="toggleSidebar"
+  >
     <LiliaWorkspace
       agent-id="app.workspace"
-      :surface-mode="workspaceTranslucent ? 'translucent' : 'solid'"
+      :surface-mode="surfaces.workspace"
       surface-level="base"
       surface-boundary
     >
@@ -121,7 +104,7 @@ function toggleSidebar() {
         :resizable="!sidebarDisabled"
         :disabled="sidebarDisabled"
         resize-label="调整左侧栏宽度"
-        :surface-mode="sidebarTranslucent ? 'translucent' : 'solid'"
+        :surface-mode="surfaces.sidebar"
         backdrop-effect="none"
         surface-level="base"
         surface-boundary
@@ -132,7 +115,7 @@ function toggleSidebar() {
           :tabs="SETTINGS_TABS"
           :active-key="activeSettingsTab"
           :return-to="returnTo"
-          :surface-mode="sidebarTranslucent ? 'translucent' : 'solid'"
+          :surface-mode="surfaces.sidebar"
           backdrop-effect="none"
           surface-level="base"
           surface-boundary
@@ -140,7 +123,7 @@ function toggleSidebar() {
         <SecondaryPanel
           v-else
           :key="workspaceContextKey"
-          :surface-mode="sidebarTranslucent ? 'translucent' : 'solid'"
+          :surface-mode="surfaces.sidebar"
           backdrop-effect="none"
           surface-level="base"
           surface-boundary
@@ -149,7 +132,7 @@ function toggleSidebar() {
 
       <LiliaPrimaryContent
         id="main"
-        :surface-mode="mainTranslucent ? 'translucent' : 'solid'"
+        :surface-mode="surfaces.main"
         backdrop-effect="none"
         surface-level="base"
         surface-boundary
@@ -166,10 +149,3 @@ function toggleSidebar() {
     </template>
   </LiliaAppShell>
 </template>
-
-<style scoped>
-.app-shell__sidebar-toggle.ui-button {
-  width: 28px;
-  height: 28px;
-}
-</style>

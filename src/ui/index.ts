@@ -1,6 +1,7 @@
 export * from "@lilia/ui";
 export * from "@lilia/ui/shell";
 export * from "@lilia/ui/settings";
+export * from "@lilia/ui/settings/sections";
 export * from "@lilia/ui/commands";
 export * from "@lilia/ui/layouts";
 export * from "@lilia/ui/runtime";
@@ -8,4 +9,4 @@ export * from "@lilia/ui/diagnostics";
 export * from "@lilia/ui/composables";
 export * from "@lilia/ui/overlay";
 export * from "@lilia/ui/search";
-export * from "@lilia/ui/utils/calendarHeatmap";
+export * from "@lilia/ui/calendar";
