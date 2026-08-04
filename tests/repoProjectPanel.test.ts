@@ -55,6 +55,7 @@ import {
   pickFiles,
   rerunFailedGitHubWorkflowRun,
   rerunGitHubWorkflowJob,
+  updateGitHubIssue,
   updateGitHubRelease,
   updateGitHubBranchProtection,
   updateGitHubRepoActionsPermissions,
@@ -898,6 +899,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listRepoFiles).mockReset();
     vi.mocked(openPathTarget).mockReset();
     vi.mocked(pickFiles).mockReset();
+    vi.mocked(updateGitHubIssue).mockReset();
     vi.mocked(updateGitHubRelease).mockReset();
     vi.mocked(updateGitHubBranchProtection).mockReset();
     vi.mocked(updateGitHubRepoActionsPermissions).mockReset();
@@ -2010,6 +2012,63 @@ describe("RepoProjectPanel", () => {
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
+    });
+  });
+
+  it("Issue 列表右侧仅显示标签和更新时间，并保留编辑与状态操作", async () => {
+    const unlabeledIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 13,
+      title: "无标签事项",
+      author: "other-author",
+      labels: [],
+      assignees: ["other-assignee"],
+      projectItems: [{ id: "project-13", title: "Hidden project" }],
+      milestone: { number: 1, title: "Hidden milestone" },
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/13",
+    };
+    vi.mocked(listGitHubIssues).mockResolvedValue([githubIssues[0], unlabeledIssue]);
+    vi.mocked(updateGitHubIssue).mockResolvedValue({ ...githubIssues[0], state: "closed" });
+
+    const view = await renderProjectPanel({ repoFullName: "sena-nana/remote-repo" });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    await view.findByText("#12 修复懒加载");
+    const issueList = await view.findByRole("list", { name: "Issues" });
+    const row = issueList.querySelector<HTMLElement>('[data-issue-number="12"]');
+    const unlabeledRow = issueList.querySelector<HTMLElement>('[data-issue-number="13"]');
+    expect(row).not.toBeNull();
+    expect(unlabeledRow).not.toBeNull();
+
+    const side = row!.querySelector<HTMLElement>(".issues-list__side");
+    const unlabeledSide = unlabeledRow!.querySelector<HTMLElement>(".issues-list__side");
+    expect(side).not.toBeNull();
+    expect(unlabeledSide).not.toBeNull();
+    expect(within(side!).getByText("bug")).toBeInTheDocument();
+    expect(side!.querySelectorAll(".issues-list__label")).toHaveLength(1);
+    expect(side!.firstElementChild?.textContent?.trim()).toBeTruthy();
+    expect(side).not.toHaveTextContent("sena");
+    expect(side).not.toHaveTextContent("Roadmap");
+    expect(side).not.toHaveTextContent("v1");
+    expect(side).not.toHaveTextContent(/[·-]/);
+    expect(unlabeledSide!.querySelector(".issues-list__labels")).toBeNull();
+    expect(unlabeledSide!.firstElementChild).not.toBeNull();
+    expect(unlabeledSide).not.toHaveTextContent(/[·-]/);
+
+    await fireEvent.click(within(row!).getByRole("button", { name: "编辑" }));
+    expect(within(row!).getByPlaceholderText("assignees")).toHaveValue("sena");
+    await fireEvent.click(within(row!).getByRole("button", { name: "取消" }));
+    await waitFor(() => {
+      expect(within(row!).getByRole("button", { name: "关闭" })).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(row!).getByRole("button", { name: "关闭" }));
+    await waitFor(() => {
+      expect(updateGitHubIssue).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        12,
+        { state: "closed" },
+      );
     });
   });
 
