@@ -342,6 +342,20 @@ beforeEach(async () => {
 });
 
 describe("AppShell sidebar", () => {
+  it("仓库主区域由外层 primary 统一承担四侧留白", async () => {
+    const view = await renderAppShell("/repos/Repo-002");
+
+    const primary = view.container.querySelector('[data-region-id="main"]');
+    if (!(primary instanceof HTMLElement)) throw new Error("未找到主内容区域");
+    const content = primary.querySelector(".lilia-workspace-region__content");
+    if (!(content instanceof HTMLElement)) throw new Error("未找到主内容内层");
+
+    expect(content.style.paddingBlockStart).toBe("20px");
+    expect(content.style.paddingBlockEnd).toBe("14px");
+    expect(content.style.paddingInlineStart).toBe("24px");
+    expect(content.style.paddingInlineEnd).toBe("24px");
+  });
+
   it("首页无贡献快照时展示实时加载状态并在完成后生成热力图", async () => {
     state.repos = [repoSummary("LiliaGithub")];
     markWorkspaceReadyForManualRepos();

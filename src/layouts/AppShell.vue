@@ -49,6 +49,12 @@ const effectiveSidebarCollapsed = computed(() => {
   return sidebarCollapsed.value;
 });
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
+const repoPrimaryContentInset = {
+  blockStart: 20,
+  blockEnd: 14,
+  inlineStart: 24,
+  inlineEnd: 24,
+} as const;
 const surfaces = computed(() => resolveBackdropSurfaces(
   appearance.backdropMode.value,
   appearance.backdropTarget.value,
@@ -136,7 +142,7 @@ function toggleSidebar() {
         backdrop-effect="none"
         surface-level="base"
         surface-boundary
-        :style="{ '--lilia-primary-inset': route.path.startsWith('/repos/') ? '0' : undefined }"
+        :content-inset="route.path.startsWith('/repos/') ? repoPrimaryContentInset : undefined"
       >
         <RouterView v-slot="{ Component }">
           <component :is="Component" :key="workspaceContextKey" />
