@@ -3,7 +3,15 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(lilia_github_workspace::WorkspaceTaskRuntime::new())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_lilia::init())
+        .plugin(
+            tauri_plugin_lilia::Builder::new()
+                .tray(
+                    tauri_plugin_lilia::TrayOptions::new()
+                        .show_window_label("显示主窗口")
+                        .quit_label("退出"),
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
 

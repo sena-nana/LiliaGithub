@@ -30,12 +30,12 @@ agent-debug-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["image-png", "macos-private-api"] }
+tauri = { version = "2", features = ["image-png", "macos-private-api", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
-tauri-plugin-lilia = { git = "https://github.com/sena-nana/LiliaUI.git", rev = "e0489340ad6334be02dfdba0bdfd80db607f58df" }
+tauri-plugin-lilia = { git = "https://github.com/sena-nana/LiliaUI.git", rev = "2c339113d8b34c19aa281244a8cc698d97d305aa" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lilia_github_agent_debug = { path = "crates/agent_debug" }

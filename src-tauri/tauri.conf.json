@@ -12,6 +12,12 @@
   },
   "app": {
     "macOSPrivateApi": true,
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/32x32.png",
+      "showMenuOnLeftClick": false,
+      "tooltip": "LiliaGithub"
+    },
     "windows": [
       {
         "label": "main",
