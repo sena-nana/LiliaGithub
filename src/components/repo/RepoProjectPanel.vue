@@ -3615,10 +3615,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       class="project-layout"
       aria-label="仓库工作区"
       surface-level="base"
-      :content-inset="{ inlineStart: 24, inlineEnd: 24, blockEnd: 14 }"
       :row-gap="14"
     >
-      <LiliaPrimaryContent id="repo-primary" overflow="hidden" :style="{ '--lilia-primary-inset': '0' }">
+      <LiliaPrimaryContent
+        id="repo-primary"
+        overflow="hidden"
+        :content-inset="{ blockStart: 0, blockEnd: 0, inlineStart: 0, inlineEnd: 0 }"
+      >
         <main
           ref="projectMainRef"
           class="project-main"

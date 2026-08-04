@@ -1068,12 +1068,22 @@ describe("RepoProjectPanel", () => {
     state.repos = [];
   });
 
-  it("项目详情工作区为右栏保留右侧留白", async () => {
+  it("项目详情内层 primary 使用零 inset，留白由外层主区域负责", async () => {
     const view = await renderProjectPanel();
 
     const workspace = view.container.querySelector('[aria-label="仓库工作区"]') as HTMLElement;
     expect(workspace).toBeInTheDocument();
-    expect(workspace.style.paddingInlineEnd).toBe("24px");
+    expect(workspace.style.paddingInlineEnd).toBe("");
+
+    const primary = view.container.querySelector('[data-region-id="repo-primary"]');
+    if (!(primary instanceof HTMLElement)) throw new Error("未找到项目主区域");
+    const content = primary.querySelector(".lilia-workspace-region__content");
+    if (!(content instanceof HTMLElement)) throw new Error("未找到项目主区域内层");
+
+    expect(content.style.paddingBlockStart).toBe("0px");
+    expect(content.style.paddingBlockEnd).toBe("0px");
+    expect(content.style.paddingInlineStart).toBe("0px");
+    expect(content.style.paddingInlineEnd).toBe("0px");
   });
 
   it("本地仓库在命令运行页无日志时只显示空输出状态", async () => {
