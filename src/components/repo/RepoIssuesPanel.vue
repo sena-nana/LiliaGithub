@@ -38,7 +38,7 @@ type IssuePanelFilters = {
 type IssueDisplayRow = {
   issue: GitHubIssue;
   milestone: GitHubIssue["milestone"];
-  metaText: string;
+  updatedText: string;
   closed: boolean;
 };
 
@@ -83,7 +83,7 @@ const issueRows = computed<IssueDisplayRow[]>(() =>
   props.issues.map((issue) => ({
     issue,
     milestone: issue.milestone,
-    metaText: issueMetaText(issue),
+    updatedText: formatIssueDate(issue.updatedAt),
     closed: issue.state !== "open",
   })),
 );
@@ -124,15 +124,6 @@ function formatIssueDate(value: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function issueMetaText(issue: GitHubIssue) {
-  return [
-    issue.author || "未知作者",
-    `${issue.labels.join(", ") || "无标签"} · ${issue.assignees.join(", ") || "未分配"}`,
-    issue.projectItems?.map((project) => project.title).join(", ") || "-",
-    issue.milestone?.title || "-",
-    formatIssueDate(issue.updatedAt),
-  ].join(" · ");
-}
 </script>
 
 <template>
@@ -187,7 +178,18 @@ function issueMetaText(issue: GitHubIssue) {
             >
               #{{ row.issue.number }} {{ row.issue.title }}
             </button>
-            <span class="issues-list__meta repo-list-row__meta">{{ row.metaText }}</span>
+            <div class="issues-list__side repo-list-row__meta">
+              <span>{{ row.updatedText }}</span>
+              <div v-if="row.issue.labels.length" class="issues-list__labels" aria-label="Issue 标签">
+                <span
+                  v-for="label in row.issue.labels"
+                  :key="label"
+                  class="issues-list__label"
+                >
+                  {{ label }}
+                </span>
+              </div>
+            </div>
           </div>
           <div class="issues-list__actions">
             <button
@@ -352,6 +354,46 @@ function issueMetaText(issue: GitHubIssue) {
   display: inline-flex;
   justify-content: flex-end;
   gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.issues-list__item:hover .issues-list__actions,
+.issues-list__item:focus-within .issues-list__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.issues-list__side {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.issues-list__labels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+}
+
+.issues-list__label {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  min-width: 0;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-icon-action {
@@ -429,6 +471,20 @@ function issueMetaText(issue: GitHubIssue) {
 @media (max-width: 820px) {
   .issues-list__item {
     padding-inline: 6px;
+  }
+
+  .issues-list__side {
+    justify-items: start;
+  }
+
+  .issues-list__labels {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .issues-list__actions {
+    transition: none;
   }
 }
 </style>
