@@ -6,26 +6,22 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::bulk::repo_dirty_count;
 use crate::workspace::github::{
     github_auth_header, normalize_github_repo_input, normalize_optional_string, token_for_binding,
 };
-use crate::workspace::launch::launch_resource_id;
 use crate::workspace::operations::{
     run_operation, run_operation_with_completion, OperationKind, OperationSpec,
     OperationTaskCompletion, VisibleOperation,
 };
-use crate::workspace::repo_guard::{
-    repo_resource_id, with_repo_guard, with_repo_guards, RepoAccess,
-};
+use crate::workspace::repo_guard::{with_repo_guard, with_repo_guards, RepoAccess};
 use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
     add_managed_repo_id, apply_repo_placement, cached_repo_summary, load_settings,
     matching_startup_cache, repo_path_by_id, repo_root_and_path_by_id, root_id_for_path,
-    save_settings, settings_write_lock, sort_dedup, validate_repo_placement,
-    visible_workspace_settings, workspace_root, workspace_root_by_id, workspace_root_for_path,
-    workspace_roots, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
+    save_settings, sort_dedup, validate_repo_placement, visible_workspace_settings, workspace_root,
+    workspace_root_by_id, workspace_root_for_path, workspace_roots, write_startup_repo_summary,
+    write_startup_repo_summary_after_fetch,
 };
 #[cfg(test)]
 use crate::workspace::settings::{prune_deleted_repo_settings, repo_path_from_id};
@@ -33,13 +29,14 @@ use crate::workspace::shared::{compatible_path_text, configure_background_comman
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoCommitResult, RepoConflictChoice, RepoConflictFile,
-    RepoConflictHunk, RepoConflictState, RepoDetail, RepoDetailPatch, RepoDetailPatchRequest,
-    RepoMergePullResult, RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshRequest,
-    RepoRefreshSummaryOptions, RepoRemote, RepoRemoteBranchState, RepoRemoteOperationStep,
-    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoStashDetail, RepoStashEntry, RepoSummary,
-    RepoSyncOperationResult, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
-    WorkspaceCloneResult, WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest,
-    WorkspaceRepositoryBinding, WorkspaceSettings,
+    RepoConflictHunk, RepoConflictOperation, RepoConflictState, RepoDetail, RepoDetailPatch,
+    RepoDetailPatchRequest, RepoMergePullResult, RepoOperationResult, RepoPullLocalChangesMode,
+    RepoRefreshMode, RepoRefreshRequest, RepoRefreshSummaryOptions, RepoRemote,
+    RepoRemoteBranchState, RepoRemoteOperationStep, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
+    RepoStashDetail, RepoStashEntry, RepoSummary, RepoSyncOperationResult, RepoWorktree,
+    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneResult,
+    WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest, WorkspaceRepositoryBinding,
+    WorkspaceSettings,
 };
 
 pub(super) async fn run_repo_blocking<T, F>(
@@ -111,11 +108,11 @@ where
         Some(visible_kind),
         label,
     )?;
-    let spec = spec.resource(
-        launch_resource_id(&repo_id),
-        ResourceAccessMode::ExclusiveWrite,
-    );
-    run_operation(app, spec, move || with_repo_guard(common_dir, access, task)).await
+    let guard_app = app.clone();
+    run_operation(app, spec, move || {
+        with_repo_guard(&guard_app, common_dir, access, task)
+    })
+    .await
 }
 
 async fn run_repo_blocking_as<T, F>(
@@ -132,7 +129,11 @@ where
 {
     let (spec, common_dir, access) =
         repo_operation_setup(&app, &repo_id, kind, visible_kind, label)?;
-    run_operation(app, spec, move || with_repo_guard(common_dir, access, task)).await
+    let guard_app = app.clone();
+    run_operation(app, spec, move || {
+        with_repo_guard(&guard_app, common_dir, access, task)
+    })
+    .await
 }
 
 fn repo_operation_setup(
@@ -144,17 +145,7 @@ fn repo_operation_setup(
 ) -> Result<(OperationSpec, PathBuf, RepoAccess), String> {
     let write = kind == OperationKind::LocalWrite;
     let common_dir = repo_common_dir_by_id(app, repo_id)?;
-    let resource_id = repo_resource_id(&common_dir);
-    let mut spec = OperationSpec::new(kind)
-        .resource(
-            resource_id.clone(),
-            if write {
-                ResourceAccessMode::ExclusiveWrite
-            } else {
-                ResourceAccessMode::Read
-            },
-        )
-        .same_resource_order(resource_id);
+    let mut spec = OperationSpec::new(kind);
     if write {
         spec = spec.priority(100).visible(
             VisibleOperation::new(visible_kind.unwrap_or("git"), label)
@@ -166,7 +157,7 @@ fn repo_operation_setup(
                 .repo_id(repo_id.to_string()),
         );
     } else if kind == OperationKind::WorkspaceAnalysis {
-        spec = spec.lane(DispatchLane::Background).priority(-50).visible(
+        spec = spec.priority(-50).visible(
             VisibleOperation::new(visible_kind.unwrap_or("workspace"), label)
                 .priority("low")
                 .repo_id(repo_id.to_string()),
@@ -203,8 +194,11 @@ where
 {
     let (spec, common_dir, access) =
         repo_operation_setup(&app, &repo_id, kind, Some(visible_kind), label)?;
-    run_operation_with_completion(app, spec, move || with_repo_guard(common_dir, access, task))
-        .await
+    let guard_app = app.clone();
+    run_operation_with_completion(app, spec, move || {
+        with_repo_guard(&guard_app, common_dir, access, task)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -622,8 +616,7 @@ pub(super) fn infer_clone_directory_name(remote_url: &str) -> Result<String, Str
         .unwrap_or(trimmed);
     source
         .split(['/', '\\'])
-        .filter(|part| !part.is_empty())
-        .last()
+        .rfind(|part| !part.is_empty())
         .map(|value| value.to_string())
         .ok_or_else(|| "无法从远端 URL 推导目录名".to_string())
 }
@@ -939,9 +932,11 @@ fn backfill_workspace_repo_bindings(
     root: &Path,
     paths: &[PathBuf],
 ) -> bool {
-    paths.iter().fold(false, |changed, path| {
-        upsert_workspace_repo_binding(settings, root, path, None) || changed
-    })
+    let mut changed = false;
+    for path in paths {
+        changed |= upsert_workspace_repo_binding(settings, root, path, None);
+    }
+    changed
 }
 
 fn apply_workspace_repo_binding(summary: &mut RepoSummary, settings: &WorkspaceSettings) {
@@ -1318,21 +1313,21 @@ pub(super) fn should_retry_clone_with_system_git(remote: &str, error: &str) -> b
         && (error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库"))
 }
 
-pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> bool {
+pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> Result<bool, String> {
     let Ok(root) = workspace_root_for_path(app, path) else {
-        return false;
+        return Ok(false);
     };
     let id = repo_id(&root, path);
-    load_settings(app)
+    Ok(load_settings(app)?
         .system_git_repo_ids
         .iter()
-        .any(|value| value == &id)
+        .any(|value| value == &id))
 }
 
 pub(super) fn remember_repo_uses_system_git(app: &AppHandle, path: &Path) -> Result<(), String> {
     let root = workspace_root_for_path(app, path)?;
     let id = repo_id(&root, path);
-    let mut settings = load_settings(app);
+    let mut settings = load_settings(app)?;
     if !settings
         .system_git_repo_ids
         .iter()
@@ -1346,7 +1341,7 @@ pub(super) fn remember_repo_uses_system_git(app: &AppHandle, path: &Path) -> Res
 }
 
 pub(super) fn git_auth_for_repo(app: &AppHandle, path: &Path) -> Result<Option<String>, String> {
-    if repo_uses_system_git(app, path) {
+    if repo_uses_system_git(app, path)? {
         Ok(None)
     } else {
         token_for_binding(app).map(|token| token.map(|value| github_auth_header(&value)))
@@ -1683,7 +1678,7 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         unstaged_count: 0,
         untracked_count: 0,
         conflict_count: 0,
-        conflict_operation: "none".to_string(),
+        conflict_operation: RepoConflictOperation::None,
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),
@@ -1824,6 +1819,7 @@ pub(super) fn collect_repos(root: &Path) -> Vec<PathBuf> {
 }
 
 pub(super) fn expand_repo_paths_with_root_worktrees(
+    app: &AppHandle,
     root: &Path,
     paths: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
@@ -1831,7 +1827,7 @@ pub(super) fn expand_repo_paths_with_root_worktrees(
         .iter()
         .map(|path| git_common_dir(path).unwrap_or_else(|| path.clone()))
         .collect::<Vec<_>>();
-    with_repo_guards(common_dirs, RepoAccess::Read, || {
+    with_repo_guards(app, common_dirs, RepoAccess::Read, || {
         expand_repo_paths_with_root_worktrees_unlocked(root, paths)
     })
 }
@@ -1874,26 +1870,8 @@ fn expand_repo_paths_with_root_worktrees_unlocked(
     expanded
 }
 
-fn operation_spec_with_repo_reads(
-    mut spec: OperationSpec,
-    paths: impl IntoIterator<Item = PathBuf>,
-) -> OperationSpec {
-    let mut resources = paths
-        .into_iter()
-        .map(|path| git_common_dir(&path).unwrap_or(path))
-        .map(repo_resource_id)
-        .collect::<Vec<_>>();
-    resources.sort();
-    resources.dedup();
-    for resource in resources {
-        spec = spec.resource(resource, ResourceAccessMode::Read);
-    }
-    spec
-}
-
 fn workspace_analysis_spec(kind: &'static str, title: &'static str) -> OperationSpec {
     OperationSpec::new(OperationKind::WorkspaceAnalysis)
-        .lane(DispatchLane::Background)
         .priority(-50)
         .visible(VisibleOperation::new(kind, title).priority("low"))
 }
@@ -1995,14 +1973,9 @@ pub(super) fn filter_hidden_repos(
 }
 
 pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    let settings = load_settings(&app);
-    let entries = managed_repo_entries(&app, &settings);
-    let spec = operation_spec_with_repo_reads(
-        workspace_analysis_spec("repoStatus", "刷新仓库"),
-        entries.iter().map(|(_, path)| path.clone()),
-    );
+    let spec = workspace_analysis_spec("repoStatus", "刷新仓库");
     run_operation(app.clone(), spec, move || {
-        let mut settings = load_settings(&app);
+        let mut settings = load_settings(&app)?;
         let entries = managed_repo_entries(&app, &settings);
         let mut groups = HashMap::<PathBuf, Vec<PathBuf>>::new();
         for (root, path) in &entries {
@@ -2033,15 +2006,10 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
 
 pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let refresh_app = app.clone();
-    let settings = load_settings(&app);
-    let entries = managed_repo_entries(&app, &settings);
-    let spec = operation_spec_with_repo_reads(
-        OperationSpec::new(OperationKind::LocalRead),
-        entries.iter().map(|(_, path)| path.clone()),
-    );
+    let spec = OperationSpec::new(OperationKind::LocalRead);
     let repos = run_operation(app.clone(), spec, move || {
-        let mut settings = load_settings(&app);
-        let cache = matching_startup_cache(&app, &settings);
+        let mut settings = load_settings(&app)?;
+        let cache = matching_startup_cache(&app, &settings)?;
         let entries = managed_repo_entries(&app, &settings);
         let mut groups = HashMap::<PathBuf, Vec<PathBuf>>::new();
         for (root, path) in &entries {
@@ -2058,7 +2026,7 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
             .into_iter()
             .map(|(root, path)| {
                 let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
-                with_repo_guard(common_dir, RepoAccess::Read, || {
+                with_repo_guard(&app, common_dir, RepoAccess::Read, || {
                     let mut summary =
                         cached_repo_summary(&cache, lightweight_repo_summary(&root, &path));
                     apply_workspace_repo_binding(&mut summary, &settings);
@@ -2067,7 +2035,7 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
             })
             .collect();
         sort_repos(&mut repos);
-        crate::workspace::watcher::sync_repo_watchers(&app);
+        crate::workspace::watcher::sync_repo_watchers(&app)?;
         Ok(repos)
     })
     .await?;
@@ -2087,10 +2055,11 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
         app.clone(),
         workspace_analysis_spec("discoverRepos", "发现仓库"),
         move || {
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             let mut entries = Vec::new();
             for (_, root) in workspace_roots(&app)? {
-                let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
+                let paths =
+                    expand_repo_paths_with_root_worktrees(&app, &root, collect_repos(&root));
                 for path in &paths {
                     add_managed_repo_id(&mut settings, repo_id(&root, path));
                 }
@@ -2098,7 +2067,7 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
                 entries.extend(paths.into_iter().map(|path| (root.clone(), path)));
             }
             save_settings(&app, &settings)?;
-            crate::workspace::watcher::sync_repo_watchers(&app);
+            crate::workspace::watcher::sync_repo_watchers(&app)?;
             let mut repos = filter_hidden_repos(
                 entries
                     .into_iter()
@@ -2140,18 +2109,18 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         "workspace",
         "添加仓库",
         move || {
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             let managed_paths =
                 expand_repo_paths_with_root_worktrees_unlocked(&root, vec![path.clone()]);
             for managed_path in &managed_paths {
-                add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
+                add_managed_repo_id(&mut settings, repo_id(&root, managed_path));
             }
             backfill_workspace_repo_bindings(&mut settings, &root, &managed_paths);
             settings
                 .hidden_repo_ids
                 .retain(|id| id != &selected_repo_id);
             save_settings(&app, &settings)?;
-            crate::workspace::watcher::sync_repo_watchers(&app);
+            crate::workspace::watcher::sync_repo_watchers(&app)?;
             let summary = summarize_workspace_repo(&root, &path, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(summary)
@@ -2236,11 +2205,11 @@ pub async fn workspace_create_local_repo(
             git_command(&target, &["init"], None)?;
 
             let repo_id = repo_id(&root, &target);
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             add_managed_repo_id(&mut settings, repo_id.clone());
             settings.hidden_repo_ids.retain(|id| id != &repo_id);
             save_settings(&app, &settings)?;
-            crate::workspace::watcher::sync_repo_watchers(&app);
+            crate::workspace::watcher::sync_repo_watchers(&app)?;
             let summary = summarize_repo(&root, &target);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(summary)
@@ -2259,7 +2228,7 @@ pub async fn workspace_clone_repo(
         Some("workspace"),
         "克隆仓库",
         move || {
-            validate_repo_placement(&load_settings(&app), &request.placement)?;
+            validate_repo_placement(&load_settings(&app)?, &request.placement)?;
             let root = match &request.target {
                 WorkspaceCloneTarget::Root { root_id } => workspace_root_by_id(&app, root_id)?,
                 _ => workspace_root(&app)?,
@@ -2345,10 +2314,12 @@ pub async fn workspace_clone_repo(
             if uses_system_git {
                 remember_repo_uses_system_git(&app, &target)?;
             }
-            let _settings_guard = settings_write_lock()
+            let _settings_guard = app
+                .settings_runtime()
+                .settings_write
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             let cloned_repo_id = repo_id(&root, &target);
             add_managed_repo_id(&mut settings, cloned_repo_id.clone());
             settings.hidden_repo_ids.retain(|id| id != &cloned_repo_id);
@@ -2365,7 +2336,7 @@ pub async fn workspace_clone_repo(
                 &request.placement,
             )?;
             save_settings(&app, &settings)?;
-            crate::workspace::watcher::sync_repo_watchers(&app);
+            crate::workspace::watcher::sync_repo_watchers(&app)?;
             let summary = summarize_workspace_repo(&root, &target, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(WorkspaceCloneResult {
@@ -2385,7 +2356,7 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
         "读取仓库摘要",
         move || {
             let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
                 save_settings(&app, &settings)?;
             }
@@ -2429,7 +2400,7 @@ pub async fn repo_refresh_summary(
             } else {
                 None
             };
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
                 save_settings(&app, &settings)?;
             }
@@ -2463,7 +2434,7 @@ pub async fn repo_refresh_language_stats(
         move || {
             let (root, path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let mut summary = summarize_repo_with_language_stats(&root, &path);
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
                 save_settings(&app, &settings)?;
             }
@@ -2632,7 +2603,7 @@ pub(super) fn refresh_repo_for_scheduler(
     include_detail: bool,
 ) -> Result<(RepoSummary, Option<RepoDetailPatch>, Option<i64>), String> {
     let (root, path) = repo_root_and_path_by_id(app, &request.repo_id)?;
-    let remote_checked_at = if request.mode == "remote" {
+    let remote_checked_at = if request.mode == RepoRefreshMode::Remote {
         let config = require_valid_remote_sync_config(app, &request.repo_id, &path)?;
         let steps = run_multi_remote_fetch(app, &path, &config);
         let errors = steps
@@ -3006,7 +2977,7 @@ pub async fn repo_fetch(
             if result.status == "success" {
                 write_startup_repo_summary_after_fetch(
                     &app,
-                    &load_settings(&app),
+                    &load_settings(&app)?,
                     &result.summary,
                     now_millis(),
                 )?;
@@ -3610,7 +3581,7 @@ pub async fn repo_abort_conflict_operation(
         move || {
             let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
             let operation = conflict_operation(&repo_path);
-            let args = conflict_operation_args(&operation, "终止")?;
+            let args = conflict_operation_args(operation, "终止")?;
             git_command(&repo_path, args, None)?;
             Ok(summarize_repo(&root, &repo_path))
         },
@@ -3633,7 +3604,7 @@ pub async fn repo_continue_conflict_operation(
             if !conflicts.files.is_empty() {
                 return Err("仍有冲突文件未解决".to_string());
             }
-            let args = conflict_operation_args(&conflicts.operation, "继续")?;
+            let args = conflict_operation_args(conflicts.operation, "继续")?;
             git_command(&repo_path, args, None)?;
             Ok(summarize_repo(&root, &repo_path))
         },
@@ -3876,18 +3847,18 @@ pub(super) fn conflict_file_from_status(
     }
 }
 
-pub(super) fn conflict_operation(path: &Path) -> String {
+pub(super) fn conflict_operation(path: &Path) -> RepoConflictOperation {
     if git_state_file_exists(path, "MERGE_HEAD") {
-        "merge".to_string()
+        RepoConflictOperation::Merge
     } else if git_state_file_exists(path, "CHERRY_PICK_HEAD") {
-        "cherry-pick".to_string()
+        RepoConflictOperation::CherryPick
     } else if git_state_file_exists(path, "REBASE_HEAD")
         || git_state_file_exists(path, "rebase-merge")
         || git_state_file_exists(path, "rebase-apply")
     {
-        "rebase".to_string()
+        RepoConflictOperation::Rebase
     } else {
-        "none".to_string()
+        RepoConflictOperation::None
     }
 }
 
@@ -4026,18 +3997,18 @@ pub(super) fn conflict_checkout_side(side: &str) -> Result<&'static str, String>
 }
 
 pub(super) fn conflict_operation_args(
-    operation: &str,
+    operation: RepoConflictOperation,
     action: &str,
 ) -> Result<&'static [&'static str], String> {
     match (operation, action) {
-        ("merge", "终止") => Ok(&["merge", "--abort"]),
-        ("rebase", "终止") => Ok(&["rebase", "--abort"]),
-        ("cherry-pick", "终止") => Ok(&["cherry-pick", "--abort"]),
-        ("merge", "继续") => Ok(&["commit", "--no-edit"]),
-        ("rebase", "继续") => Ok(&["rebase", "--continue"]),
-        ("cherry-pick", "继续") => Ok(&["cherry-pick", "--continue"]),
-        ("none", _) => Err("当前没有进行中的冲突操作".to_string()),
-        _ => Err(format!("不支持{action} {operation} 冲突")),
+        (RepoConflictOperation::Merge, "终止") => Ok(&["merge", "--abort"]),
+        (RepoConflictOperation::Rebase, "终止") => Ok(&["rebase", "--abort"]),
+        (RepoConflictOperation::CherryPick, "终止") => Ok(&["cherry-pick", "--abort"]),
+        (RepoConflictOperation::Merge, "继续") => Ok(&["commit", "--no-edit"]),
+        (RepoConflictOperation::Rebase, "继续") => Ok(&["rebase", "--continue"]),
+        (RepoConflictOperation::CherryPick, "继续") => Ok(&["cherry-pick", "--continue"]),
+        (RepoConflictOperation::None, _) => Err("当前没有进行中的冲突操作".to_string()),
+        (operation, _) => Err(format!("不支持{action} {} 冲突", operation.as_str())),
     }
 }
 
@@ -5075,9 +5046,11 @@ pub(super) fn resolve_remote_sync_config(
             .or_else(|| names.contains("origin").then(|| "origin".to_string()))
             .or_else(|| (remotes.len() == 1).then(|| remotes[0].name.clone()))
             .unwrap_or_default();
-        let selected = (!primary_remote.is_empty())
-            .then(|| vec![primary_remote.clone()])
-            .unwrap_or_default();
+        let selected = if primary_remote.is_empty() {
+            Vec::new()
+        } else {
+            vec![primary_remote.clone()]
+        };
         RepoRemoteSyncPolicy {
             primary_remote,
             pull_remotes: selected.clone(),
@@ -5120,7 +5093,7 @@ pub(super) fn require_valid_remote_sync_config(
     repo_id: &str,
     path: &Path,
 ) -> Result<RepoRemoteSyncConfig, String> {
-    let config = resolve_remote_sync_config(&load_settings(app), repo_id, path)?;
+    let config = resolve_remote_sync_config(&load_settings(app)?, repo_id, path)?;
     if config.validation_errors.is_empty() {
         Ok(config)
     } else {
@@ -5408,10 +5381,8 @@ pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
         rest
     } else if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
         rest
-    } else if let Some(rest) = trimmed.strip_prefix("ssh://git@github.com/") {
-        rest
     } else {
-        return None;
+        trimmed.strip_prefix("ssh://git@github.com/")?
     };
     let parts: Vec<_> = path.split('/').collect();
     if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {

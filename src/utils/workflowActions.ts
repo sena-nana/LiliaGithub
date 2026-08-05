@@ -4,6 +4,7 @@ import type {
   GitHubWorkflowRun,
 } from "../services/workspace/types";
 import { githubErrorCode, isGitHubBindingExpiredError } from "./githubErrors";
+import { errorMessage, workspaceErrorCategory } from "../services/workspace/errors";
 
 export interface WorkflowActionAvailability {
   available: boolean;
@@ -67,28 +68,29 @@ export function workflowRunWriteActionAvailability(
 
 function workflowActionErrorMessage(error: unknown, action: WorkflowRunWriteAction) {
   const code = githubErrorCode(error);
-  const message = String(error).replace(/^Error:\s*/, "").trim();
+  const category = workspaceErrorCategory(error);
+  const message = errorMessage(error);
   const actionLabel = action === "rerun" ? "重跑" : "取消";
 
-  if (code === "github_rate_limited" || /rate limit|请求频率|限流/i.test(message)) {
+  if (category === "rate-limit" || code === "github_rate_limited") {
     return "GitHub 请求暂时受限，请稍后重试。";
   }
-  if (code === "github_authentication_required" || isGitHubBindingExpiredError(error)) {
+  if (category === "authentication" || code === "github_authentication_required" || isGitHubBindingExpiredError(error)) {
     return "GitHub 账户授权已失效，请重新绑定后再试。";
   }
   if (code === "github_org_sso_required") {
     return "组织要求额外的 SSO 授权，请在 GitHub 完成授权后重试。";
   }
-  if (code === "github_forbidden" || /HTTP 403|forbidden|permission|权限/i.test(message)) {
+  if (category === "authorization" || code === "github_forbidden") {
     return `没有${actionLabel}权限。需要仓库写入权限和 GitHub Actions 写入权限。`;
   }
-  if (code === "github_repository_not_accessible" || /HTTP 404|not found|不存在/i.test(message)) {
+  if (category === "not-found" || code === "github_repository_not_accessible") {
     return "该运行已失效，刷新 Actions 后重试。";
   }
-  if (action === "cancel" && /HTTP 409|conflict|无法取消|cannot be cancelled/i.test(message)) {
+  if (action === "cancel" && category === "conflict") {
     return "GitHub 拒绝取消。该运行的状态可能已经改变，请刷新后重试。";
   }
-  if (action === "rerun" && /HTTP 409|HTTP 422|cannot be re-run|无法重跑/i.test(message)) {
+  if (action === "rerun" && (category === "conflict" || category === "validation")) {
     return "GitHub 拒绝重跑。该运行可能仍在执行、已过期或达到重跑上限。";
   }
   return message;

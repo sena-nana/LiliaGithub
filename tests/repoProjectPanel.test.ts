@@ -1,6 +1,6 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type MockedFunction } from "vitest";
 import { defineComponent, h, ref } from "vue";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import {
@@ -8,62 +8,13 @@ import {
   installContextMenu,
   selectContextMenuItem,
   useContextMenu,
-} from "../src/ui";
-import { startAuthFlow } from "../src/composables/workspace/auth";
-import { state } from "../src/composables/workspace/state";
-import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
+} from "@lilia/ui/composables";
 import {
-  createGitHubPullRequest,
-  createGitHubIssue,
-  createGitHubRelease,
-  attachGitHubWorkflowArtifactAsset,
-  deleteGitHubBranch,
-  deleteGitHubRepo,
-  deleteGitHubRelease,
-  deleteGitHubReleaseAsset,
-  getGitHubIssueDiscussion,
-  getGitHubIssueFilterMetadata,
-  getGitHubBranchProtection,
-  getGitHubPullRequest,
-  getGitHubRepoFilePreview,
-  getGitHubPullRequestDiscussion,
-  getGitHubReleaseByTag,
-  getGitHubRepoManagement,
-  getGitHubRepoRuleset,
-  getGitHubRepoSettingsSection,
-  getRepoCommitDetail,
-  getRepoFilePreview,
-  getRepoStorageStats,
-  getGitHubWorkflowArtifactFilePreview,
-  getGitHubWorkflowJobLog,
-  getGitHubWorkflowRunDetail,
-  listGitHubWorkflowArtifactFiles,
-  listGitHubPullRequestChecks,
-  listGitHubPullRequests,
-  listGitHubIssues,
-  listGitHubIssueAssignees,
-  listGitHubIssueLabels,
-  listGitHubRepoFiles,
-  listGitHubRepoRulesets,
-  listGitHubBranches,
-  listGitHubWorkflowRuns,
-  listGitHubReleases,
-  listRepoFiles,
-  mergeGitHubPullRequest,
-  openPathTarget,
-  openUrl,
-  pickFiles,
-  rerunFailedGitHubWorkflowRun,
-  rerunGitHubWorkflowJob,
-  updateGitHubIssue,
-  updateGitHubRelease,
-  updateGitHubBranchProtection,
-  updateGitHubRepoActionsPermissions,
-  updateGitHubRepoRuleset,
-  updateGitHubRepoWorkflowPermissions,
-  updateGitHubRepoSettings,
-  uploadGitHubReleaseAsset,
-} from "../src/services/workspace/client";
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
+import type { WorkspaceClient } from "../src/services/workspace/client";
 import type {
   CommitDetail,
   CommitSummary,
@@ -125,6 +76,185 @@ const localOpenTargetCases = [
   ["用 VSCode 打开", "vscode"],
   ["用 LiliaCode 打开", "liliacode"],
 ] as const;
+
+function createClientMethodMocks<const K extends keyof WorkspaceClient>(keys: readonly K[]) {
+  return Object.fromEntries(keys.map((key) => [key, vi.fn()])) as {
+    [P in K]: MockedFunction<Extract<WorkspaceClient[P], (...args: any[]) => any>>;
+  };
+}
+
+const clientMocks = createClientMethodMocks([
+  "createGitHubPullRequest",
+  "createGitHubIssue",
+  "createGitHubRelease",
+  "attachGitHubWorkflowArtifactAsset",
+  "deleteGitHubBranch",
+  "deleteGitHubRepo",
+  "deleteGitHubRelease",
+  "deleteGitHubReleaseAsset",
+  "getGitHubIssueDiscussion",
+  "getGitHubIssueFilterMetadata",
+  "getGitHubBranchProtection",
+  "getGitHubPullRequest",
+  "getGitHubRepoFilePreview",
+  "getGitHubPullRequestDiscussion",
+  "getGitHubReleaseByTag",
+  "getGitHubRepoManagement",
+  "getGitHubRepoRuleset",
+  "getGitHubRepoSettingsSection",
+  "getRepoCommitDetail",
+  "getRepoFilePreview",
+  "getRepoStorageStats",
+  "getGitHubWorkflowArtifactFilePreview",
+  "getGitHubWorkflowJobLog",
+  "getGitHubWorkflowRunDetail",
+  "listGitHubWorkflowArtifactFiles",
+  "listGitHubPullRequestChecks",
+  "listGitHubPullRequests",
+  "listGitHubIssues",
+  "listGitHubIssueAssignees",
+  "listGitHubIssueLabels",
+  "listGitHubRepoFiles",
+  "listGitHubRepoRulesets",
+  "listGitHubBranches",
+  "listGitHubWorkflowRuns",
+  "listGitHubReleases",
+  "listRepoFiles",
+  "mergeGitHubPullRequest",
+  "openPathTarget",
+  "openUrl",
+  "pickFiles",
+  "rerunFailedGitHubWorkflowRun",
+  "rerunGitHubWorkflowJob",
+  "updateGitHubIssue",
+  "updateGitHubRelease",
+  "updateGitHubBranchProtection",
+  "updateGitHubRepoActionsPermissions",
+  "updateGitHubRepoRuleset",
+  "updateGitHubRepoWorkflowPermissions",
+  "updateGitHubRepoSettings",
+  "uploadGitHubReleaseAsset",
+  "getPullRequestCodeReview",
+  "createPullRequestLineComment",
+  "replyPullRequestReviewThread",
+  "submitPullRequestCodeReview",
+] as const);
+
+const {
+  createGitHubPullRequest,
+  createGitHubIssue,
+  createGitHubRelease,
+  attachGitHubWorkflowArtifactAsset,
+  deleteGitHubBranch,
+  deleteGitHubRepo,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
+  getGitHubIssueDiscussion,
+  getGitHubIssueFilterMetadata,
+  getGitHubBranchProtection,
+  getGitHubPullRequest,
+  getGitHubRepoFilePreview,
+  getGitHubPullRequestDiscussion,
+  getGitHubReleaseByTag,
+  getGitHubRepoManagement,
+  getGitHubRepoRuleset,
+  getGitHubRepoSettingsSection,
+  getRepoCommitDetail,
+  getRepoFilePreview,
+  getRepoStorageStats,
+  getGitHubWorkflowArtifactFilePreview,
+  getGitHubWorkflowJobLog,
+  getGitHubWorkflowRunDetail,
+  listGitHubWorkflowArtifactFiles,
+  listGitHubPullRequestChecks,
+  listGitHubPullRequests,
+  listGitHubIssues,
+  listGitHubIssueAssignees,
+  listGitHubIssueLabels,
+  listGitHubRepoFiles,
+  listGitHubRepoRulesets,
+  listGitHubBranches,
+  listGitHubWorkflowRuns,
+  listGitHubReleases,
+  listRepoFiles,
+  mergeGitHubPullRequest,
+  openPathTarget,
+  openUrl,
+  pickFiles,
+  rerunFailedGitHubWorkflowRun,
+  rerunGitHubWorkflowJob,
+  updateGitHubIssue,
+  updateGitHubRelease,
+  updateGitHubBranchProtection,
+  updateGitHubRepoActionsPermissions,
+  updateGitHubRepoRuleset,
+  updateGitHubRepoWorkflowPermissions,
+  updateGitHubRepoSettings,
+  uploadGitHubReleaseAsset,
+  getPullRequestCodeReview,
+  createPullRequestLineComment,
+  replyPullRequestReviewThread,
+  submitPullRequestCodeReview,
+} = clientMocks;
+
+const workspace = createWorkspaceStoreFixture({
+  createGitHubPullRequest,
+  createGitHubIssue,
+  createGitHubRelease,
+  attachGitHubWorkflowArtifactAsset,
+  deleteGitHubBranch,
+  deleteGitHubRepo,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
+  getGitHubIssueDiscussion,
+  getGitHubIssueFilterMetadata,
+  getGitHubBranchProtection,
+  getGitHubPullRequest,
+  getGitHubRepoFilePreview,
+  getGitHubPullRequestDiscussion,
+  getGitHubReleaseByTag,
+  getGitHubRepoManagement,
+  getGitHubRepoRuleset,
+  getGitHubRepoSettingsSection,
+  getRepoCommitDetail,
+  getRepoFilePreview,
+  getRepoStorageStats,
+  getGitHubWorkflowArtifactFilePreview,
+  getGitHubWorkflowJobLog,
+  getGitHubWorkflowRunDetail,
+  listGitHubWorkflowArtifactFiles,
+  listGitHubPullRequestChecks,
+  listGitHubPullRequests,
+  listGitHubIssues,
+  listGitHubIssueAssignees,
+  listGitHubIssueLabels,
+  listGitHubRepoFiles,
+  listGitHubRepoRulesets,
+  listGitHubBranches,
+  listGitHubWorkflowRuns,
+  listGitHubReleases,
+  listRepoFiles,
+  mergeGitHubPullRequest,
+  openPathTarget,
+  openUrl,
+  pickFiles,
+  rerunFailedGitHubWorkflowRun,
+  rerunGitHubWorkflowJob,
+  updateGitHubIssue,
+  updateGitHubRelease,
+  updateGitHubBranchProtection,
+  updateGitHubRepoActionsPermissions,
+  updateGitHubRepoRuleset,
+  updateGitHubRepoWorkflowPermissions,
+  updateGitHubRepoSettings,
+  uploadGitHubReleaseAsset,
+  getPullRequestCodeReview,
+  createPullRequestLineComment,
+  replyPullRequestReviewThread,
+  submitPullRequestCodeReview,
+});
+const { state } = workspace.stateFeature;
+const startAuthFlow = vi.spyOn(workspace, "startAuthFlow");
 
 const githubIssues: GitHubIssue[] = [{
   number: 12,
@@ -646,118 +776,6 @@ async function expectTreeOpenTarget(row: HTMLElement, label: string, target: str
   });
 }
 
-const { getRepoCommitDetailMock } = vi.hoisted(() => ({
-  getRepoCommitDetailMock: vi.fn(),
-}));
-
-vi.mock("../src/services/workspace", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/services/workspace")>(),
-  getRepoCommitDetail: getRepoCommitDetailMock,
-}));
-
-vi.mock("../src/services/workspace/client", () => ({
-  createGitHubPullRequest: vi.fn(),
-  createGitHubIssue: vi.fn(),
-  createGitHubRelease: vi.fn(),
-  attachGitHubWorkflowArtifactAsset: vi.fn(),
-  deleteGitHubBranch: vi.fn(),
-  deleteGitHubRepo: vi.fn(),
-  deleteGitHubRelease: vi.fn(),
-  deleteGitHubReleaseAsset: vi.fn(),
-  getGitHubIssueDiscussion: vi.fn(),
-  getGitHubBranchProtection: vi.fn(),
-  getGitHubRepoFilePreview: vi.fn(),
-  getGitHubIssueFilterMetadata: vi.fn(),
-  getGitHubPullRequestDiscussion: vi.fn(),
-  getGitHubPullRequest: vi.fn(),
-  getGitHubReleaseByTag: vi.fn(),
-  getRepoCommitDetail: getRepoCommitDetailMock,
-  getGitHubRepoManagement: vi.fn(),
-  getGitHubRepoRuleset: vi.fn(),
-  getRepoFilePreview: vi.fn(),
-  getRepoStorageStats: vi.fn(),
-  listGitHubPullRequestChecks: vi.fn(),
-  listGitHubPullRequests: vi.fn(),
-  listGitHubIssues: vi.fn(),
-  listGitHubIssueAssignees: vi.fn(),
-  listGitHubIssueLabels: vi.fn(),
-  listGitHubRepoFiles: vi.fn(),
-  listGitHubRepoRulesets: vi.fn(),
-  listGitHubWorkflowRuns: vi.fn(),
-  listGitHubReleases: vi.fn(),
-  getGitHubWorkflowRunDetail: vi.fn(),
-  getGitHubWorkflowJobLog: vi.fn(),
-  rerunFailedGitHubWorkflowRun: vi.fn(),
-  rerunGitHubWorkflowJob: vi.fn(),
-  listGitHubWorkflowArtifactFiles: vi.fn(),
-  getGitHubWorkflowArtifactFilePreview: vi.fn(),
-  isGitHubBindingExpiredError: (err: unknown) => {
-    const message = String(err);
-    return message.includes("GitHub 绑定已失效") ||
-      message.includes("HTTP 401") ||
-      message.includes("HTTP 403") ||
-      message.toLowerCase().includes("bad credentials");
-  },
-  isConfirmedMissingResource: (err: unknown) => /404|not[ -]?found|不存在|已删除|未找到/i.test(String(err)),
-  mergeGitHubPullRequest: vi.fn(),
-  pickFiles: vi.fn(),
-  listRepoFiles: vi.fn(async () => []),
-  listGitHubBranches: vi.fn(async () => [{ name: "main", remote: true, current: false }]),
-  getGitHubRepoSettingsSection: vi.fn(),
-  openPath: vi.fn(),
-  openPathTarget: vi.fn(),
-  openUrl: vi.fn(),
-  updateGitHubIssue: vi.fn(),
-  updateGitHubRelease: vi.fn(),
-  updateGitHubBranchProtection: vi.fn(),
-  updateGitHubRepoActionsPermissions: vi.fn(),
-  updateGitHubRepoRuleset: vi.fn(),
-  updateGitHubRepoWorkflowPermissions: vi.fn(),
-  updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
-    ...githubSettings,
-    ...request,
-    description: request.description ?? githubSettings.description,
-    homepage: request.homepage ?? githubSettings.homepage,
-    topics: request.topics ? [...request.topics] : [...githubSettings.topics],
-  })),
-  uploadGitHubReleaseAsset: vi.fn(),
-}));
-
-vi.mock("../src/services/codeReview", () => ({
-  getPullRequestCodeReview: vi.fn(async () => ({
-    files: [],
-    reviews: [],
-    threads: [],
-    reviewDecision: "APPROVED",
-    mergeable: true,
-    mergeStateStatus: "CLEAN",
-    baseBranch: "main",
-    baseSha: "1234567890abcdef",
-    headSha: "abcdef1234567890",
-    branchProtection: {
-      available: true,
-      protected: false,
-      requiredApprovals: 0,
-      requireCodeOwnerReviews: false,
-      requiredStatusChecks: [],
-      enforceAdmins: false,
-      requireConversationResolution: false,
-      unavailableReason: null,
-    },
-  })),
-  createPullRequestLineComment: vi.fn(),
-  replyPullRequestReviewThread: vi.fn(),
-  submitPullRequestCodeReview: vi.fn(),
-}));
-
-vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/composables/workspace/auth")>();
-  return {
-    ...actual,
-    startAuthFlow: vi.fn(),
-  };
-});
-
 const launchConfig: ProjectLaunchConfig = {
   command: "yarn dev",
   cwd: null,
@@ -841,6 +859,7 @@ async function renderProjectPanel(
     },
     global: {
       plugins: [router, liliaContextMenuPlugin],
+      provide: provideWorkspaceStoreFixture(workspace),
     },
   });
   return {
@@ -864,6 +883,8 @@ function deferred<T>() {
 
 describe("RepoProjectPanel", () => {
   beforeEach(async () => {
+    workspace.stateFeature.resetWorkspaceStateForTests();
+    workspace.resetAuthRuntime();
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
@@ -907,6 +928,10 @@ describe("RepoProjectPanel", () => {
     vi.mocked(updateGitHubRepoWorkflowPermissions).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
     vi.mocked(uploadGitHubReleaseAsset).mockReset();
+    vi.mocked(getPullRequestCodeReview).mockReset();
+    vi.mocked(createPullRequestLineComment).mockReset();
+    vi.mocked(replyPullRequestReviewThread).mockReset();
+    vi.mocked(submitPullRequestCodeReview).mockReset();
     vi.mocked(createGitHubIssue).mockImplementation(async (_repoFullName, request) => ({
       number: 99,
       title: request.title,
@@ -1058,6 +1083,27 @@ describe("RepoProjectPanel", () => {
       { path: "README.md", name: "README.md", kind: "file", size: 42 },
     ]);
     vi.mocked(getGitHubWorkflowArtifactFilePreview).mockResolvedValue(filePreview("README.md", "# Artifact\n\nPreview."));
+    vi.mocked(getPullRequestCodeReview).mockResolvedValue({
+      files: [],
+      reviews: [],
+      threads: [],
+      reviewDecision: "APPROVED",
+      mergeable: true,
+      mergeStateStatus: "CLEAN",
+      baseBranch: "main",
+      baseSha: "1234567890abcdef",
+      headSha: "abcdef1234567890",
+      branchProtection: {
+        available: true,
+        protected: false,
+        requiredApprovals: 0,
+        requireCodeOwnerReviews: false,
+        requiredStatusChecks: [],
+        enforceAdmins: false,
+        requireConversationResolution: false,
+        unavailableReason: null,
+      },
+    });
     const workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.setFallbackGitHubCommitDetailsForTests({
       "sena-nana/remote-repo": {
@@ -1127,7 +1173,7 @@ describe("RepoProjectPanel", () => {
     expect(within(card).getByText("总代码行数")).toBeInTheDocument();
     expect(within(card).getByText("240")).toBeInTheDocument();
     expect(within(card).getByText("项目总大小")).toBeInTheDocument();
-    expect(within(card).getByText("12.0 MB")).toBeInTheDocument();
+    expect(await within(card).findByText("12.0 MB")).toBeInTheDocument();
     expect(getRepoStorageStats).toHaveBeenCalledTimes(1);
     expect(getRepoStorageStats).toHaveBeenCalledWith("local-repo");
     const bar = within(card).getByLabelText("代码语言占比");
@@ -1804,6 +1850,9 @@ describe("RepoProjectPanel", () => {
 
     const filterSidebar = view.getByRole("region", { name: "Release 筛选" });
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: "新建 Release" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release", create: "release" });
+    });
     const createForm = await view.findByRole("form", { name: "Release 表单" });
     await fireEvent.update(within(createForm).getByLabelText("Tag"), "v1.1.0");
     await fireEvent.update(within(createForm).getByLabelText("Target"), "main");
@@ -1855,12 +1904,14 @@ describe("RepoProjectPanel", () => {
         "C:\\Files\\release\\lilia.zip",
       );
     });
+    await within(releaseCardElement).findByText("lilia.zip");
+    await waitFor(() => expect(releaseActionsButton).toBeEnabled());
 
     const originalAssetRow = within(releaseCardElement).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
     expect(within(originalAssetRow).queryByRole("button", { name: "删除资产" })).toBeNull();
     await fireEvent.click(releaseActionsButton);
     const deleteAssetsItem = contextMenu.state.items.find((item) => item.label === "删除资产");
-    expect(deleteAssetsItem?.children).toHaveLength(3);
+    expect(deleteAssetsItem?.children).toHaveLength(4);
     await selectContextMenuItem(deleteAssetsItem!);
     const deleteAssetItem = contextMenu.state.items.find((item) => item.label === "lilia-windows.zip");
     expect(deleteAssetItem).toBeTruthy();
@@ -1871,6 +1922,7 @@ describe("RepoProjectPanel", () => {
       expect(deleteGitHubReleaseAsset).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, 9001);
     });
 
+    await waitFor(() => expect(releaseActionsButton).toBeEnabled());
     await fireEvent.click(releaseActionsButton);
     const editItem = contextMenu.state.items.find((item) => item.label === "编辑 Release");
     expect(editItem).toBeTruthy();
@@ -1885,6 +1937,7 @@ describe("RepoProjectPanel", () => {
       }));
     });
 
+    await waitFor(() => expect(releaseActionsButton).toBeEnabled());
     await fireEvent.click(releaseActionsButton);
     const deleteItem = contextMenu.state.items.find((item) => item.label === "删除 Release");
     expect(deleteItem).toBeTruthy();
@@ -2271,7 +2324,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByRole("button", { name: /release pipeline/ })).toBeInTheDocument();
     expect(view.getByLabelText("Actions 运行列表")).toHaveTextContent("release pipeline");
     expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
-    expect(view.getByText("Run tests")).toBeInTheDocument();
+    expect(await view.findByText("Run tests")).toBeInTheDocument();
     expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("button", { name: "查看日志" }));
@@ -2610,7 +2663,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("1 个 checks")).toBeInTheDocument();
     expect(view.getByText("ci / build")).toBeInTheDocument();
     expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
-    const pullSidebar = view.getByLabelText("Pull Requests 详情侧栏");
+    const pullSidebar = await view.findByLabelText("Pull Requests 详情侧栏");
     expect(pullSidebar).toHaveTextContent("PR #52");
     expect(pullSidebar).toHaveTextContent("打开");
     expect(pullSidebar).toHaveTextContent("mika · 待审阅");
@@ -2636,17 +2689,17 @@ describe("RepoProjectPanel", () => {
     });
     await view.refreshCurrentPage();
     await waitFor(() => {
-      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+      expect(listGitHubPullRequests).toHaveBeenCalledWith(
         "sena-nana/remote-repo",
         expect.objectContaining({ state: "open", sort: "number", direction: "desc" }),
         { forceRefresh: true },
       );
-      expect(getGitHubPullRequestDiscussion).toHaveBeenLastCalledWith(
+      expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith(
         "sena-nana/remote-repo",
         52,
         { forceRefresh: true },
       );
-      expect(listGitHubPullRequestChecks).toHaveBeenLastCalledWith(
+      expect(listGitHubPullRequestChecks).toHaveBeenCalledWith(
         "sena-nana/remote-repo",
         52,
         { forceRefresh: true },
@@ -3815,7 +3868,7 @@ describe("RepoProjectPanel", () => {
     const branchesCard = await view.findByRole("region", { name: "Branches" });
     const rulesCard = view.getByRole("region", { name: "Rulesets" });
     expect(await within(branchesCard).findByText("当前账号没有仓库管理权限，分支保护以只读方式显示。")).toBeInTheDocument();
-    expect(within(branchesCard).getByRole("spinbutton")).toBeDisabled();
+    expect(await within(branchesCard).findByRole("spinbutton")).toBeDisabled();
     expect((await within(rulesCard).findAllByText("Organization baseline")).length).toBeGreaterThanOrEqual(2);
     expect(await within(rulesCard).findByText("此规则集由上级范围提供，只能在来源位置修改。")).toBeInTheDocument();
     expect(within(rulesCard).getByRole("textbox", { name: "名称" })).toBeDisabled();
@@ -3851,7 +3904,7 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
     const dangerCard = await view.findByRole("region", { name: "危险操作" });
-    await fireEvent.click(within(dangerCard).getByRole("button", { name: "归档" }));
+    await fireEvent.click(await within(dangerCard).findByRole("button", { name: "归档" }));
 
     const dialog = await view.findByRole("dialog", { name: "归档 GitHub 仓库" });
     expect(within(dialog).getByRole("button", { name: /确认归档/ })).toBeDisabled();
@@ -3873,6 +3926,9 @@ describe("RepoProjectPanel", () => {
     const securityCard = await view.findByRole("region", { name: "Security" });
     await waitFor(() => {
       expect(within(securityCard).getByRole("switch", { name: "Secret scanning" })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(within(securityCard).getByRole("switch", { name: "Secret scanning" })).not.toBeDisabled();
     });
     await fireEvent.click(within(securityCard).getByRole("switch", { name: "Secret scanning" }));
 
@@ -3900,6 +3956,9 @@ describe("RepoProjectPanel", () => {
     const actionsCard = await view.findByRole("region", { name: "Actions" });
     await waitFor(() => {
       expect(within(actionsCard).getByRole("switch", { name: "Actions" })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(within(actionsCard).getByRole("switch", { name: "Actions" })).not.toBeDisabled();
     });
     await fireEvent.click(within(actionsCard).getByRole("switch", { name: "Actions" }));
 
@@ -3963,6 +4022,9 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(await view.findByRole("switch", { name: /Wiki/ }, { timeout: 5000 })).not.toBeChecked();
 
+    await waitFor(() => {
+      expect(view.getByRole("switch", { name: /Wiki/ })).not.toBeDisabled();
+    });
     await fireEvent.click(view.getByRole("switch", { name: /Wiki/ }));
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
     expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
@@ -3988,6 +4050,44 @@ describe("RepoProjectPanel", () => {
       expect(view.getByRole("switch", { name: /Wiki/ })).not.toBeChecked();
     });
     expect(view.queryByText("Old saved description")).toBeNull();
+  });
+
+  it("设置读取的迟到结果不会覆盖新仓库", async () => {
+    const oldSettings = deferred<GitHubRepoManagement>();
+    const nextSettings = {
+      ...githubSettings,
+      fullName: "sena-nana/next-repo",
+      name: "next-repo",
+      description: "Next repository tools",
+      htmlUrl: "https://github.com/sena-nana/next-repo",
+      hasWiki: true,
+    };
+    vi.mocked(getGitHubRepoManagement).mockImplementation((repoFullName) => (
+      repoFullName === "sena-nana/next-repo" ? Promise.resolve(nextSettings) : oldSettings.promise
+    ));
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await waitFor(() => {
+      expect(getGitHubRepoManagement).toHaveBeenCalledWith("sena-nana/remote-repo");
+    });
+
+    await view.rerender({
+      repoFullName: "sena-nana/next-repo",
+      projectTab: "settings",
+    });
+    const wikiSwitch = await view.findByRole("switch", { name: /Wiki/ });
+    await waitFor(() => expect(wikiSwitch).toBeChecked());
+
+    oldSettings.resolve({
+      ...githubSettings,
+      description: "Stale repository tools",
+      hasWiki: false,
+    });
+    await waitFor(() => expect(wikiSwitch).toBeChecked());
+    expect(view.queryByText("Stale repository tools")).toBeNull();
   });
 
   it("删除远端仓库请求返回后不会标记已切换仓库为删除状态", async () => {

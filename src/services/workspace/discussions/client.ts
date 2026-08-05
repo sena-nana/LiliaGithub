@@ -1,5 +1,4 @@
-import { call as callWorkspaceCommand } from "../client";
-import { createCachedAsyncModule } from "../../../utils/asyncModule";
+import type { WorkspaceClient } from "../client";
 import type {
   GitHubCreateRepositoryDiscussionRequest,
   GitHubRepositoryDiscussion,
@@ -16,19 +15,18 @@ import type {
   GitHubRepositoryDiscussionComment,
 } from "./types";
 
-const fallbackModule = createCachedAsyncModule(() => import("./fallback"));
-
 export function getGitHubRepositoryDiscussionMetadata(
+  client: WorkspaceClient,
   repoFullName: string,
 ): Promise<GitHubRepositoryDiscussionMetadata> {
-  return callWorkspaceCommand(
+  return client.call(
     "github_get_discussion_metadata",
     { repoFullName },
-    async () => (await fallbackModule.load()).getDiscussionMetadataFallback(),
   );
 }
 
 export function listGitHubRepositoryDiscussions(
+  client: WorkspaceClient,
   repoFullName: string,
   options: GitHubRepositoryDiscussionListOptions = {},
 ): Promise<GitHubRepositoryDiscussionPage> {
@@ -42,85 +40,78 @@ export function listGitHubRepositoryDiscussions(
     sort: options.sort ?? null,
     direction: options.direction ?? null,
   };
-  return callWorkspaceCommand(
+  return client.call(
     "github_list_discussions",
     args,
-    async () => (await fallbackModule.load()).listDiscussionsFallback(options),
   );
 }
 
 export function getGitHubRepositoryDiscussion(
+  client: WorkspaceClient,
   repoFullName: string,
   discussionNumber: number,
 ): Promise<GitHubRepositoryDiscussion> {
-  return callWorkspaceCommand(
+  return client.call(
     "github_get_discussion",
     { repoFullName, discussionNumber },
-    async () => (await fallbackModule.load()).getDiscussionFallback(discussionNumber),
   );
 }
 
 export function listGitHubRepositoryDiscussionComments(
+  client: WorkspaceClient,
   repoFullName: string,
   discussionNumber: number,
   options: GitHubRepositoryDiscussionPageOptions = {},
 ): Promise<GitHubRepositoryDiscussionCommentPage> {
-  return callWorkspaceCommand(
+  return client.call(
     "github_list_discussion_comments",
     { repoFullName, discussionNumber, first: options.first ?? null, after: options.after ?? null },
-    async () => (await fallbackModule.load()).listDiscussionCommentsFallback(discussionNumber, options),
   );
 }
 
 export function listGitHubRepositoryDiscussionCommentReplies(
+  client: WorkspaceClient,
   repoFullName: string,
   commentId: string,
   options: GitHubRepositoryDiscussionPageOptions = {},
 ): Promise<GitHubRepositoryDiscussionCommentPage> {
-  return callWorkspaceCommand(
+  return client.call(
     "github_list_discussion_comment_replies",
     { repoFullName, commentId, first: options.first ?? null, after: options.after ?? null },
-    async () => (await fallbackModule.load()).listDiscussionCommentRepliesFallback(commentId, options),
   );
 }
 
 export function createGitHubRepositoryDiscussion(
+  client: WorkspaceClient,
   repoFullName: string,
   request: GitHubCreateRepositoryDiscussionRequest,
 ): Promise<GitHubRepositoryDiscussion> {
-  return callWorkspaceCommand(
+  return client.call(
     "github_create_discussion",
     { repoFullName, request },
-    async () => (await fallbackModule.load()).createDiscussionFallback(repoFullName, request),
   );
 }
 
-export function createGitHubDiscussionComment(request: GitHubCreateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
-  return callWorkspaceCommand("github_create_discussion_comment", { request }, async () =>
-    (await fallbackModule.load()).createDiscussionCommentFallback(request));
+export function createGitHubDiscussionComment(client: WorkspaceClient, request: GitHubCreateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
+  return client.call("github_create_discussion_comment", { request });
 }
 
-export function updateGitHubDiscussionComment(request: GitHubUpdateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
-  return callWorkspaceCommand("github_update_discussion_comment", { request }, async () =>
-    (await fallbackModule.load()).updateDiscussionCommentFallback(request));
+export function updateGitHubDiscussionComment(client: WorkspaceClient, request: GitHubUpdateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
+  return client.call("github_update_discussion_comment", { request });
 }
 
-export function deleteGitHubDiscussionComment(commentId: string): Promise<void> {
-  return callWorkspaceCommand("github_delete_discussion_comment", { commentId }, async () =>
-    (await fallbackModule.load()).deleteDiscussionCommentFallback(commentId));
+export function deleteGitHubDiscussionComment(client: WorkspaceClient, commentId: string): Promise<void> {
+  return client.call("github_delete_discussion_comment", { commentId });
 }
 
-export function updateGitHubDiscussionReaction(request: GitHubDiscussionReactionRequest): Promise<void> {
-  return callWorkspaceCommand("github_update_discussion_reaction", { request }, async () =>
-    (await fallbackModule.load()).updateDiscussionReactionFallback(request));
+export function updateGitHubDiscussionReaction(client: WorkspaceClient, request: GitHubDiscussionReactionRequest): Promise<void> {
+  return client.call("github_update_discussion_reaction", { request });
 }
 
-export function updateGitHubDiscussionState(request: GitHubDiscussionStateRequest): Promise<void> {
-  return callWorkspaceCommand("github_update_discussion_state", { request }, async () =>
-    (await fallbackModule.load()).updateDiscussionStateFallback(request));
+export function updateGitHubDiscussionState(client: WorkspaceClient, request: GitHubDiscussionStateRequest): Promise<void> {
+  return client.call("github_update_discussion_state", { request });
 }
 
-export function updateGitHubDiscussionAnswer(request: GitHubDiscussionAnswerRequest): Promise<void> {
-  return callWorkspaceCommand("github_update_discussion_answer", { request }, async () =>
-    (await fallbackModule.load()).updateDiscussionAnswerFallback(request));
+export function updateGitHubDiscussionAnswer(client: WorkspaceClient, request: GitHubDiscussionAnswerRequest): Promise<void> {
+  return client.call("github_update_discussion_answer", { request });
 }

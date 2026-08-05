@@ -3,41 +3,29 @@ import { createMemoryHistory, createRouter, RouterView } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Organization from "../src/pages/Organization.vue";
 import type {
+  GitHubBinding,
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubRepoSummary,
 } from "../src/services/workspace";
-import { repoSummary } from "./fixtures/workspace";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
+import { repoSummary, workspaceSettings } from "./fixtures/workspace";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
-const { workspace } = vi.hoisted(() => ({
-  workspace: {
-    state: {
-      repos: [] as ReturnType<typeof repoSummary>[],
-    },
-    githubBinding: {
-      value: null as null | {
-        login: string;
-        avatarUrl: string | null;
-        scopes: string[];
-        boundAt: string;
-      },
-    },
-    rememberRemoteRepo: vi.fn(async () => undefined),
-    openUrl: vi.fn(async () => undefined),
-    getOrganizationOverview: vi.fn(),
-    getOrganizationProfile: vi.fn(),
-  },
-}));
+const getGitHubOrganizationOverview = vi.fn();
+const getGitHubOrganizationProfile = vi.fn();
+const rememberRemoteRepo = vi.fn(async () => undefined);
+const openUrl = vi.fn(async () => undefined);
+let workspace: WorkspaceStore;
 
-vi.mock("../src/composables/useWorkspace", async () => {
-  const { reactive, ref } = await vi.importActual<typeof import("vue")>("vue");
-  workspace.state = reactive(workspace.state);
-  workspace.githubBinding = ref(workspace.githubBinding.value);
-  return { useWorkspace: () => workspace };
-});
-
-const getGitHubOrganizationOverview = workspace.getOrganizationOverview;
-const getGitHubOrganizationProfile = workspace.getOrganizationProfile;
+function setBinding(binding: GitHubBinding | null) {
+  workspace.stateFeature.state.bindingStatus = binding
+    ? { state: "bound", binding }
+    : { state: "unbound", binding: null };
+}
 
 function githubRepository(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
   const [ownerLogin = "", name = fullName] = fullName.split("/");
@@ -147,7 +135,12 @@ async function renderOrganization(path = "/organizations/alpha-org") {
   await router.push(path);
   await router.isReady();
   return {
-    ...render(RouterView, { global: { plugins: [router] } }),
+    ...render(RouterView, {
+      global: {
+        plugins: [router],
+        provide: provideWorkspaceStoreFixture(workspace),
+      },
+    }),
     router,
   };
 }
@@ -155,13 +148,21 @@ async function renderOrganization(path = "/organizations/alpha-org") {
 describe("GitHub 风格组织页", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    workspace.state.repos = [];
-    workspace.githubBinding.value = {
+    workspace = createWorkspaceStoreFixture({
+      getGitHubOrganizationOverview,
+      getGitHubOrganizationProfile,
+      rememberRemoteRepo,
+      openUrl,
+    });
+    workspace.stateFeature.state.settings = workspaceSettings();
+    rememberRemoteRepo.mockResolvedValue(workspace.stateFeature.state.settings);
+    workspace.stateFeature.state.repos = [];
+    setBinding({
       login: "octocat",
       avatarUrl: null,
       scopes: ["repo", "read:org"],
       boundAt: "2026-07-15T00:00:00Z",
-    };
+    });
     getGitHubOrganizationProfile.mockResolvedValue(organizationProfile());
     getGitHubOrganizationOverview.mockResolvedValue(organizationOverview());
   });
@@ -174,7 +175,7 @@ describe("GitHub 风格组织页", () => {
 
     const githubProfileButton = await screen.findByRole("button", { name: "在 GitHub 查看" });
     await fireEvent.click(githubProfileButton);
-    expect(workspace.openUrl).toHaveBeenCalledWith("https://github.com/alpha-org");
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/alpha-org");
     expect(screen.getByText("Verified")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
     expect(view.container.querySelector("script")).toBeNull();
@@ -187,7 +188,7 @@ describe("GitHub 风格组织页", () => {
     await fireEvent.click(screen.getByRole("link", { name: "指南" }));
     const linkToolbar = await screen.findByRole("toolbar", { name: "链接操作" });
     await fireEvent.click(within(linkToolbar).getByRole("button", { name: "打开" }));
-    expect(workspace.openUrl).toHaveBeenCalledWith(
+    expect(openUrl).toHaveBeenCalledWith(
       "https://github.com/alpha-org/.github-private/blob/main/profile/docs/guide.md",
     );
 
@@ -196,11 +197,11 @@ describe("GitHub 风格组织页", () => {
     expect(screen.getByRole("button", { name: "Public" })).toHaveClass("is-active");
 
     await fireEvent.click(screen.getByRole("button", { name: /Octo Cat/ }));
-    expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/octocat");
+    expect(openUrl).toHaveBeenLastCalledWith("https://github.com/octocat");
 
     await fireEvent.click(screen.getByRole("button", { name: /Featured/ }));
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Aalpha-org%2FFeatured"));
-    expect(workspace.rememberRemoteRepo).toHaveBeenCalledWith(expect.objectContaining({ fullName: "alpha-org/Featured" }));
+    expect(rememberRemoteRepo).toHaveBeenCalledWith(expect.objectContaining({ fullName: "alpha-org/Featured" }));
   });
 
   it("Overview 各区块独立呈现不可用和空状态，且不泄漏技术错误", async () => {
@@ -232,15 +233,15 @@ describe("GitHub 风格组织页", () => {
     await view.router.push("/organizations/beta-org");
     const githubProfileButton = await screen.findByRole("button", { name: "在 GitHub 查看" });
     await fireEvent.click(githubProfileButton);
-    expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
+    expect(openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
     staleProfile.resolve(organizationProfile("alpha-org", { name: "Stale Org" }));
     await Promise.resolve();
     await fireEvent.click(githubProfileButton);
-    expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
+    expect(openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
   });
 
   it("未绑定时不发请求并进入账户设置", async () => {
-    workspace.githubBinding.value = null;
+    setBinding(null);
     const view = await renderOrganization();
     await fireEvent.click(screen.getByRole("link", { name: "前往账户设置" }));
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=account"));

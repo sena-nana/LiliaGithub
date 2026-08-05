@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { RouterLink, useRoute, useRouter } from "vue-router";
-import { computed, nextTick, onUnmounted, ref, shallowRef, watch, type Component } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import type { SurfaceProps } from "@lilia/ui-contract";
 import {
   ArrowDownAZ,
@@ -18,24 +18,18 @@ import {
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
-import {
-  bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
-  repoSyncIssuesByRepoId,
-  type RepoSyncIssueDisplay,
-} from "../composables/workspace/state";
+import type { RepoSyncIssueDisplay } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
-import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
+import { LiliaSidebarNavRow } from "@lilia/ui/shell/sidebar";
+import { LiliaSidebarFrame } from "@lilia/ui/shell";
+import { SidebarCollapse, UiButton, UiDialog } from "@lilia/ui";
 import {
-  LiliaSidebarFrame,
-  SidebarCollapse,
-  UiButton,
-  UiDialog,
   openContextMenuAt,
   type ContextMenuItem,
   type ContextMenuProvider,
-} from "../ui";
+} from "@lilia/ui/composables";
 import { repoRoute } from "../utils/repoRoutes";
 import {
   repoConflictContinuationMessage,
@@ -48,19 +42,9 @@ import {
   type FavoriteRepositoryEntry,
 } from "../utils/repoFavorites";
 import { githubRepositoryIdentityKey, parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
-import {
-  type GitHubRepoOwner,
-  type RepoSummary,
-} from "../services/workspace";
+import { type RepoSummary } from "../services/workspace";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
-import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
-import {
-  githubOrganizationAccessLimited,
-  githubOrganizationAccessMessage,
-  githubOrganizationAccessRecovery,
-  githubOrganizationOwners,
-  githubUserFacingError,
-} from "../utils/githubRepositoryScope";
+import { useSecondaryPanelOrganizationsController } from "../composables/sidebar/useSecondaryPanelOrganizationsController";
 import {
   DEFAULT_REPO_SORT,
   compareRepoSortItems,
@@ -84,11 +68,14 @@ const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 const componentEpoch = useComponentEpoch();
-const githubOwnersLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
-const organizationGroupsLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
-const githubOwners = ref<GitHubRepoOwner[]>([]);
-const githubOwnersLoading = ref(false);
-const githubOwnersError = ref<string | null>(null);
+const organizationController = useSecondaryPanelOrganizationsController(workspace, componentEpoch);
+const githubOwnersLoading = organizationController.loading;
+const githubOwnersError = organizationController.error;
+const githubOrganizationVisibilityLimited = organizationController.visibilityLimited;
+const githubOrganizationRecovery = organizationController.recovery;
+const githubOrganizationVisibilityMessage = organizationController.visibilityMessage;
+const githubOrganizations = organizationController.organizations;
+const loadSidebarGitHubOwners = organizationController.load;
 const createGroupBusy = ref(false);
 const collapsedGroupIds = ref<Set<string>>(new Set());
 const editingGroupId = ref<string | null>(null);
@@ -188,13 +175,6 @@ const footerStatus = computed(() => {
     icon: GitPullRequestArrow,
   };
 });
-const githubOrganizationVisibilityLimited = computed(() =>
-  githubOrganizationAccessLimited(workspace.githubBinding.value?.scopes, githubOwners.value),
-);
-const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(githubOwners.value));
-const githubOrganizationVisibilityMessage = computed(() => githubOrganizationAccessMessage(githubOwners.value));
-const githubOrganizations = computed(() => githubOrganizationOwners(githubOwners.value));
-const githubOrganizationLogins = computed(() => githubOrganizations.value.map((owner) => owner.login));
 const footerAccountMenu = computed(() => {
   const binding = workspace.githubBinding.value;
   if (!workspace.isAuthorized.value || !binding) return null;
@@ -210,31 +190,6 @@ const footerAccountMenu = computed(() => {
   };
 });
 
-async function reconcileOrganizationRepoGroups() {
-  if (!githubOrganizationLogins.value.length || !workspace.state.settings?.managedRepoIds.length) return;
-  await organizationGroupsLoader.run("organization-repo-groups", async () => {
-    await workspace.reconcileOrganizationRepoGroups([...githubOrganizationLogins.value]);
-  });
-}
-
-async function loadSidebarGitHubOwners(opts: { force?: boolean } = {}) {
-  if (!workspace.isAuthorized.value) return;
-  await githubOwnersLoader.run(`sidebar-github-owners:${opts.force ? "force" : "cache"}`, async (runId) => {
-    githubOwnersLoading.value = true;
-    githubOwnersError.value = null;
-    try {
-      const owners = await workspace.getAccountRepositoryOwners(opts);
-      if (!githubOwnersLoader.isCurrent(runId)) return;
-      githubOwners.value = owners;
-    } catch (err) {
-      if (!githubOwnersLoader.isCurrent(runId)) return;
-      githubOwnersError.value = `账号与组织加载失败：${githubUserFacingError(err)}`;
-    } finally {
-      if (githubOwnersLoader.isCurrent(runId)) githubOwnersLoading.value = false;
-    }
-  });
-}
-
 async function openSidebarOrganizationAuthorization(recoveryUrl: string | null = null) {
   const url = recoveryUrl ?? githubOrganizationRecovery.value.url;
   if (url) {
@@ -244,52 +199,19 @@ async function openSidebarOrganizationAuthorization(recoveryUrl: string | null =
   await router.push({ path: "/settings", query: { tab: "account" } });
 }
 
-watch(
-  () => [
-    workspace.isAuthorized.value,
-    workspace.githubBinding.value?.login,
-    workspace.githubBinding.value?.boundAt,
-    [...(workspace.githubBinding.value?.scopes ?? [])].sort().join(" "),
-  ] as const,
-  ([authorized]) => {
-    githubOwnersLoader.invalidate();
-    githubOwners.value = [];
-    githubOwnersError.value = null;
-    githubOwnersLoading.value = false;
-    if (authorized) void loadSidebarGitHubOwners();
-  },
-  { immediate: true },
-);
-
-watch(
-  () => [
-    githubOrganizationLogins.value.map((login) => login.toLocaleLowerCase()).sort().join("\n"),
-    workspace.state.repoListChange.revision,
-  ] as const,
-  ([organizationKey]) => {
-    if (organizationKey) void reconcileOrganizationRepoGroups().catch(() => undefined);
-  },
-  { immediate: true },
-);
-
-onUnmounted(() => {
-  githubOwnersLoader.invalidate();
-  organizationGroupsLoader.invalidate();
-});
-
 function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
 
 const bulkSyncRunningRepoIds = computed(() => {
-  return getBulkSyncRunningRepoIds();
+  return workspace.stateFeature.bulkSyncRunningRepoIds();
 });
 const refreshingRepoIds = computed(() => new Set(
   workspace.state.tasks
     .filter((task) => task.kind === "repoStatus" && (task.status === "pending" || task.status === "running"))
     .flatMap((task) => task.repoId ? [task.repoId] : []),
 ));
-const syncIssueByRepoId = computed(() => repoSyncIssuesByRepoId());
+const syncIssueByRepoId = computed(() => workspace.stateFeature.repoSyncIssuesByRepoId());
 
 type RepoIssue = RepoSyncIssueDisplay;
 const CONFLICT_REPO_ISSUE: RepoIssue = {
@@ -966,19 +888,12 @@ async function deleteGroup(group: { id: string }) {
     <template #top>
       <div class="sb-section">
         <nav class="sb-tree" aria-label="主导航">
-          <RouterLink
+          <LiliaSidebarNavRow
             v-for="item in SIDEBAR_NAV"
             :key="item.label"
-            :to="item.to ?? '/'"
-            class="sb-tree__row"
-            :data-agent-id="`sidebar.nav.${item.label}`"
-            exact-active-class="is-active"
-            :aria-disabled="item.disabled ? 'true' : undefined"
-          >
-            <component :is="item.icon" :size="14" aria-hidden="true" />
-            <span class="sb-tree__name">{{ item.label }}</span>
-            <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
-          </RouterLink>
+            :item="item"
+            :agent-id="`sidebar.nav.${item.label}`"
+          />
         </nav>
       </div>
     </template>
@@ -1302,7 +1217,7 @@ async function deleteGroup(group: { id: string }) {
 }
 
 .sb-move-dialog__error {
-  color: var(--danger, #c23);
+  color: var(--err);
 }
 
 .sb-move-dialog__actions {

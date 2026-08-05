@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { isCurrentWorkspaceContext, state } from "./state";
+import type { WorkspaceStateFeature } from "./state";
 import type { ProjectLaunchStatus } from "../../services/workspace";
 
 export const REPO_LAUNCH_STATUS_EVENT = "repo-launch-status";
@@ -15,29 +15,37 @@ function isLaunchStatus(value: unknown): value is ProjectLaunchStatus {
   );
 }
 
-export function applyLaunchStatusEvent(payload: unknown) {
-  if (!isLaunchStatus(payload)) return;
-  if (!isCurrentWorkspaceContext(payload)) return;
-  state.launchStatuses[payload.repoId] = payload;
+export function createWorkspaceLaunchEventsFeature(
+  { isCurrentWorkspaceContext, state }: Pick<WorkspaceStateFeature, "isCurrentWorkspaceContext" | "state">,
+) {
+  function applyLaunchStatusEvent(payload: unknown) {
+    if (!isLaunchStatus(payload)) return;
+    if (!isCurrentWorkspaceContext(payload)) return;
+    state.launchStatuses[payload.repoId] = payload;
+  }
+
+  async function installLaunchStatusEvents(): Promise<() => void> {
+    const cleanups = [installBrowserLaunchStatusEvent()];
+    const tauriCleanup = await listen<ProjectLaunchStatus>(REPO_LAUNCH_STATUS_EVENT, (event) => {
+      applyLaunchStatusEvent(event.payload);
+    }).catch(() => null);
+    if (tauriCleanup) cleanups.push(tauriCleanup);
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }
+
+  function installBrowserLaunchStatusEvent() {
+    if (typeof window === "undefined") return () => undefined;
+
+    const onStatus = (event: Event) => {
+      applyLaunchStatusEvent((event as CustomEvent<unknown>).detail);
+    };
+    window.addEventListener(REPO_LAUNCH_STATUS_EVENT, onStatus);
+    return () => {
+      window.removeEventListener(REPO_LAUNCH_STATUS_EVENT, onStatus);
+    };
+  }
+
+  return { applyLaunchStatusEvent, installLaunchStatusEvents };
 }
 
-export async function installLaunchStatusEvents(): Promise<() => void> {
-  const cleanups = [installBrowserLaunchStatusEvent()];
-  const tauriCleanup = await listen<ProjectLaunchStatus>(REPO_LAUNCH_STATUS_EVENT, (event) => {
-    applyLaunchStatusEvent(event.payload);
-  }).catch(() => null);
-  if (tauriCleanup) cleanups.push(tauriCleanup);
-  return () => cleanups.forEach((cleanup) => cleanup());
-}
-
-function installBrowserLaunchStatusEvent() {
-  if (typeof window === "undefined") return () => undefined;
-
-  const onStatus = (event: Event) => {
-    applyLaunchStatusEvent((event as CustomEvent<unknown>).detail);
-  };
-  window.addEventListener(REPO_LAUNCH_STATUS_EVENT, onStatus);
-  return () => {
-    window.removeEventListener(REPO_LAUNCH_STATUS_EVENT, onStatus);
-  };
-}
+export type WorkspaceLaunchEventsFeature = ReturnType<typeof createWorkspaceLaunchEventsFeature>;

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createDefaultWorkspaceTransport,
+  createWorkspaceClient,
+  workspaceFallbackForTests,
+} from "../src/services/workspace/client";
+
+const workspaceClient = createWorkspaceClient(createDefaultWorkspaceTransport());
+const {
   attachGitHubWorkflowArtifactAsset,
   cancelGitHubWorkflowRun,
   clearGitHubRepoCache,
@@ -38,8 +45,7 @@ import {
   updateGitHubRelease,
   updateGitHubRepoSettings,
   uploadGitHubReleaseAsset,
-  workspaceFallbackForTests,
-} from "../src/services/workspace/client";
+} = workspaceClient;
 import type {
   BranchSummary,
   CommitDetail,

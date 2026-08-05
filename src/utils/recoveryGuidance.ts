@@ -1,3 +1,5 @@
+import { workspaceErrorCategory } from "../services/workspace/errors";
+
 export type RecoveryGuidanceTone = "info" | "warn" | "danger";
 
 export interface RecoveryGuidance {
@@ -6,6 +8,20 @@ export interface RecoveryGuidance {
   summary: string;
   steps: string[];
 }
+
+const AUTH_GUIDANCE: RecoveryGuidance = {
+  title: "认证或权限失效",
+  tone: "danger",
+  summary: "GitHub 凭证失效、权限不足或当前账号无法访问该仓库。",
+  steps: ["重新绑定 GitHub", "检查仓库访问权限和 token scope", "处理权限后重新执行同步"],
+};
+
+const REMOTE_NOT_FOUND_GUIDANCE: RecoveryGuidance = {
+  title: "认证或权限失效",
+  tone: "danger",
+  summary: "当前账号无法访问远端仓库，或远端仓库已不存在。",
+  steps: ["确认远端仓库地址", "重新绑定有访问权限的 GitHub 账号", "刷新仓库状态后重新同步"],
+};
 
 const guidanceRules: Array<{
   match: RegExp;
@@ -40,21 +56,11 @@ const guidanceRules: Array<{
   },
   {
     match: /认证|权限|permission|auth|403|401|credential|token/i,
-    guidance: {
-      title: "认证或权限失效",
-      tone: "danger",
-      summary: "GitHub 凭证失效、权限不足或当前账号无法访问该仓库。",
-      steps: ["重新绑定 GitHub", "检查仓库访问权限和 token scope", "处理权限后重新执行同步"],
-    },
+    guidance: AUTH_GUIDANCE,
   },
   {
     match: /repository not found|仓库不存在|无法访问 GitHub 仓库/i,
-    guidance: {
-      title: "认证或权限失效",
-      tone: "danger",
-      summary: "当前账号无法访问远端仓库，或远端仓库已不存在。",
-      steps: ["确认远端仓库地址", "重新绑定有访问权限的 GitHub 账号", "刷新仓库状态后重新同步"],
-    },
+    guidance: REMOTE_NOT_FOUND_GUIDANCE,
   },
   {
     match: /origin remote|remote ['"]?origin['"]? not|没有 origin|no such remote/i,
@@ -89,8 +95,11 @@ export function isFastForwardPullFailure(message: string | null | undefined): bo
   return /Not possible to fast-forward|Diverging branches|无法快进/i.test(message?.trim() ?? "");
 }
 
-export function recoveryGuidanceForMessage(message: string | null | undefined): RecoveryGuidance {
-  const normalized = message?.trim() ?? "";
+export function recoveryGuidanceForMessage(message: unknown): RecoveryGuidance {
+  const category = workspaceErrorCategory(message);
+  if (category === "authentication" || category === "authorization") return AUTH_GUIDANCE;
+  if (category === "not-found") return REMOTE_NOT_FOUND_GUIDANCE;
+  const normalized = typeof message === "string" ? message.trim() : "";
   for (const rule of guidanceRules) {
     if (rule.match.test(normalized)) return rule.guidance;
   }

@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  resetWorkspaceFallbacksForTests,
+  workspaceFallbackForTests,
+} from "../src/services/workspace";
+import { createDefaultWorkspaceTransport, createWorkspaceClient } from "../src/services/workspace/client";
+import { REQUIRED_GITHUB_AUTH_SCOPES } from "../src/services/workspace/authScopes";
+import type { AccountPreferences, GitHubBindingStatus } from "../src/services/workspace";
+
+type WorkspaceFallback = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let fallback: WorkspaceFallback;
+const {
   addWorkspaceRoot,
   createLocalRepo,
   createWorkspace,
@@ -11,7 +21,6 @@ import {
   getWorkspaceSettings,
   pollGitHubDeviceFlow,
   renameWorkspace,
-  resetWorkspaceFallbacksForTests,
   setContributionIdentities,
   startGitHubDeviceFlow,
   switchWorkspace,
@@ -20,13 +29,7 @@ import {
   updateWorkspaceRecentContext,
   updateWorkspaceViewPreferences,
   updateGitHubAccountProfile,
-  workspaceFallbackForTests,
-} from "../src/services/workspace";
-import { REQUIRED_GITHUB_AUTH_SCOPES } from "../src/services/workspace/authScopes";
-import type { AccountPreferences, GitHubBindingStatus } from "../src/services/workspace";
-
-type WorkspaceFallback = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
-let fallback: WorkspaceFallback;
+} = createWorkspaceClient(createDefaultWorkspaceTransport());
 
 function binding(login: string, scopes: string[] = ["repo"]): GitHubBindingStatus {
   return {

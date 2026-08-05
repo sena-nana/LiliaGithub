@@ -92,13 +92,13 @@ const rustDependencies = computed(() => manifest?.rustDependencies ?? []);
 
 .about-license-fallback {
   margin: 0 0 8px;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
 .about-license-empty {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .about-license-list {

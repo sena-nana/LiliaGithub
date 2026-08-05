@@ -1,10 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  createWorkspaceClientCache,
   GITHUB_PROJECT_CACHE_LIMITS,
-  cachedWorkspaceRead,
-  clearGitHubRepoCache,
-  githubProjectCache,
-  githubProjectRepoCache,
   githubProjectRepoKey,
 } from "../src/services/workspace/cache";
 import type { RepoFilePreview } from "../src/services/workspace/types";
@@ -21,28 +18,25 @@ function preview(path: string, content: string): RepoFilePreview {
 }
 
 describe("GitHub project client cache LRU", () => {
-  beforeEach(() => {
-    clearGitHubRepoCache();
-  });
-
   it("keeps eight recently used repositories and evicts the oldest", () => {
+    const cache = createWorkspaceClientCache();
     for (let index = 0; index < 20; index += 1) {
-      githubProjectRepoCache(`owner/repo-${index}`);
+      cache.githubProjectRepoCache(`owner/repo-${index}`);
     }
 
-    githubProjectRepoCache("owner/repo-12");
-    githubProjectRepoCache("owner/repo-next");
+    cache.githubProjectRepoCache("owner/repo-12");
+    cache.githubProjectRepoCache("owner/repo-next");
 
-    expect(githubProjectCache).toHaveLength(GITHUB_PROJECT_CACHE_LIMITS.repos);
-    expect(githubProjectCache.has(githubProjectRepoKey("owner/repo-11"))).toBe(false);
-    expect(githubProjectCache.has(githubProjectRepoKey("owner/repo-12"))).toBe(true);
-    expect(githubProjectCache.has(githubProjectRepoKey("owner/repo-13"))).toBe(false);
-    expect(githubProjectCache.has(githubProjectRepoKey("owner/repo-19"))).toBe(true);
-    expect(githubProjectCache.has(githubProjectRepoKey("owner/repo-next"))).toBe(true);
+    expect(cache.githubProjectCache).toHaveLength(GITHUB_PROJECT_CACHE_LIMITS.repos);
+    expect(cache.githubProjectCache.has(githubProjectRepoKey("owner/repo-11"))).toBe(false);
+    expect(cache.githubProjectCache.has(githubProjectRepoKey("owner/repo-12"))).toBe(true);
+    expect(cache.githubProjectCache.has(githubProjectRepoKey("owner/repo-13"))).toBe(false);
+    expect(cache.githubProjectCache.has(githubProjectRepoKey("owner/repo-19"))).toBe(true);
+    expect(cache.githubProjectCache.has(githubProjectRepoKey("owner/repo-next"))).toBe(true);
   });
 
   it("keeps twelve recently used query keys in each collection", () => {
-    const cache = githubProjectRepoCache("owner/query-cache");
+    const cache = createWorkspaceClientCache().githubProjectRepoCache("owner/query-cache");
     for (let index = 0; index < GITHUB_PROJECT_CACHE_LIMITS.collectionEntries; index += 1) {
       cache.issues[`query-${index}`] = [];
     }
@@ -57,7 +51,7 @@ describe("GitHub project client cache LRU", () => {
   });
 
   it("shares the heavy byte budget across previews, artifact previews, and job logs", () => {
-    const cache = githubProjectRepoCache("owner/heavy-cache");
+    const cache = createWorkspaceClientCache().githubProjectRepoCache("owner/heavy-cache");
     const sixMiB = "x".repeat(6 * 1024 * 1024);
 
     cache.filePreviews["README.md"] = preview("README.md", sixMiB);
@@ -70,17 +64,18 @@ describe("GitHub project client cache LRU", () => {
   });
 
   it("keeps pending request deduplication independent from repository eviction", async () => {
+    const cache = createWorkspaceClientCache();
     let resolveRequest!: (value: string) => void;
-    const pending = cachedWorkspaceRead("test_project_cache", { key: 1 }, () =>
+    const pending = cache.cachedWorkspaceRead("test_project_cache", { key: 1 }, () =>
       new Promise<string>((resolve) => {
         resolveRequest = resolve;
       })
     );
 
     for (let index = 0; index <= GITHUB_PROJECT_CACHE_LIMITS.repos; index += 1) {
-      githubProjectRepoCache(`owner/pending-${index}`);
+      cache.githubProjectRepoCache(`owner/pending-${index}`);
     }
-    const deduplicated = cachedWorkspaceRead("test_project_cache", { key: 1 }, () =>
+    const deduplicated = cache.cachedWorkspaceRead("test_project_cache", { key: 1 }, () =>
       Promise.resolve("unexpected")
     );
     resolveRequest("done");

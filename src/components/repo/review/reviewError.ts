@@ -1,17 +1,16 @@
-function rawMessage(reason: unknown) {
-  return String(reason).replace(/^Error:\s*/, "").trim();
-}
+import { errorMessage, workspaceErrorCategory } from "../../../services/workspace/errors";
 
 export function codeReviewErrorMessage(reason: unknown, options: { draftPreserved?: boolean } = {}) {
-  const message = rawMessage(reason) || "操作失败，请重试。";
+  const message = errorMessage(reason) || "操作失败，请重试。";
+  const category = workspaceErrorCategory(reason);
   const preserved = options.draftPreserved ? "草稿已保留；" : "";
-  if (/\b(?:401|403)\b|bad credentials|forbidden|scope|resource not accessible|无权|权限|授权/i.test(message)) {
+  if (category === "authentication" || category === "authorization") {
     return `当前 GitHub 授权不允许此操作，${preserved}请重新绑定并授予仓库写入权限。`;
   }
-  if (/network|fetch|timed?\s*out|timeout|connection|dns|offline|离线|网络|连接/i.test(message)) {
+  if (category === "network" || category === "rate-limit") {
     return `暂时无法连接 GitHub，${preserved}请检查网络后重试。`;
   }
-  if (/\b(?:404|409|422)\b|not found|unprocessable|outdated|不存在|已失效|已变化|commit.*(?:invalid|missing)|line.*invalid/i.test(message)) {
+  if (category === "not-found" || category === "conflict" || category === "validation") {
     return `Review 上下文已经变化或不存在，${preserved}请刷新后重试。`;
   }
   return message;

@@ -1,19 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle, RotateCw, Save, Trash2 } from "@lucide/vue";
-import { SettingsRow, UiDialog, UiSelect, UiSwitch } from "../../../ui";
-import {
-  deleteGitHubBranch,
-  getGitHubBranchProtection,
-  getGitHubRepoSettingsSection,
-  getGitHubRepoRuleset,
-  listGitHubRepoRulesets,
-  updateGitHubBranchProtection,
-  updateGitHubRepoActionsPermissions,
-  updateGitHubRepoRuleset,
-  updateGitHubRepoSettings,
-  updateGitHubRepoWorkflowPermissions,
-} from "../../../services/workspace/client";
+import { useComponentEpoch } from "../../../composables/useComponentEpoch";
+import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
+import { useWorkspace } from "../../../composables/useWorkspace";
+import { SettingsRow, UiDialog, UiSelect, UiSwitch } from "@lilia/ui";
 import type {
   BranchSummary,
   GitHubRepoManagement,
@@ -21,6 +12,7 @@ import type {
   GitHubRepoSettingsSectionKey,
   GitHubRulesetSummary,
 } from "../../../services/workspace/types";
+import { errorMessage, workspaceErrorCategory } from "../../../services/workspace/errors";
 import {
   asBoolean,
   asRecord,
@@ -51,6 +43,7 @@ const emit = defineEmits<{
   "updated-management": [value: GitHubRepoManagement];
   "branch-deleted": [branch: string];
 }>();
+const workspace = useWorkspace();
 
 type ConfirmAction = {
   title: string;
@@ -62,6 +55,13 @@ type ConfirmAction = {
 };
 
 const sections = ref<Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>>({});
+const componentEpoch = useComponentEpoch();
+const sectionLoader = createLatestAsyncLoader({ componentEpoch });
+const branchProtectionLoader = createLatestAsyncLoader({ componentEpoch });
+const branchProtectionSaveLoader = createLatestAsyncLoader({ componentEpoch });
+const rulesetLoader = createLatestAsyncLoader({ componentEpoch });
+const rulesetSaveLoader = createLatestAsyncLoader({ componentEpoch });
+const sectionSaveLoader = createLatestAsyncLoader({ componentEpoch });
 const loading = ref(false);
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -252,6 +252,18 @@ const confirmMatches = computed(() => {
 watch(
   () => [props.repoFullName, props.kind] as const,
   () => {
+    sectionLoader.invalidate();
+    branchProtectionLoader.invalidate();
+    branchProtectionSaveLoader.invalidate();
+    rulesetLoader.invalidate();
+    rulesetSaveLoader.invalidate();
+    sectionSaveLoader.invalidate();
+    loading.value = false;
+    saving.value = false;
+    branchProtectionLoading.value = false;
+    branchProtectionSaving.value = false;
+    rulesetLoading.value = false;
+    rulesetSaving.value = false;
     sections.value = {};
     resetBranchProtection();
     resetRuleset();
@@ -282,29 +294,49 @@ watch(
 );
 
 async function load(forceRefresh = false) {
-  if (!props.repoFullName) return false;
-  loading.value = true;
-  error.value = null;
-  try {
-    if (props.kind === "rules") {
-      rulesetSummaries.value = await listGitHubRepoRulesets(props.repoFullName);
-      rulesetsLoaded.value = true;
-      return true;
+  const repoFullName = props.repoFullName;
+  const kind = props.kind;
+  if (!repoFullName) return false;
+  const keys = [...sectionKeys.value];
+  let loadedCurrentResource = false;
+  await sectionLoader.run(`${repoFullName}:${kind}`, async (runId) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      if (kind === "rules") {
+        const rulesets = await (await workspace.github.service()).listGitHubRepoRulesets(repoFullName);
+        if (!isCurrentRepoLoad(sectionLoader, runId, repoFullName, kind)) return;
+        rulesetSummaries.value = rulesets;
+        rulesetsLoaded.value = true;
+        loadedCurrentResource = true;
+        return;
+      }
+      const loaded = await Promise.all(
+        keys.map(async (key) => [
+          key,
+          await (await workspace.github.service()).getGitHubRepoSettingsSection(repoFullName, key, { forceRefresh }),
+        ] as const),
+      );
+      if (!isCurrentRepoLoad(sectionLoader, runId, repoFullName, kind)) return;
+      sections.value = Object.fromEntries(loaded);
+      loadedCurrentResource = true;
+    } catch (err) {
+      if (!isCurrentRepoLoad(sectionLoader, runId, repoFullName, kind)) return;
+      error.value = kind === "rules" ? accessErrorMessage(err, "读取规则集") : String(err);
+    } finally {
+      if (isCurrentRepoLoad(sectionLoader, runId, repoFullName, kind)) loading.value = false;
     }
-    const loaded = await Promise.all(
-      sectionKeys.value.map(async (key) => [
-        key,
-        await getGitHubRepoSettingsSection(props.repoFullName, key, { forceRefresh }),
-      ] as const),
-    );
-    sections.value = Object.fromEntries(loaded);
-    return true;
-  } catch (err) {
-    error.value = props.kind === "rules" ? accessErrorMessage(err, "读取规则集") : String(err);
-    return false;
-  } finally {
-    loading.value = false;
-  }
+  }, { reusePending: !forceRefresh });
+  return loadedCurrentResource;
+}
+
+function isCurrentRepoLoad(
+  loader: Pick<ReturnType<typeof createLatestAsyncLoader>, "isCurrent">,
+  runId: number,
+  repoFullName: string,
+  kind: RepoSettingsDetailKind = props.kind,
+) {
+  return loader.isCurrent(runId) && props.repoFullName === repoFullName && props.kind === kind;
 }
 
 async function refresh() {
@@ -359,54 +391,67 @@ async function selectBranch(branch: string) {
   branchProtectionError.value = null;
   branchProtectionNotice.value = null;
   branchProtectionWriteDenied.value = false;
-  branchProtectionLoading.value = true;
-  try {
-    const response = await getGitHubBranchProtection(props.repoFullName, branch);
-    const protection = asRecord(response);
-    if (selectedBranch.value !== branch) return;
-    branchProtectionRaw.value = protection;
-    branchProtectionDraft.value = branchProtectionDraftFromRaw(protection);
-    branchProtectionBaseline.value = JSON.stringify(
-      buildBranchProtectionPayload(protection, branchProtectionDraft.value),
-    );
-    if (response === null && selectedBranchRow.value?.protected) {
-      branchProtectionNotice.value = "此分支可能由规则集保护，尚无独立分支保护配置。";
-    }
-  } catch (err) {
-    if (selectedBranch.value !== branch) return;
-    if (isNotFoundError(err)) {
-      const draft = branchProtectionDraftFromRaw({});
-      branchProtectionRaw.value = {};
-      branchProtectionDraft.value = draft;
-      branchProtectionBaseline.value = JSON.stringify(buildBranchProtectionPayload({}, draft));
-      if (selectedBranchRow.value?.protected) {
+  const repoFullName = props.repoFullName;
+  await branchProtectionLoader.run(`${repoFullName}:${branch}`, async (runId) => {
+    branchProtectionLoading.value = true;
+    try {
+      const response = await (await workspace.github.service()).getGitHubBranchProtection(repoFullName, branch);
+      const protection = asRecord(response);
+      if (!isCurrentRepoLoad(branchProtectionLoader, runId, repoFullName) || selectedBranch.value !== branch) return;
+      branchProtectionRaw.value = protection;
+      branchProtectionDraft.value = branchProtectionDraftFromRaw(protection);
+      branchProtectionBaseline.value = JSON.stringify(
+        buildBranchProtectionPayload(protection, branchProtectionDraft.value),
+      );
+      if (response === null && selectedBranchRow.value?.protected) {
         branchProtectionNotice.value = "此分支可能由规则集保护，尚无独立分支保护配置。";
       }
-    } else {
-      branchProtectionError.value = accessErrorMessage(err, "读取分支保护");
+    } catch (err) {
+      if (!isCurrentRepoLoad(branchProtectionLoader, runId, repoFullName) || selectedBranch.value !== branch) return;
+      if (isNotFoundError(err)) {
+        const draft = branchProtectionDraftFromRaw({});
+        branchProtectionRaw.value = {};
+        branchProtectionDraft.value = draft;
+        branchProtectionBaseline.value = JSON.stringify(buildBranchProtectionPayload({}, draft));
+        if (selectedBranchRow.value?.protected) {
+          branchProtectionNotice.value = "此分支可能由规则集保护，尚无独立分支保护配置。";
+        }
+      } else {
+        branchProtectionError.value = accessErrorMessage(err, "读取分支保护");
+      }
+    } finally {
+      if (isCurrentRepoLoad(branchProtectionLoader, runId, repoFullName) && selectedBranch.value === branch) {
+        branchProtectionLoading.value = false;
+      }
     }
-  } finally {
-    if (selectedBranch.value === branch) branchProtectionLoading.value = false;
-  }
+  });
 }
 
 async function saveBranchProtection() {
   const branch = selectedBranch.value;
   const payload = branchProtectionPayload.value;
   if (!branch || !payload || branchProtectionReadOnlyReason.value || branchProtectionSaving.value) return;
-  branchProtectionSaving.value = true;
-  branchProtectionError.value = null;
-  try {
-    const updated = asRecord(await updateGitHubBranchProtection(props.repoFullName, branch, payload as never));
-    branchProtectionRaw.value = Object.keys(updated).length ? updated : branchProtectionRaw.value;
-    const baselineRaw = branchProtectionRaw.value ?? {};
-    branchProtectionBaseline.value = JSON.stringify(buildBranchProtectionPayload(baselineRaw, branchProtectionDraft.value!));
-  } catch (err) {
-    if (isPermissionError(err)) branchProtectionWriteDenied.value = true;
-    branchProtectionError.value = accessErrorMessage(err, "保存分支保护");
-  } finally {
-    branchProtectionSaving.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  await branchProtectionSaveLoader.run(`${repoFullName}:${branch}`, async (runId) => {
+    branchProtectionSaving.value = true;
+    branchProtectionError.value = null;
+    try {
+      const updated = asRecord(await (await workspace.github.service())
+        .updateGitHubBranchProtection(repoFullName, branch, payload as never));
+      if (!isCurrentRepoLoad(branchProtectionSaveLoader, runId, repoFullName) || selectedBranch.value !== branch) return;
+      branchProtectionRaw.value = Object.keys(updated).length ? updated : branchProtectionRaw.value;
+      const baselineRaw = branchProtectionRaw.value ?? {};
+      branchProtectionBaseline.value = JSON.stringify(buildBranchProtectionPayload(baselineRaw, branchProtectionDraft.value!));
+    } catch (err) {
+      if (!isCurrentRepoLoad(branchProtectionSaveLoader, runId, repoFullName) || selectedBranch.value !== branch) return;
+      if (isPermissionError(err)) branchProtectionWriteDenied.value = true;
+      branchProtectionError.value = accessErrorMessage(err, "保存分支保护");
+    } finally {
+      if (isCurrentRepoLoad(branchProtectionSaveLoader, runId, repoFullName) && selectedBranch.value === branch) {
+        branchProtectionSaving.value = false;
+      }
+    }
+  });
 }
 
 async function selectRuleset(id: number) {
@@ -416,38 +461,53 @@ async function selectRuleset(id: number) {
   rulesetDraft.value = null;
   rulesetError.value = null;
   rulesetWriteDenied.value = false;
-  rulesetLoading.value = true;
-  try {
-    const ruleset = asRecord(await getGitHubRepoRuleset(props.repoFullName, id));
-    if (selectedRulesetId.value !== id) return;
-    rulesetRaw.value = ruleset;
-    rulesetDraft.value = rulesetDraftFromRaw(ruleset);
-    rulesetBaseline.value = JSON.stringify(buildRulesetPayload(ruleset, rulesetDraft.value));
-  } catch (err) {
-    if (selectedRulesetId.value === id) rulesetError.value = accessErrorMessage(err, "读取规则集");
-  } finally {
-    if (selectedRulesetId.value === id) rulesetLoading.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  await rulesetLoader.run(`${repoFullName}:${id}`, async (runId) => {
+    rulesetLoading.value = true;
+    try {
+      const ruleset = asRecord(await (await workspace.github.service()).getGitHubRepoRuleset(repoFullName, id));
+      if (!isCurrentRepoLoad(rulesetLoader, runId, repoFullName) || selectedRulesetId.value !== id) return;
+      rulesetRaw.value = ruleset;
+      rulesetDraft.value = rulesetDraftFromRaw(ruleset);
+      rulesetBaseline.value = JSON.stringify(buildRulesetPayload(ruleset, rulesetDraft.value));
+    } catch (err) {
+      if (isCurrentRepoLoad(rulesetLoader, runId, repoFullName) && selectedRulesetId.value === id) {
+        rulesetError.value = accessErrorMessage(err, "读取规则集");
+      }
+    } finally {
+      if (isCurrentRepoLoad(rulesetLoader, runId, repoFullName) && selectedRulesetId.value === id) {
+        rulesetLoading.value = false;
+      }
+    }
+  });
 }
 
 async function saveRuleset() {
   const id = selectedRulesetId.value;
   const payload = rulesetPayload.value;
   if (id === null || !payload || rulesetReadOnlyReason.value || rulesetSaving.value) return;
-  rulesetSaving.value = true;
-  rulesetError.value = null;
-  try {
-    const updated = asRecord(await updateGitHubRepoRuleset(props.repoFullName, id, payload as never));
-    rulesetRaw.value = Object.keys(updated).length ? updated : rulesetRaw.value;
-    const baselineRaw = rulesetRaw.value ?? {};
-    rulesetBaseline.value = JSON.stringify(buildRulesetPayload(baselineRaw, rulesetDraft.value!));
-    await load(true);
-  } catch (err) {
-    if (isPermissionError(err)) rulesetWriteDenied.value = true;
-    rulesetError.value = accessErrorMessage(err, "保存规则集");
-  } finally {
-    rulesetSaving.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  await rulesetSaveLoader.run(`${repoFullName}:${id}`, async (runId) => {
+    rulesetSaving.value = true;
+    rulesetError.value = null;
+    try {
+      const updated = asRecord(await (await workspace.github.service())
+        .updateGitHubRepoRuleset(repoFullName, id, payload as never));
+      if (!isCurrentRepoLoad(rulesetSaveLoader, runId, repoFullName) || selectedRulesetId.value !== id) return;
+      rulesetRaw.value = Object.keys(updated).length ? updated : rulesetRaw.value;
+      const baselineRaw = rulesetRaw.value ?? {};
+      rulesetBaseline.value = JSON.stringify(buildRulesetPayload(baselineRaw, rulesetDraft.value!));
+      await load(true);
+    } catch (err) {
+      if (!isCurrentRepoLoad(rulesetSaveLoader, runId, repoFullName) || selectedRulesetId.value !== id) return;
+      if (isPermissionError(err)) rulesetWriteDenied.value = true;
+      rulesetError.value = accessErrorMessage(err, "保存规则集");
+    } finally {
+      if (isCurrentRepoLoad(rulesetSaveLoader, runId, repoFullName) && selectedRulesetId.value === id) {
+        rulesetSaving.value = false;
+      }
+    }
+  });
 }
 
 function branchProtectionDraftFromRaw(raw: Record<string, unknown>): BranchProtectionDraft {
@@ -561,17 +621,17 @@ function actorNames(value: unknown, field: string) {
 }
 
 function isPermissionError(error: unknown) {
-  return /HTTP 403|forbidden|permission|权限/i.test(String(error));
+  return workspaceErrorCategory(error) === "authorization";
 }
 
 function isNotFoundError(error: unknown) {
-  return /HTTP 404|not found|不存在/i.test(String(error));
+  return workspaceErrorCategory(error) === "not-found";
 }
 
 function accessErrorMessage(error: unknown, action: string) {
   if (isPermissionError(error)) return `${action}失败：当前凭据权限不足。`;
   if (isNotFoundError(error)) return `${action}失败：GitHub 未返回对应配置。`;
-  return String(error).replace(/^Error:\s*/, "");
+  return errorMessage(error);
 }
 
 function securityFeatureLabel(key: string) {
@@ -601,19 +661,27 @@ async function runConfirmedAction() {
   await action.run();
 }
 
-async function withSave(task: () => Promise<void>) {
-  saving.value = true;
-  error.value = null;
-  try {
-    await task();
-    confirmAction.value = null;
-    confirmInput.value = "";
-    await load(true);
-  } catch (err) {
-    error.value = String(err);
-  } finally {
-    saving.value = false;
-  }
+async function withSave<T>(task: (repoFullName: string) => Promise<T>): Promise<T | null> {
+  const repoFullName = props.repoFullName;
+  const kind = props.kind;
+  let result: T | null = null;
+  await sectionSaveLoader.run(`${repoFullName}:${kind}`, async (runId) => {
+    saving.value = true;
+    error.value = null;
+    try {
+      const value = await task(repoFullName);
+      if (!isCurrentRepoLoad(sectionSaveLoader, runId, repoFullName, kind)) return;
+      result = value;
+      confirmAction.value = null;
+      confirmInput.value = "";
+      await load(true);
+    } catch (err) {
+      if (isCurrentRepoLoad(sectionSaveLoader, runId, repoFullName, kind)) error.value = String(err);
+    } finally {
+      if (isCurrentRepoLoad(sectionSaveLoader, runId, repoFullName, kind)) saving.value = false;
+    }
+  });
+  return result;
 }
 
 function requestSecurityToggle(key: string, enabled: boolean) {
@@ -633,15 +701,15 @@ function requestSecurityToggle(key: string, enabled: boolean) {
 }
 
 async function saveSecurityFeature(key: string, enabled: boolean) {
-  await withSave(async () => {
+  const updated = await withSave(async (repoFullName) => {
     const nextAnalysis = { ...securityAnalysis.value };
     nextAnalysis[key] = {
       ...asRecord(nextAnalysis[key]),
       status: enabled ? "enabled" : "disabled",
     };
-    const next = await updateGitHubRepoSettings(props.repoFullName, { securityAndAnalysis: nextAnalysis });
-    emit("updated-management", next);
+    return (await workspace.github.service()).updateGitHubRepoSettings(repoFullName, { securityAndAnalysis: nextAnalysis });
   });
+  if (updated) emit("updated-management", updated);
 }
 
 function requestActionsEnabled(enabled: boolean) {
@@ -665,8 +733,8 @@ async function saveActionsPermissions(next: {
   allowedActions?: string;
   shaPinningRequired?: boolean;
 }) {
-  await withSave(async () => {
-    await updateGitHubRepoActionsPermissions(props.repoFullName, {
+  await withSave(async (repoFullName) => {
+    await (await workspace.github.service()).updateGitHubRepoActionsPermissions(repoFullName, {
       enabled: next.enabled ?? actionsEnabled.value,
       allowedActions: next.allowedActions ?? allowedActions.value,
       shaPinningRequired: next.shaPinningRequired ?? shaPinningRequired.value,
@@ -678,8 +746,8 @@ async function saveWorkflowPermissions(next: {
   defaultWorkflowPermissions?: string;
   canApprovePullRequestReviews?: boolean;
 }) {
-  await withSave(async () => {
-    await updateGitHubRepoWorkflowPermissions(props.repoFullName, {
+  await withSave(async (repoFullName) => {
+    await (await workspace.github.service()).updateGitHubRepoWorkflowPermissions(repoFullName, {
       defaultWorkflowPermissions: next.defaultWorkflowPermissions ?? workflowDefaultPermission.value,
       canApprovePullRequestReviews: next.canApprovePullRequestReviews ?? workflowCanApprove.value,
     });
@@ -703,10 +771,11 @@ function requestDeleteBranch(branch: RepoSettingsBranchRow) {
     actionLabel: "确认删除",
     agentId: `repo.settings.branches.${branch.name}.delete.confirm`,
     run: async () => {
-      await withSave(async () => {
-        await deleteGitHubBranch(props.repoFullName, branch.name);
-        emit("branch-deleted", branch.name);
+      const deleted = await withSave(async (repoFullName) => {
+        await (await workspace.github.service()).deleteGitHubBranch(repoFullName, branch.name);
+        return true;
       });
+      if (deleted) emit("branch-deleted", branch.name);
     },
   });
 }

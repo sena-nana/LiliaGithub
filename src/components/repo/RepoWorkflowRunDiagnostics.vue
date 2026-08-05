@@ -9,12 +9,7 @@ import {
   XCircle,
 } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
-import {
-  getGitHubWorkflowJobLog,
-  openUrl,
-  rerunFailedGitHubWorkflowRun,
-  rerunGitHubWorkflowJob,
-} from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import type { GitHubWorkflowJob, GitHubWorkflowRunDetail } from "../../services/workspace/types";
 import { workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import { errorExcerptFromLog, workflowFailureSummary } from "../../utils/workflowDiagnostics";
@@ -37,6 +32,7 @@ const emit = defineEmits<{
   focusJob: [jobId: number | null];
   refresh: [];
 }>();
+const workspace = useWorkspace();
 
 const selectedJobId = ref<number | null>(null);
 const jobLogs = ref<Record<number, string | undefined>>({});
@@ -95,7 +91,8 @@ async function loadJobLog(job: GitHubWorkflowJob, force = false) {
   jobLogLoading.value = { ...jobLogLoading.value, [job.id]: true };
   jobLogErrors.value = { ...jobLogErrors.value, [job.id]: undefined };
   try {
-    const log = await getGitHubWorkflowJobLog(props.repoFullName, job.id, { forceRefresh: force });
+    const log = await (await workspace.github.service())
+      .getGitHubWorkflowJobLog(props.repoFullName, job.id, { forceRefresh: force });
     jobLogs.value = { ...jobLogs.value, [job.id]: log.content };
   } catch (err) {
     jobLogErrors.value = { ...jobLogErrors.value, [job.id]: String(err).replace(/^Error:\s*/, "") };
@@ -110,7 +107,7 @@ async function rerunFailedRun() {
   rerunError.value = null;
   rerunNotice.value = null;
   try {
-    await rerunFailedGitHubWorkflowRun(props.repoFullName, props.detail.run.id);
+    await (await workspace.github.service()).rerunFailedGitHubWorkflowRun(props.repoFullName, props.detail.run.id);
     rerunNotice.value = "已提交失败任务重跑。";
     emit("refresh");
   } catch (err) {
@@ -126,7 +123,7 @@ async function rerunJob(job: GitHubWorkflowJob) {
   rerunError.value = null;
   rerunNotice.value = null;
   try {
-    await rerunGitHubWorkflowJob(props.repoFullName, job.id);
+    await (await workspace.github.service()).rerunGitHubWorkflowJob(props.repoFullName, job.id);
     rerunNotice.value = `已提交 ${job.name} 重跑。`;
     emit("refresh");
   } catch (err) {
@@ -224,7 +221,7 @@ async function rerunJob(job: GitHubWorkflowJob) {
             :data-agent-id="`repo.actions.job.${selectedJob.id}.open-github`"
             aria-label="在 GitHub 打开 job"
             title="在 GitHub 打开 job"
-            @click="openUrl(selectedJob.htmlUrl)"
+            @click="workspace.openUrl(selectedJob.htmlUrl)"
           >
             <ExternalLink :size="13" aria-hidden="true" />
           </button>

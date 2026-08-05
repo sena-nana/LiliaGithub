@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Dropdown, SettingsRow, UiButton, UiCard } from "../../../ui";
+import { Dropdown } from "@lilia/ui/search";
+import { SettingsRow, UiButton, UiCard } from "@lilia/ui";
 import { computed, ref, watch } from "vue";
 import { useAccountPreferences, cloneAccountPreferences } from "../../../composables/useAccountPreferences";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";

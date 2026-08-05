@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
+import { createSessionContext } from "../src/composables/sessionContext";
 import type { GitHubRepoOwner } from "../src/services/workspace";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 
@@ -42,6 +42,10 @@ const { workspace } = vi.hoisted(() => ({
     hideRepo: vi.fn(async () => undefined),
     openUrl: vi.fn(async () => undefined),
     getAccountRepositoryOwners: vi.fn(),
+    stateFeature: {
+      bulkSyncRunningRepoIds: () => new Set<string>(),
+      repoSyncIssuesByRepoId: () => new Map(),
+    },
   },
 }));
 
@@ -109,16 +113,8 @@ vi.mock("../src/composables/useWorkspace", async () => {
   return { useWorkspace: () => workspace };
 });
 
-vi.mock("../src/composables/workspace/state", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/composables/workspace/state")>();
-  return {
-    ...actual,
-    bulkSyncRunningRepoIds: () => new Set<string>(),
-    repoSyncIssuesByRepoId: () => new Map(),
-  };
-});
-
 const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
+let unrelatedSessionContext = createSessionContext();
 
 async function renderPanel(props: Record<string, unknown> = {}) {
   const router = createRouter({
@@ -161,7 +157,7 @@ const resolvedOwners: GitHubRepoOwner[] = [
 describe("侧边栏组织加载", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetSessionContextForTests();
+    unrelatedSessionContext = createSessionContext();
   });
 
   it("将完整 Surface 契约转发给侧边栏框架", async () => {
@@ -189,7 +185,7 @@ describe("侧边栏组织加载", () => {
     const menu = await openAccountMenu();
 
     await waitFor(() => expect(within(menu).getByText("正在加载组织…")).toBeInTheDocument());
-    invalidateSessionContextSnapshot();
+    unrelatedSessionContext.invalidate();
     pending.resolve(resolvedOwners);
 
     await waitFor(() => expect(within(menu).queryByText("正在加载组织…")).toBeNull());

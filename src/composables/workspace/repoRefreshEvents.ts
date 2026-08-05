@@ -6,29 +6,36 @@ import type {
   WorkspaceTask,
 } from "../../services/workspace";
 import { repoAutoSyncEnabled } from "../../config/repoSettingsManifest";
-import { autoSyncRepoIfNeeded } from "./repositories";
-import { loadWorkspaceService } from "./serviceLoader";
-import {
-  setRepoDetailPatch,
-  setWorkspaceTasks,
-  state,
-  isCurrentWorkspaceContext,
-  upsertRepo,
-  upsertWorkspaceTask,
-} from "./state";
-import {
-  resetWorkspaceTaskWaitersForTests,
-  settleWorkspaceTaskWaiters,
-  waitForWorkspaceTask,
-} from "./taskWaiters";
-
-export { waitForWorkspaceTask };
+import type { WorkspaceRepositoriesFeature } from "./repositories";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceTaskWaitersFeature } from "./taskWaiters";
+import type { WorkspaceServiceLoader } from "./system";
 
 export const WORKSPACE_TASK_CHANGED_EVENT = "workspace://task-changed";
 export const WORKSPACE_REPO_REFRESHED_EVENT = "workspace://repo-refreshed";
 export const REMOTE_REPO_REFRESH_TTL_MS = 10 * 60 * 1000;
 export const ACTIVE_REMOTE_REPO_REFRESH_TTL_MS = 60 * 1000;
 const REMOTE_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
+
+export function createWorkspaceRepoRefreshEventsFeature(
+  stateFeature: WorkspaceStateFeature,
+  taskWaiters: WorkspaceTaskWaitersFeature,
+  { autoSyncRepoIfNeeded }: Pick<WorkspaceRepositoriesFeature, "autoSyncRepoIfNeeded">,
+  loadWorkspaceService: WorkspaceServiceLoader,
+) {
+const {
+  setRepoDetailPatch,
+  setWorkspaceTasks,
+  state,
+  isCurrentWorkspaceContext,
+  upsertRepo,
+  upsertWorkspaceTask,
+} = stateFeature;
+const {
+  resetWorkspaceTaskWaitersForTests,
+  settleWorkspaceTaskWaiters,
+  waitForWorkspaceTask,
+} = taskWaiters;
 
 let activeRepoId: string | null = null;
 let activeRepoLocalReady = false;
@@ -68,7 +75,7 @@ function isRepoRefreshedEvent(value: unknown): value is WorkspaceRepoRefreshedEv
     Boolean(event.summary && typeof event.summary === "object");
 }
 
-export function applyWorkspaceTaskChanged(payload: unknown) {
+function applyWorkspaceTaskChanged(payload: unknown) {
   if (!isWorkspaceTask(payload)) return;
   if (!isCurrentWorkspaceContext(payload)) return;
   upsertWorkspaceTask(payload);
@@ -86,7 +93,7 @@ export function applyWorkspaceTaskChanged(payload: unknown) {
   }
 }
 
-export function applyWorkspaceRepoRefreshed(payload: unknown) {
+function applyWorkspaceRepoRefreshed(payload: unknown) {
   if (!isRepoRefreshedEvent(payload)) return;
   if (!isCurrentWorkspaceContext(payload)) return;
   if (payload.detailPatch) setRepoDetailPatch(payload.detailPatch, payload.repoId);
@@ -110,7 +117,7 @@ export function applyWorkspaceRepoRefreshed(payload: unknown) {
   }
 }
 
-export async function setActiveRepoForRefresh(repoId: string | null) {
+async function setActiveRepoForRefresh(repoId: string | null) {
   if (activeRepoId === repoId) return;
   activeRepoId = repoId;
   activeRepoLocalReady = false;
@@ -119,18 +126,18 @@ export async function setActiveRepoForRefresh(repoId: string | null) {
   await service.setActiveWorkspaceRepo(repoId);
 }
 
-export function markActiveRepoLocalReady(repoId: string) {
+function markActiveRepoLocalReady(repoId: string) {
   if (!repoId || activeRepoId !== repoId) return;
   activeRepoLocalReady = true;
   scheduleActiveRepoRefresh(remoteRefreshDelay(repoId));
 }
 
-export function setRepoRefreshLifecycleFocused(focused: boolean) {
+function setRepoRefreshLifecycleFocused(focused: boolean) {
   lifecycleFocused = focused;
   reconcileRefreshLifecycle();
 }
 
-export function hydrateRepoRemoteCheckedAt(
+function hydrateRepoRemoteCheckedAt(
   reposById: Record<string, { remoteCheckedAt?: number | null }> | null | undefined,
 ) {
   state.repoRemoteCheckedAt = Object.fromEntries(
@@ -140,7 +147,7 @@ export function hydrateRepoRemoteCheckedAt(
   );
 }
 
-export async function requestManualRepoRemoteRefresh(
+async function requestManualRepoRemoteRefresh(
   repoId: string,
   options: { includeCommits?: boolean; includeBranches?: boolean } = {},
 ) {
@@ -178,7 +185,7 @@ async function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest) {
   return taskId;
 }
 
-export function scheduleAutoSyncRepoRefreshes(now = Date.now()) {
+function scheduleAutoSyncRepoRefreshes(now = Date.now()) {
   clearAutoSyncTimer();
   if (!canRunActiveRepoRefresh()) return;
   const repos = state.repos.filter((repo) =>
@@ -270,12 +277,12 @@ function reconcileRefreshLifecycle() {
   scheduleAutoSyncRepoRefreshes();
 }
 
-export async function ensureRepoRefreshEventsReady() {
+async function ensureRepoRefreshEventsReady() {
   if (!installationPromise) installationPromise = performRepoRefreshEventsInstall();
   installedCleanup = await installationPromise;
 }
 
-export async function installRepoRefreshEvents(): Promise<() => void> {
+async function installRepoRefreshEvents(): Promise<() => void> {
   await ensureRepoRefreshEventsReady();
   return () => {
     installedCleanup?.();
@@ -336,7 +343,7 @@ function installVisibilityListener() {
   return () => document.removeEventListener("visibilitychange", listener);
 }
 
-export function resetRepoRefreshRuntime() {
+function resetRepoRefreshRuntime() {
   installedCleanup?.();
   installedCleanup = null;
   installationPromise = null;
@@ -353,6 +360,25 @@ export function resetRepoRefreshRuntime() {
   resetWorkspaceTaskWaitersForTests();
 }
 
-export function resetRepoRefreshRuntimeForTests() {
+function resetRepoRefreshRuntimeForTests() {
   resetRepoRefreshRuntime();
 }
+
+return {
+  waitForWorkspaceTask,
+  applyWorkspaceTaskChanged,
+  applyWorkspaceRepoRefreshed,
+  setActiveRepoForRefresh,
+  markActiveRepoLocalReady,
+  setRepoRefreshLifecycleFocused,
+  hydrateRepoRemoteCheckedAt,
+  requestManualRepoRemoteRefresh,
+  scheduleAutoSyncRepoRefreshes,
+  ensureRepoRefreshEventsReady,
+  installRepoRefreshEvents,
+  resetRepoRefreshRuntime,
+  resetRepoRefreshRuntimeForTests,
+};
+}
+
+export type WorkspaceRepoRefreshEventsFeature = ReturnType<typeof createWorkspaceRepoRefreshEventsFeature>;

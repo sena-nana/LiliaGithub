@@ -1,3 +1,4 @@
+mod app_delivery_handoff;
 pub mod bulk;
 pub mod code_review;
 pub mod conversations;
@@ -6,13 +7,12 @@ pub mod github;
 pub mod github_discussions;
 pub mod home_attention;
 pub mod launch;
-mod app_delivery_handoff;
 mod lilia_code_handoff;
 pub(crate) mod operations;
+mod path_relocation;
 pub(crate) mod readme;
 pub(crate) mod refresh;
 pub(crate) mod repo_guard;
-mod path_relocation;
 pub mod repos;
 pub mod settings;
 mod shared;
@@ -22,7 +22,6 @@ pub mod tasks;
 pub(crate) mod watcher;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::DispatchLane;
 use operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 
 async fn run_core_operation<T, F>(
@@ -54,13 +53,11 @@ where
         OperationKind::LocalWrite => spec.priority(100),
         OperationKind::GitHubWrite => spec.priority(50),
         OperationKind::GitHubTransfer => spec.priority(25),
-        OperationKind::WorkspaceAnalysis => spec.lane(DispatchLane::Background).priority(-50),
-        OperationKind::Bulk => spec.lane(DispatchLane::Bulk),
-        OperationKind::LaunchControl => spec.lane(DispatchLane::Control),
+        OperationKind::WorkspaceAnalysis => spec.priority(-50),
         _ => spec,
     };
     if visible_kind == Some("repoStatus") {
-        spec = spec.lane(DispatchLane::Interactive).priority(50);
+        spec = spec.priority(50);
     }
     let task_kind = visible_kind.or(match kind {
         OperationKind::LocalWrite => Some("git"),

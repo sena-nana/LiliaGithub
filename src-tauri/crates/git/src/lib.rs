@@ -1,6 +1,8 @@
 use std::path::{Component, Path};
 use std::process::{Command, Stdio};
 
+#[cfg(test)]
+use lilia_github_contracts::workspace::RepoConflictChoiceSide;
 use lilia_github_contracts::workspace::{RepoConflictChoice, RepoConflictHunk};
 
 #[cfg(target_os = "windows")]
@@ -88,10 +90,8 @@ pub fn parse_github_remote(remote: &str) -> Option<String> {
         rest
     } else if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
         rest
-    } else if let Some(rest) = trimmed.strip_prefix("ssh://git@github.com/") {
-        rest
     } else {
-        return None;
+        trimmed.strip_prefix("ssh://git@github.com/")?
     };
     let parts: Vec<_> = path.split('/').collect();
     if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
@@ -736,11 +736,11 @@ mod tests {
             &[
                 RepoConflictChoice {
                     hunk_id: "hunk-1".to_string(),
-                    side: "ours".to_string(),
+                    side: RepoConflictChoiceSide::Ours,
                 },
                 RepoConflictChoice {
                     hunk_id: "hunk-2".to_string(),
-                    side: "theirs".to_string(),
+                    side: RepoConflictChoiceSide::Theirs,
                 },
             ],
         )

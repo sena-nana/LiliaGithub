@@ -10,7 +10,7 @@ import type {
   GitHubIssue,
 } from "../../services/workspace/types";
 import RepoIssueConversation from "./RepoIssueConversation.vue";
-import { updateGitHubIssue } from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import "./styles/githubDetailSurface.css";
 
 const props = defineProps<{
@@ -25,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: [];
 }>();
+const workspace = useWorkspace();
 
 const statusText = computed(() => props.issue.state === "open" ? "Open" : "Closed");
 const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
@@ -47,7 +48,8 @@ async function saveMilestone() {
   }
   milestonePending.value = true; milestoneError.value = null;
   try {
-    const updated = await updateGitHubIssue(props.repoFullName, props.issue.number, { milestone });
+    const updated = await (await workspace.github.service())
+      .updateGitHubIssue(props.repoFullName, props.issue.number, { milestone });
     milestoneDraft.value = updated.milestone ? String(updated.milestone.number) : "";
     milestoneTitle.value = updated.milestone?.title ?? null;
   } catch (error) {

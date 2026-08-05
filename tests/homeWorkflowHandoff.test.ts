@@ -1,10 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useWorkspace } from "../src/composables/useWorkspace";
-import { replaceRepos, resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { createWorkspaceStore, workspaceStoreKey } from "../src/composables/workspace/store";
 import {
-  clearGitHubRepoCache,
+  createDefaultWorkspaceTransport,
+  createWorkspaceClient,
+} from "../src/services/workspace/client";
+import { createSessionContext, sessionContextKey } from "../src/composables/sessionContext";
+import {
   resetWorkspaceFallbacksForTests,
   workspaceFallbackForTests,
   type GitHubRepoSummary,
@@ -32,24 +35,6 @@ const attentionMocks = vi.hoisted(() => ({
   list: vi.fn(),
 }));
 
-vi.mock("../src/services/workspace", async () => ({
-  ...await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace"),
-  getGitHubWorkflowRunDetail: workflowMocks.detail,
-  getGitHubWorkflowJobLog: workflowMocks.log,
-}));
-
-vi.mock("../src/services/liliaCodeHandoff", async () => ({
-  ...await vi.importActual<typeof import("../src/services/liliaCodeHandoff")>("../src/services/liliaCodeHandoff"),
-  createLiliaCodeTaskHandoff: handoffMocks.create,
-  waitForLiliaCodeTaskHandoff: handoffMocks.wait,
-  openLiliaCodeTaskHandoffResult: handoffMocks.open,
-}));
-
-vi.mock("../src/services/homeAttention", async () => ({
-  ...await vi.importActual<typeof import("../src/services/homeAttention")>("../src/services/homeAttention"),
-  listGitHubHomeAttention: attentionMocks.list,
-}));
-
 const repoFullName = "sena-nana/LiliaGithub";
 const runId = 91;
 const workflowAgentId = `home.pending.workflow-run:${repoFullName}:${runId}`;
@@ -58,11 +43,23 @@ const failureRepoId = "LiliaGithub-failure";
 const failureBranch = "feature/workflow-fix";
 const failureWorktreePath = "/work/LiliaGithub-workflow-fix";
 const failureRoute = `/repos/${failureRepoId}?projectTab=actions&run=${runId}`;
+const sessionContext = createSessionContext();
+const workspaceClient = createWorkspaceClient(createDefaultWorkspaceTransport());
+workspaceClient.listGitHubHomeAttention = (...args) => attentionMocks.list(...args);
+workspaceClient.getGitHubWorkflowRunDetail = (...args) => workflowMocks.detail(...args);
+workspaceClient.getGitHubWorkflowJobLog = (...args) => workflowMocks.log(...args);
+workspaceClient.createLiliaCodeTaskHandoff = (...args) => handoffMocks.create(...args);
+workspaceClient.waitForLiliaCodeTaskHandoff = (...args) => handoffMocks.wait(...args);
+workspaceClient.openLiliaCodeTaskHandoffResult = (...args) => handoffMocks.open(...args);
+const workspace = createWorkspaceStore({ client: workspaceClient, sessionContext });
+const { replaceRepos, resetWorkspaceStateForTests } = workspace.stateFeature;
 
 beforeEach(async () => {
   await resetWorkspaceFallbacksForTests();
   resetWorkspaceStateForTests();
-  clearGitHubRepoCache();
+  workspace.resetRepositoryRuntimeForTests();
+  workspace.resetRepoRefreshRuntimeForTests();
+  workspace.clearGitHubRepoCache();
   clearHomeGitHubOverviewSnapshot();
   localStorage.clear();
 
@@ -101,7 +98,6 @@ beforeEach(async () => {
       mainRepoId: mainRepoId,
     },
   });
-  const workspace = useWorkspace();
   await workspace.initialize();
   replaceRepos([mainRepo, failureRepo]);
 });
@@ -348,7 +344,15 @@ async function renderHome() {
   });
   await router.push("/");
   await router.isReady();
-  return render(Home, { global: { plugins: [router] } });
+  return render(Home, {
+    global: {
+      plugins: [router],
+      provide: {
+        [workspaceStoreKey as symbol]: workspace,
+        [sessionContextKey as symbol]: sessionContext,
+      },
+    },
+  });
 }
 
 function agentElement<T extends Element = HTMLElement>(container: HTMLElement, agentId: string) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle } from "@lucide/vue";
-import { UiSwitch } from "../../ui";
+import { UiSwitch } from "@lilia/ui";
 import type {
   RepoRemoteSyncConfig,
   RepoRemoteSyncPolicy,

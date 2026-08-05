@@ -1,10 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useWorkspace } from "../src/composables/useWorkspace";
-import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { createWorkspaceStore, workspaceStoreKey } from "../src/composables/workspace/store";
 import {
-  clearGitHubRepoCache,
+  createDefaultWorkspaceTransport,
+  createWorkspaceClient,
+} from "../src/services/workspace/client";
+import { createSessionContext, sessionContextKey } from "../src/composables/sessionContext";
+import {
   resetWorkspaceFallbacksForTests,
   workspaceFallbackForTests,
   type GitHubRepoSummary,
@@ -21,23 +24,20 @@ const attentionMocks = vi.hoisted(() => ({
   list: vi.fn(),
 }));
 
-vi.mock("../src/services/workspace", async () => ({
-  ...await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace"),
-  cancelGitHubWorkflowRun: actionMocks.cancel,
-  rerunFailedGitHubWorkflowRun: actionMocks.rerun,
-}));
-
-vi.mock("../src/services/homeAttention", async () => ({
-  ...await vi.importActual<typeof import("../src/services/homeAttention")>("../src/services/homeAttention"),
-  listGitHubHomeAttention: attentionMocks.list,
-}));
-
 const repoFullName = "sena-nana/LiliaGithub";
+const sessionContext = createSessionContext();
+const workspaceClient = createWorkspaceClient(createDefaultWorkspaceTransport());
+workspaceClient.listGitHubHomeAttention = (...args) => attentionMocks.list(...args);
+workspaceClient.cancelGitHubWorkflowRun = (...args) => actionMocks.cancel(...args);
+workspaceClient.rerunFailedGitHubWorkflowRun = (...args) => actionMocks.rerun(...args);
+const workspace = createWorkspaceStore({ client: workspaceClient, sessionContext });
 
 beforeEach(async () => {
   await resetWorkspaceFallbacksForTests();
-  resetWorkspaceStateForTests();
-  clearGitHubRepoCache();
+  workspace.stateFeature.resetWorkspaceStateForTests();
+  workspace.resetRepositoryRuntimeForTests();
+  workspace.resetRepoRefreshRuntimeForTests();
+  workspace.clearGitHubRepoCache();
   localStorage.clear();
   actionMocks.cancel.mockReset().mockResolvedValue(undefined);
   actionMocks.rerun.mockReset().mockResolvedValue(undefined);
@@ -53,7 +53,7 @@ beforeEach(async () => {
   }]);
   fallback.setFallbackGitHubAccountIssuesOverrideForTests(async () => []);
   fallback.setFallbackGitHubActionNotificationsOverrideForTests(async () => []);
-  await useWorkspace().initialize();
+  await workspace.initialize();
 });
 
 describe("Home workflow actions", () => {
@@ -96,7 +96,7 @@ describe("Home workflow actions", () => {
       items: [githubRepo({ permissions: { pull: true, push: false, admin: false } })],
       nextPage: null,
     }]);
-    clearGitHubRepoCache();
+    workspace.clearGitHubRepoCache();
 
     const { container } = await renderHome();
     await screen.findByText("Actions 失败");
@@ -116,7 +116,15 @@ async function renderHome() {
   });
   await router.push("/");
   await router.isReady();
-  return render(Home, { global: { plugins: [router] } });
+  return render(Home, {
+    global: {
+      plugins: [router],
+      provide: {
+        [workspaceStoreKey as symbol]: workspace,
+        [sessionContextKey as symbol]: sessionContext,
+      },
+    },
+  });
 }
 
 function agentButton(container: HTMLElement, agentId: string) {

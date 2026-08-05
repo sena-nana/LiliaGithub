@@ -2,16 +2,13 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use tokio::sync::oneshot;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{
-    DispatchLane, ExecutionClass, OrderingRequirement, ResourceAccessMode, ResourceRequirement,
-    TaskHandle, TaskSpec,
-};
+use crate::task_runtime::{ExecutionClass, TaskHandle, TaskSpec};
 use crate::workspace::tasks::{
     finish_workspace_task, mark_workspace_task_running, record_pending_operation_task,
     register_pending_task_cancellation,
@@ -158,10 +155,7 @@ impl VisibleOperationGroup {
 #[derive(Clone, Debug)]
 pub struct OperationSpec {
     pub kind: OperationKind,
-    pub lane: DispatchLane,
     pub priority: i64,
-    pub ordering: OrderingRequirement,
-    pub resource_requirements: Vec<ResourceRequirement>,
     pub visible: Option<VisibleOperation>,
     pub parent_task_id: Option<String>,
 }
@@ -170,18 +164,10 @@ impl OperationSpec {
     pub fn new(kind: OperationKind) -> Self {
         Self {
             kind,
-            lane: DispatchLane::Interactive,
             priority: 0,
-            ordering: OrderingRequirement::None,
-            resource_requirements: Vec::new(),
             visible: None,
             parent_task_id: None,
         }
-    }
-
-    pub fn lane(mut self, lane: DispatchLane) -> Self {
-        self.lane = lane;
-        self
     }
 
     pub fn priority(mut self, priority: i64) -> Self {
@@ -194,24 +180,8 @@ impl OperationSpec {
         self
     }
 
-    pub fn resource(mut self, ref_id: impl Into<String>, mode: ResourceAccessMode) -> Self {
-        self.resource_requirements.push(ResourceRequirement {
-            ref_id: ref_id.into(),
-            mode,
-            expected_version: None,
-        });
-        self
-    }
-
     pub fn parent_task(mut self, task_id: impl Into<String>) -> Self {
         self.parent_task_id = Some(task_id.into());
-        self
-    }
-
-    pub fn same_resource_order(mut self, ref_id: impl Into<String>) -> Self {
-        self.ordering = OrderingRequirement::SameResourceOrder {
-            ref_id: ref_id.into(),
-        };
         self
     }
 }
@@ -246,18 +216,63 @@ struct OperationEntry {
     run: Box<dyn FnOnce() -> OperationExecution + Send>,
 }
 
-fn registry() -> &'static Mutex<HashMap<String, OperationEntry>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, OperationEntry>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) struct OperationRegistry {
+    entries: Mutex<HashMap<String, OperationEntry>>,
+    next_id: AtomicU64,
+    shutdown: AtomicBool,
 }
 
-fn next_operation_id() -> String {
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    format!(
-        "operation-{}-{}",
-        std::process::id(),
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    )
+impl OperationRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+            shutdown: AtomicBool::new(false),
+        }
+    }
+
+    fn next_operation_id(&self) -> String {
+        format!(
+            "operation-{}-{}",
+            std::process::id(),
+            self.next_id.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    fn insert(&self, operation_id: String, entry: OperationEntry) -> Result<(), String> {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err("操作执行器已关闭".to_string());
+        }
+        entries.insert(operation_id, entry);
+        Ok(())
+    }
+
+    fn remove(&self, operation_id: &str) -> Option<OperationEntry> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(operation_id)
+    }
+
+    pub(crate) fn shutdown(&self, reason: &str) {
+        let entries = {
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            self.shutdown.store(true, Ordering::Release);
+            entries.drain().map(|(_, entry)| entry).collect::<Vec<_>>()
+        };
+        for entry in entries {
+            let _ = entry
+                .sender
+                .send(OperationExecution::result(Err(reason.to_string())));
+        }
+    }
 }
 
 pub async fn run_operation<T, F>(
@@ -321,6 +336,7 @@ impl<T: Send + 'static> OperationTicket<T> {
 
 async fn monitor_operation(
     app: AppHandle,
+    registry: std::sync::Arc<OperationRegistry>,
     operation_id: String,
     visible_task_id: Option<String>,
     business_receiver: oneshot::Receiver<OperationExecution>,
@@ -330,7 +346,7 @@ async fn monitor_operation(
         Ok(execution) => execution,
         Err(_) => {
             let error = "操作结果通道已关闭".to_string();
-            fail_pending_operation(&operation_id, &error);
+            fail_pending_operation(&registry, &operation_id, &error);
             OperationExecution::result(Err(error))
         }
     };
@@ -401,7 +417,8 @@ where
     if spec.parent_task_id.is_none() {
         spec.parent_task_id = ACTIVE_OPERATION_GROUP_TASK_ID.try_with(Clone::clone).ok();
     }
-    let operation_id = next_operation_id();
+    let registry = app.operation_registry();
+    let operation_id = registry.next_operation_id();
     let visible_task = spec.visible.as_ref().map(|visible| {
         record_pending_operation_task(
             &app,
@@ -415,38 +432,31 @@ where
     let visible_task_id = visible_task.as_ref().map(|task| task.id.clone());
     let (business_sender, business_receiver) = oneshot::channel::<OperationExecution>();
     let (result_sender, receiver) = oneshot::channel::<TypedResult>();
-    registry()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(
-            operation_id.clone(),
-            OperationEntry {
-                app: app.clone(),
-                visible_task_id: visible_task_id.clone(),
-                parent_task_id: spec.parent_task_id.clone(),
-                sender: business_sender,
-                run: Box::new(operation),
-            },
-        );
+    if let Err(error) = registry.insert(
+        operation_id.clone(),
+        OperationEntry {
+            app: app.clone(),
+            visible_task_id: visible_task_id.clone(),
+            parent_task_id: spec.parent_task_id.clone(),
+            sender: business_sender,
+            run: Box::new(operation),
+        },
+    ) {
+        if let Some(task_id) = visible_task_id.as_deref() {
+            finish_workspace_task(&app, task_id, "cancelled", Some(error.clone()));
+        }
+        return Err(error);
+    }
 
     let task_spec = TaskSpec::new(
         operation_id.clone(),
-        spec.lane,
         spec.priority,
         spec.kind.execution_class(),
-    )
-    .correlation_id(
-        spec.parent_task_id
-            .clone()
-            .unwrap_or_else(|| operation_id.clone()),
-    )
-    .resources(spec.resource_requirements)
-    .ordering(spec.ordering);
+    );
     let task_id = operation_id.clone();
+    let job_registry = std::sync::Arc::clone(&registry);
     let job = Box::new(move |_| {
-        let entry = registry()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+        let entry = job_registry
             .remove(&task_id)
             .ok_or_else(|| "操作已取消".to_string())?;
         let lifecycle_task_id = entry
@@ -479,7 +489,7 @@ where
     let handle = match app.submit_task(task_spec, job) {
         Ok(handle) => handle,
         Err(error) => {
-            fail_pending_operation(&operation_id, &error);
+            fail_pending_operation(&registry, &operation_id, &error);
             if let Some(task_id) = visible_task_id.as_deref() {
                 finish_workspace_task(&app, task_id, "error", Some(error.clone()));
             }
@@ -502,6 +512,7 @@ where
 
     tokio::spawn(monitor_operation(
         app,
+        registry,
         operation_id.clone(),
         visible_task_id,
         business_receiver,
@@ -539,17 +550,21 @@ pub fn cancel_pending_operations(
     targets: &[OperationCancelTarget],
     reason: &str,
 ) -> Result<(), String> {
+    let registry = app.operation_registry();
     let entries = {
-        let mut registry = registry().lock().unwrap_or_else(|error| error.into_inner());
+        let mut entries = registry
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if targets
             .iter()
-            .any(|target| !registry.contains_key(&target.operation_id))
+            .any(|target| !entries.contains_key(&target.operation_id))
         {
             return Err("批量任务已开始或不支持取消".to_string());
         }
         targets
             .iter()
-            .filter_map(|target| registry.remove(&target.operation_id))
+            .filter_map(|target| entries.remove(&target.operation_id))
             .collect::<Vec<_>>()
     };
     for target in targets {
@@ -563,11 +578,8 @@ pub fn cancel_pending_operations(
     Ok(())
 }
 
-fn fail_pending_operation(operation_id: &str, reason: &str) {
-    let entry = registry()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(operation_id);
+fn fail_pending_operation(registry: &OperationRegistry, operation_id: &str, reason: &str) {
+    let entry = registry.remove(operation_id);
     if let Some(entry) = entry {
         let _ = entry
             .sender
@@ -580,21 +592,32 @@ mod tests {
     use super::*;
     use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
     use serde_json::Value;
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::sync::Arc;
+    use std::thread;
 
     struct TestRuntime;
 
     impl WorkspaceRuntime for TestRuntime {
-        fn store_get(&self, _file: &str, _key: &str) -> Result<Option<Value>, String> {
+        fn store_get(
+            &self,
+            _file: &str,
+            _key: &str,
+        ) -> Result<Option<Value>, crate::runtime::StoreError> {
             Ok(None)
         }
-        fn store_set(&self, _file: &str, _key: &str, _value: Value) -> Result<(), String> {
+        fn store_set(
+            &self,
+            _file: &str,
+            _key: &str,
+            _value: Value,
+        ) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
-        fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+        fn store_delete(&self, _file: &str, _key: &str) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
-        fn store_save(&self, _file: &str) -> Result<(), String> {
+        fn store_save(&self, _file: &str) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
         fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
@@ -665,5 +688,59 @@ mod tests {
             .await
             .unwrap_err();
         assert!(panic.contains("broken operation"));
+    }
+
+    #[tokio::test]
+    async fn app_state_shutdown_drains_pending_operations_without_cross_app_leaks() {
+        let first_app = app();
+        let second_app = app();
+        let gate = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
+        let blocker_gate = Arc::clone(&gate);
+        let blocker_started = Arc::clone(&started);
+        let blocker = first_app
+            .submit_task(
+                TaskSpec::new("blocker", 100, ExecutionClass::Cpu),
+                Box::new(move |_| {
+                    blocker_started.store(true, AtomicOrdering::Release);
+                    while !blocker_gate.load(AtomicOrdering::Acquire) {
+                        thread::yield_now();
+                    }
+                    Ok(())
+                }),
+            )
+            .unwrap();
+        while !started.load(AtomicOrdering::Acquire) {
+            thread::yield_now();
+        }
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_by_operation = Arc::clone(&ran);
+        let pending = submit_operation(
+            first_app.clone(),
+            OperationSpec::new(OperationKind::WorkspaceAnalysis),
+            move || {
+                ran_by_operation.store(true, AtomicOrdering::Release);
+                Ok::<_, String>(())
+            },
+        )
+        .unwrap();
+
+        first_app.shutdown();
+        let error = pending.wait().await.unwrap_err();
+        assert!(error.contains("应用已退出"));
+        let second_result = run_operation(
+            second_app,
+            OperationSpec::new(OperationKind::WorkspaceAnalysis),
+            || Ok::<_, String>(42_u64),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second_result, 42);
+        gate.store(true, AtomicOrdering::Release);
+        assert!(matches!(
+            blocker.wait(),
+            crate::task_runtime::TaskOutcome::Completed { .. }
+        ));
+        assert!(!ran.load(AtomicOrdering::Acquire));
     }
 }

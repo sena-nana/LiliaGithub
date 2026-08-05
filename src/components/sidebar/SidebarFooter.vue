@@ -5,8 +5,8 @@ import { RouterLink } from "vue-router";
 import {
   SB_MENU_POP_TRANSITION_MS,
   useAnchoredMenuMotion,
-  type LiliaSidebarConfigInput,
-} from "../../ui";
+} from "@lilia/ui/composables";
+import type { LiliaSidebarConfigInput } from "@lilia/ui/shell";
 import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
 import type { GitHubRepoOwner } from "../../services/workspace";
 import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";

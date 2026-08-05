@@ -2,69 +2,43 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::operations::{
     run_operation, submit_operation, OperationKind, OperationSpec, OperationTaskCompletion,
     OperationTicket, VisibleOperation, VisibleOperationGroup,
 };
-use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
+use crate::workspace::repo_guard::{with_repo_guard, RepoAccess};
 use crate::workspace::repos::{
     git_common_dir, require_valid_remote_sync_config, run_configured_pull,
     run_configured_pull_with_config, run_multi_remote_push, summarize_repo, sync_result,
 };
 use crate::workspace::settings::{repo_path_by_id, repo_root_and_path_by_id};
 use lilia_github_contracts::workspace::{
-    BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoRemoteSyncPolicy,
-    RepoSummary,
+    BulkSyncOperation, BulkSyncPreview, BulkSyncRepo, BulkSyncResult, BulkSyncTrigger,
+    RepoPullLocalChangesMode, RepoRemoteSyncPolicy, RepoSummary,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BulkSyncTrigger {
-    Manual,
-    SyncAll,
-    AutoSync,
+fn bulk_sync_title(trigger: BulkSyncTrigger, operation: BulkSyncOperation) -> &'static str {
+    match trigger {
+        BulkSyncTrigger::SyncAll => "同步全部仓库",
+        BulkSyncTrigger::AutoSync => "自动同步仓库",
+        BulkSyncTrigger::Manual if operation == BulkSyncOperation::Pull => "批量拉取仓库",
+        BulkSyncTrigger::Manual if operation == BulkSyncOperation::Push => "批量推送仓库",
+        BulkSyncTrigger::Manual => "批量同步仓库",
+    }
 }
 
-impl BulkSyncTrigger {
-    fn parse(value: Option<&str>) -> Result<Self, String> {
-        match value.unwrap_or("manual") {
-            "manual" => Ok(Self::Manual),
-            "syncAll" => Ok(Self::SyncAll),
-            "autoSync" => Ok(Self::AutoSync),
-            _ => Err("无效的批量同步触发来源".to_string()),
-        }
+fn bulk_sync_priority(trigger: BulkSyncTrigger) -> &'static str {
+    match trigger {
+        BulkSyncTrigger::AutoSync => "normal",
+        BulkSyncTrigger::Manual | BulkSyncTrigger::SyncAll => "high",
     }
+}
 
-    fn title(self, operation: &str) -> &'static str {
-        match self {
-            Self::SyncAll => "同步全部仓库",
-            Self::AutoSync => "自动同步仓库",
-            Self::Manual if operation == "pull" => "批量拉取仓库",
-            Self::Manual if operation == "push" => "批量推送仓库",
-            Self::Manual => "批量同步仓库",
-        }
-    }
-
-    fn priority(self) -> &'static str {
-        match self {
-            Self::AutoSync => "normal",
-            Self::Manual | Self::SyncAll => "high",
-        }
-    }
-
-    fn core_priority(self) -> i64 {
-        match self {
-            Self::Manual => 100,
-            Self::SyncAll => 50,
-            Self::AutoSync => -50,
-        }
-    }
-
-    fn lane(self) -> DispatchLane {
-        match self {
-            Self::AutoSync => DispatchLane::Background,
-            Self::Manual | Self::SyncAll => DispatchLane::Bulk,
-        }
+fn bulk_sync_core_priority(trigger: BulkSyncTrigger) -> i64 {
+    match trigger {
+        BulkSyncTrigger::Manual => 100,
+        BulkSyncTrigger::SyncAll => 50,
+        BulkSyncTrigger::AutoSync => -50,
     }
 }
 
@@ -101,7 +75,7 @@ pub(super) fn remote_sync_needs(
 pub(super) fn bulk_sync_repo(
     app: &AppHandle,
     root: &Path,
-    operation: &str,
+    operation: BulkSyncOperation,
     repo_id: String,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncResult {
@@ -110,7 +84,7 @@ pub(super) fn bulk_sync_repo(
         Err(err) => return bulk_error_result(repo_id, err),
     };
     let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
-    with_repo_guard(common_dir, RepoAccess::Write, || {
+    with_repo_guard(app, common_dir, RepoAccess::Write, || {
         bulk_sync_repo_guarded(app, root, operation, repo_id, path, local_changes_mode)
     })
 }
@@ -118,16 +92,16 @@ pub(super) fn bulk_sync_repo(
 fn bulk_sync_repo_guarded(
     app: &AppHandle,
     root: &Path,
-    operation: &str,
+    operation: BulkSyncOperation,
     repo_id: String,
     path: PathBuf,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncResult {
-    if operation == "sync" {
+    if operation == BulkSyncOperation::Sync {
         let summary = summarize_repo(root, &path);
         return sync_repo(app, root, repo_id, &path, &summary, local_changes_mode);
     }
-    let result = if operation == "pull" {
+    let result = if operation == BulkSyncOperation::Pull {
         run_configured_pull(app, root, &repo_id, &path, Some(local_changes_mode), false)
     } else {
         require_valid_remote_sync_config(app, &repo_id, &path).and_then(|config| {
@@ -221,14 +195,14 @@ pub(super) fn bulk_error_result(
 
 pub async fn bulk_sync_preview(
     app: AppHandle,
-    operation: String,
+    operation: BulkSyncOperation,
     repo_ids: Vec<String>,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<BulkSyncPreview, String> {
     let operation_app = app.clone();
     run_operation(
         app,
-        OperationSpec::new(OperationKind::LocalRead).lane(DispatchLane::Bulk),
+        OperationSpec::new(OperationKind::LocalRead),
         move || {
             build_live_bulk_preview(
                 &operation_app,
@@ -243,13 +217,10 @@ pub async fn bulk_sync_preview(
 
 fn build_live_bulk_preview(
     app: &AppHandle,
-    operation: String,
+    operation: BulkSyncOperation,
     repo_ids: Vec<String>,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> Result<BulkSyncPreview, String> {
-    if !matches!(operation.as_str(), "pull" | "push" | "sync") {
-        return Err("无效的批量同步操作".to_string());
-    }
     let mut eligible = Vec::new();
     let mut blocked = Vec::new();
     let mut warnings = Vec::new();
@@ -271,8 +242,8 @@ fn build_live_bulk_preview(
             continue;
         }
         let needs = remote_sync_needs(&repo, &config.resolved_policy);
-        let pull_requested = operation != "push";
-        let push_requested = operation != "pull";
+        let pull_requested = operation != BulkSyncOperation::Push;
+        let push_requested = operation != BulkSyncOperation::Pull;
         if pull_requested && repo.conflict_count > 0 {
             blocked.push(BulkSyncRepo {
                 repo,
@@ -289,7 +260,7 @@ fn build_live_bulk_preview(
         } else if push_requested
             && config.resolved_policy.push_remotes.is_empty()
             && !needs.pull
-            && (operation == "push" || needs.unpushable_commits)
+            && (operation == BulkSyncOperation::Push || needs.unpushable_commits)
         {
             blocked.push(BulkSyncRepo {
                 repo,
@@ -326,7 +297,7 @@ enum SubmittedBulkRepo {
         repo_id: String,
         ticket: OperationTicket<BulkSyncResult>,
     },
-    Result(BulkSyncResult),
+    Result(Box<BulkSyncResult>),
 }
 
 async fn aggregate_bulk_sync(
@@ -337,7 +308,7 @@ async fn aggregate_bulk_sync(
     let mut cancellation_error = None;
     for item in submitted {
         match item {
-            SubmittedBulkRepo::Result(result) => results.push(result),
+            SubmittedBulkRepo::Result(result) => results.push(*result),
             SubmittedBulkRepo::Ticket { repo_id, ticket } => match ticket.wait().await {
                 Ok(result) => results.push(result),
                 Err(error) if error.contains("取消") => {
@@ -371,48 +342,46 @@ async fn aggregate_bulk_sync(
 
 pub async fn bulk_sync_execute(
     app: AppHandle,
-    operation: String,
+    operation: BulkSyncOperation,
     repo_ids: Vec<String>,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
-    trigger: Option<String>,
+    trigger: Option<BulkSyncTrigger>,
 ) -> Result<Vec<BulkSyncResult>, String> {
     if repo_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let trigger = BulkSyncTrigger::parse(trigger.as_deref())?;
+    let trigger = trigger.unwrap_or_default();
     let parent = VisibleOperationGroup::new(
         app.clone(),
-        VisibleOperation::new("sync", trigger.title(&operation)).priority(trigger.priority()),
+        VisibleOperation::new("sync", bulk_sync_title(trigger, operation))
+            .priority(bulk_sync_priority(trigger)),
         Some(format!("等待同步 {} 个仓库", repo_ids.len())),
     );
     let local_changes_mode = local_changes_mode.unwrap_or_default();
     let mut submitted = Vec::with_capacity(repo_ids.len());
     let mut cancel_targets = Vec::with_capacity(repo_ids.len());
     for repo_id in repo_ids {
-        let (root, path) = match repo_root_and_path_by_id(&app, &repo_id) {
+        let (root, _) = match repo_root_and_path_by_id(&app, &repo_id) {
             Ok(value) => value,
             Err(error) => {
-                submitted.push(SubmittedBulkRepo::Result(bulk_error_result(repo_id, error)));
+                submitted.push(SubmittedBulkRepo::Result(Box::new(bulk_error_result(
+                    repo_id, error,
+                ))));
                 continue;
             }
         };
-        let common_dir = git_common_dir(&path).unwrap_or(path);
-        let resource = repo_resource_id(&common_dir);
         let run_app = app.clone();
         let run_root = root;
-        let run_operation_name = operation.clone();
+        let run_operation = operation;
         let run_repo_id = repo_id.clone();
         let spec = OperationSpec::new(OperationKind::Bulk)
-            .lane(trigger.lane())
-            .priority(trigger.core_priority())
-            .parent_task(parent.task_id().to_string())
-            .resource(resource.clone(), ResourceAccessMode::ExclusiveWrite)
-            .same_resource_order(resource);
+            .priority(bulk_sync_core_priority(trigger))
+            .parent_task(parent.task_id().to_string());
         match submit_operation(app.clone(), spec, move || {
             Ok(bulk_sync_repo(
                 &run_app,
                 &run_root,
-                &run_operation_name,
+                run_operation,
                 run_repo_id,
                 local_changes_mode,
             ))
@@ -422,7 +391,9 @@ pub async fn bulk_sync_execute(
                 submitted.push(SubmittedBulkRepo::Ticket { repo_id, ticket });
             }
             Err(error) => {
-                submitted.push(SubmittedBulkRepo::Result(bulk_error_result(repo_id, error)));
+                submitted.push(SubmittedBulkRepo::Result(Box::new(bulk_error_result(
+                    repo_id, error,
+                ))));
             }
         }
     }
@@ -449,16 +420,25 @@ mod trigger_tests {
     struct TestRuntime;
 
     impl WorkspaceRuntime for TestRuntime {
-        fn store_get(&self, _file: &str, _key: &str) -> Result<Option<Value>, String> {
+        fn store_get(
+            &self,
+            _file: &str,
+            _key: &str,
+        ) -> Result<Option<Value>, crate::runtime::StoreError> {
             Ok(None)
         }
-        fn store_set(&self, _file: &str, _key: &str, _value: Value) -> Result<(), String> {
+        fn store_set(
+            &self,
+            _file: &str,
+            _key: &str,
+            _value: Value,
+        ) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
-        fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+        fn store_delete(&self, _file: &str, _key: &str) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
-        fn store_save(&self, _file: &str) -> Result<(), String> {
+        fn store_save(&self, _file: &str) -> Result<(), crate::runtime::StoreError> {
             Ok(())
         }
         fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
@@ -496,9 +476,9 @@ mod trigger_tests {
         }
     }
 
-    async fn wait_for_parent_status(task_id: &str, status: &str) {
+    async fn wait_for_parent_status(app: &AppHandle, task_id: &str, status: &str) {
         for _ in 0..200 {
-            if workspace_list_tasks()
+            if workspace_list_tasks(app.clone())
                 .iter()
                 .any(|task| task.id == task_id && task.status == status)
             {
@@ -512,36 +492,26 @@ mod trigger_tests {
     #[test]
     fn bulk_trigger_controls_task_projection() {
         assert_eq!(
-            BulkSyncTrigger::parse(None).unwrap(),
-            BulkSyncTrigger::Manual
-        );
-        assert_eq!(
-            BulkSyncTrigger::parse(Some("syncAll"))
-                .unwrap()
-                .title("sync"),
+            bulk_sync_title(BulkSyncTrigger::SyncAll, BulkSyncOperation::Sync),
             "同步全部仓库"
         );
-        assert_eq!(
-            BulkSyncTrigger::parse(Some("autoSync")).unwrap().priority(),
-            "normal"
-        );
-        assert!(BulkSyncTrigger::parse(Some("unknown")).is_err());
+        assert_eq!(bulk_sync_priority(BulkSyncTrigger::AutoSync), "normal");
     }
 
     #[tokio::test]
     async fn aggregation_preserves_input_order_and_projects_partial_failure() {
         let app = test_app();
         let parent = VisibleOperationGroup::new(
-            app,
+            app.clone(),
             VisibleOperation::new("sync", "bulk aggregate ordering").priority("high"),
             None,
         );
         parent.mark_running(None);
         let parent_id = parent.task_id().to_string();
         let submitted = vec![
-            SubmittedBulkRepo::Result(result("third", "success")),
-            SubmittedBulkRepo::Result(result("first", "error")),
-            SubmittedBulkRepo::Result(result("second", "success")),
+            SubmittedBulkRepo::Result(Box::new(result("third", "success"))),
+            SubmittedBulkRepo::Result(Box::new(result("first", "error"))),
+            SubmittedBulkRepo::Result(Box::new(result("second", "success"))),
         ];
 
         let results = aggregate_bulk_sync(parent, submitted).await.unwrap();
@@ -553,14 +523,14 @@ mod trigger_tests {
                 .collect::<Vec<_>>(),
             vec!["third", "first", "second"]
         );
-        wait_for_parent_status(&parent_id, "error").await;
+        wait_for_parent_status(&app, &parent_id, "error").await;
     }
 
     #[tokio::test]
     async fn detached_aggregation_finishes_parent_after_command_waiter_is_dropped() {
         let app = test_app();
         let parent = VisibleOperationGroup::new(
-            app,
+            app.clone(),
             VisibleOperation::new("sync", "detached bulk aggregation").priority("high"),
             None,
         );
@@ -568,11 +538,13 @@ mod trigger_tests {
         let parent_id = parent.task_id().to_string();
         let waiter = tokio::spawn(aggregate_bulk_sync(
             parent,
-            vec![SubmittedBulkRepo::Result(result("repo", "success"))],
+            vec![SubmittedBulkRepo::Result(Box::new(result(
+                "repo", "success",
+            )))],
         ));
 
         drop(waiter);
 
-        wait_for_parent_status(&parent_id, "success").await;
+        wait_for_parent_status(&app, &parent_id, "success").await;
     }
 }

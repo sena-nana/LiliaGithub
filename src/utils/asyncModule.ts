@@ -14,43 +14,28 @@ export interface CachedAsyncModule<T> {
 export function createCachedAsyncModule<T>(
   loader: () => Promise<T>,
 ): CachedAsyncModule<T> {
+  let attempts = 0;
+  let retryCount = 0;
+  const lazy = createLazyLoadState(async () => {
+    attempts += 1;
+    try {
+      return await loader();
+    } catch (error) {
+      retryCount += 1;
+      throw error;
+    }
+  });
   const state: AsyncModuleLoadState = {
-    loaded: false,
-    loading: false,
-    attempts: 0,
-    retryCount: 0,
-    error: null,
+    get loaded() { return lazy.loaded.value; },
+    get loading() { return lazy.loading.value; },
+    get attempts() { return attempts; },
+    get retryCount() { return retryCount; },
+    get error() { return lazy.error.value === null ? null : String(lazy.error.value); },
   };
-  let loadedModule: T | null = null;
-  let pendingModule: Promise<T> | null = null;
-
-  async function load() {
-    if (state.loaded) return loadedModule as T;
-    if (pendingModule) return pendingModule;
-
-    state.loading = true;
-    state.attempts += 1;
-    pendingModule = loader()
-      .then((module) => {
-        loadedModule = module;
-        state.loaded = true;
-        state.error = null;
-        return module;
-      })
-      .catch((err) => {
-        state.retryCount += 1;
-        state.error = String(err);
-        throw err;
-      })
-      .finally(() => {
-        state.loading = false;
-        pendingModule = null;
-      });
-    return pendingModule;
-  }
 
   return {
     state,
-    load,
+    load: lazy.load,
   };
 }
+import { createLazyLoadState } from "@lilia/ui/utils/lazyLoadState";

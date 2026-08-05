@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { useRepoDetailController } from "../src/composables/useRepoDetailController";
-import { resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
-import { resetRepoRefreshRuntimeForTests } from "../src/composables/workspace/repoRefreshEvents";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
-import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { ProjectLaunchCandidate, ProjectLaunchConfig } from "../src/services/workspace";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+  resetWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
 const service = {
   getRepoDetail: vi.fn(),
@@ -24,10 +25,8 @@ const service = {
   setActiveWorkspaceRepo: vi.fn(),
   enqueueRepoRefresh: vi.fn(),
 };
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
+const workspace = createWorkspaceStoreFixture(service);
+const { state } = workspace.stateFeature;
 
 type RepoDetailController = ReturnType<typeof useRepoDetailController>;
 
@@ -66,6 +65,7 @@ async function renderControllerHarness(repoId: string) {
   const view = render(Harness, {
     global: {
       plugins: [router],
+      provide: provideWorkspaceStoreFixture(workspace),
     },
   });
 
@@ -78,9 +78,7 @@ describe("repo detail launch controller", () => {
   let documentVisibility: DocumentVisibilityState = "visible";
 
   beforeEach(() => {
-    resetWorkspaceStateForTests();
-    resetRepositoryRuntimeForTests();
-    resetRepoRefreshRuntimeForTests();
+    resetWorkspaceStoreFixture(workspace);
     vi.clearAllMocks();
     vi.spyOn(document, "hasFocus").mockImplementation(() => documentFocused);
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => documentVisibility);

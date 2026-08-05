@@ -1,4 +1,4 @@
-import { listGitHubPullRequests, listGitHubWorkflowRuns } from "../workspace/client";
+import type { WorkspaceClient } from "../workspace/client";
 import type { GitHubPullRequest, GitHubWorkflowRun } from "../workspace/types";
 import type {
   HomeAttentionWorkflowRun,
@@ -24,18 +24,22 @@ interface HomeAttentionFallbackOptions extends HomeAttentionLoadOptions {
   now?: Date;
 }
 
+type HomeAttentionSource = Pick<WorkspaceClient, "listGitHubPullRequests" | "listGitHubWorkflowRuns">;
+
 export async function listHomeAttentionFallback(
+  source: HomeAttentionSource,
   repoFullNames: readonly string[],
   options: HomeAttentionFallbackOptions = {},
 ): Promise<HomeAttentionResult> {
   const [pendingPullRequests, workflowRuns] = await Promise.all([
-    loadPendingPullRequests(repoFullNames, options),
-    loadWorkflowRuns(repoFullNames, options),
+    loadPendingPullRequests(source, repoFullNames, options),
+    loadWorkflowRuns(source, repoFullNames, options),
   ]);
   return { pendingPullRequests, workflowRuns };
 }
 
 async function loadPendingPullRequests(
+  source: HomeAttentionSource,
   repoFullNames: readonly string[],
   options: HomeAttentionFallbackOptions,
 ) {
@@ -49,12 +53,12 @@ async function loadPendingPullRequests(
         direction: "desc" as const,
       };
       const [reviewRequested, assigned] = await Promise.all([
-        listGitHubPullRequests(
+        source.listGitHubPullRequests(
           repoFullName,
           { ...listOptions, query: "review-requested:@me" },
           { forceRefresh: options.forceRefresh },
         ),
-        listGitHubPullRequests(
+        source.listGitHubPullRequests(
           repoFullName,
           { ...listOptions, assignee: "@me" },
           { forceRefresh: options.forceRefresh },
@@ -76,6 +80,7 @@ async function loadPendingPullRequests(
 }
 
 async function loadWorkflowRuns(
+  source: HomeAttentionSource,
   repoFullNames: readonly string[],
   options: HomeAttentionFallbackOptions,
 ) {
@@ -83,7 +88,7 @@ async function loadWorkflowRuns(
   const result = await aggregateHomeAttentionRepositories<HomeAttentionWorkflowRun>(
     repoFullNames,
     async (repoFullName) => {
-      const runs = await listGitHubWorkflowRuns(
+      const runs = await source.listGitHubWorkflowRuns(
         repoFullName,
         SOURCE_PAGE_SIZE,
         { forceRefresh: options.forceRefresh },

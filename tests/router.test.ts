@@ -1,10 +1,9 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
-import { refreshRepoSummaries } from "../src/composables/workspace/repositories";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
-import { useWorkspace } from "../src/composables/useWorkspace";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
+import type { WorkspaceClient } from "../src/services/workspace/client";
+import type { WorkspaceStateFeature } from "../src/composables/workspace/state";
 import { flushWorkspaceRecentContexts } from "../src/composables/useWorkspaceRecentContext";
 import { createLiliaGithubApp } from "../src/createLiliaGithubApp";
 import { workspaceFallbackForTests } from "../src/services/workspace";
@@ -16,6 +15,7 @@ import type {
   RepoDetail,
   RepoOperationResult,
 } from "../src/services/workspace";
+import { createWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
@@ -23,12 +23,15 @@ type RepoDetailOptions = NonNullable<Parameters<typeof repoDetail>[1]>;
 let workspaceFallback: WorkspaceFallbackForTests;
 let mountedApp: ReturnType<typeof createLiliaGithubApp>["app"] | null = null;
 let mountedContainer: HTMLElement | null = null;
+let mountedWorkspace: WorkspaceStore | null = null;
+let state: WorkspaceStateFeature["state"];
 
 function cleanupMountedApp() {
   mountedApp?.unmount();
   mountedApp = null;
   mountedContainer?.remove();
   mountedContainer = null;
+  mountedWorkspace = null;
   cleanup();
   document.body.replaceChildren();
 }
@@ -41,7 +44,7 @@ async function flushFakeTimersIfNeeded() {
   }
 }
 
-async function waitForContributionRefresh(workspace: ReturnType<typeof useWorkspace>) {
+async function waitForContributionRefresh(workspace: WorkspaceStore) {
   workspace.refreshRepoContributions();
   for (let index = 0; index < 20; index += 1) {
     await flushFakeTimersIfNeeded();
@@ -50,18 +53,28 @@ async function waitForContributionRefresh(workspace: ReturnType<typeof useWorksp
   }
 }
 
-async function renderAt(path: string) {
+async function renderAt(
+  path: string,
+  prepare?: (workspace: WorkspaceStore) => Promise<unknown>,
+) {
   cleanupMountedApp();
-  const workspace = useWorkspace();
+  const fixture = createWorkspaceStoreFixture(workspaceScenarioOverrides());
+  await prepare?.(fixture);
+  const created = createLiliaGithubApp({
+    history: createMemoryHistory(),
+    workspace: fixture,
+  });
+  const { app, router, workspace } = created;
+  mountedWorkspace = workspace;
+  state = workspace.stateFeature.state;
   const initializePromise = workspace.initialize();
   await flushFakeTimersIfNeeded();
   await initializePromise;
-  const refreshPromise = refreshRepoSummaries();
+  const refreshPromise = workspace.refreshRepoSummaries();
   await flushFakeTimersIfNeeded();
   await refreshPromise;
   await flushFakeTimersIfNeeded();
   await waitForContributionRefresh(workspace);
-  const { app, router } = createLiliaGithubApp({ history: createMemoryHistory() });
   await router.push(path);
   await router.isReady();
 
@@ -76,6 +89,27 @@ async function renderAt(path: string) {
   return {
     router,
     container,
+    sessionContext: created.sessionContext,
+  };
+}
+
+function workspaceScenarioOverrides(): Partial<WorkspaceClient> {
+  return {
+    getRepoLaunchConfig: workspaceFallback.getRepoLaunchConfig,
+    listRepoLaunchCandidates: workspaceFallback.listRepoLaunchCandidates,
+    getRepoLaunchStatus: workspaceFallback.getRepoLaunchStatus,
+    getRepoLaunchLogs: workspaceFallback.getRepoLaunchLogs,
+    listRepoLaunchHistory: workspaceFallback.listRepoLaunchHistory,
+    saveRepoLaunchConfig: workspaceFallback.saveRepoLaunchConfig,
+    startRepoLaunch: workspaceFallback.startRepoLaunch,
+    stopRepoLaunch: workspaceFallback.stopRepoLaunch,
+    listRepoStashes: workspaceFallback.listRepoStashes,
+    getRepoStashDetail: workspaceFallback.getRepoStashDetail,
+    saveRepoStash: workspaceFallback.saveRepoStash,
+    applyRepoStash: workspaceFallback.applyRepoStash,
+    popRepoStash: workspaceFallback.popRepoStash,
+    dropRepoStash: workspaceFallback.dropRepoStash,
+    openPathTarget: workspaceFallback.openPathTarget,
   };
 }
 
@@ -105,12 +139,12 @@ async function clickOverviewSync() {
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
   await within(main).findByLabelText("仓库状态列表");
   await waitFor(() => {
-    expect(useWorkspace().state.repos.some((repo) => repo.ahead > 0 || repo.behind > 0)).toBe(true);
+    expect(mountedWorkspace?.state.repos.some((repo) => repo.ahead > 0 || repo.behind > 0)).toBe(true);
   });
   const syncButton = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" });
   await waitFor(() => expect(syncButton).toBeEnabled());
   await fireEvent.click(syncButton);
-  await waitFor(() => expect(useWorkspace().state.recentSync?.results.length).toBeGreaterThan(0));
+  await waitFor(() => expect(mountedWorkspace?.state.recentSync?.results.length).toBeGreaterThan(0));
 }
 
 async function waitForRepoTitle(name: string) {
@@ -287,10 +321,6 @@ describe("基础路由", () => {
   beforeEach(async () => {
     workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.resetWorkspaceFallbacksForTests();
-    const workspaceService = await import("../src/services/workspace");
-    workspaceService.clearGitHubRepoCache();
-    resetWorkspaceStateForTests();
-    resetSessionContextForTests();
   });
 
   afterEach(async () => {
@@ -319,7 +349,6 @@ describe("基础路由", () => {
   });
 
   it("总览页项目代码占比展示本地项目占比", async () => {
-    const service = await import("../src/services/workspace");
     const repos = [
       ["LiliaGithub", 1000],
       ["Lilia", 900],
@@ -327,7 +356,7 @@ describe("基础路由", () => {
       ["RepoD", 700],
     ] as const;
     for (const [repoId] of repos.slice(2)) {
-      await service.cloneRepo({
+      await workspaceFallback.cloneRepo({
         remoteUrl: `https://github.com/sena-nana/${repoId}.git`,
         placement: { kind: "automatic" },
         target: { kind: "custom", path: `C:\\Files\\workspace\\${repoId}` },
@@ -426,7 +455,8 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub-linked/changes");
 
     expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
-    await fireEvent.click(await screen.findByText("src/linked-worktree.ts"));
+    await waitFor(() => expect(detailRequests).toContain(linkedSummary.id), { timeout: 5000 });
+    await fireEvent.click(await screen.findByText("src/linked-worktree.ts", {}, { timeout: 5000 }));
     expect(screen.getByLabelText("变更预览")).toHaveTextContent("new linked");
     await waitFor(() => expect(router.currentRoute.value.query.change).toBe("src/linked-worktree.ts"));
     expect(detailRequests).toContain(linkedSummary.id);
@@ -562,10 +592,10 @@ describe("基础路由", () => {
       },
     });
 
-    const { router } = await renderAt("/repos/LiliaGithub/files");
+    const { router, sessionContext } = await renderAt("/repos/LiliaGithub/files");
     expect(await screen.findByText("正在读取文件树。")).toBeInTheDocument();
 
-    invalidateSessionContextSnapshot();
+    sessionContext.invalidate();
     rootEntries.resolve([
       { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
     ]);
@@ -577,9 +607,7 @@ describe("基础路由", () => {
   });
 
   it("远程仓库文件树按分支选择器当前分支读取 GitHub 结构", async () => {
-    const service = await import("../src/services/workspace");
     const repoFullName = "sena-nana/RemoteFiles";
-    service.clearGitHubRepoCache();
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [githubRepoSummary(repoFullName, { defaultBranch: "main" })],
@@ -632,7 +660,7 @@ describe("基础路由", () => {
         },
       },
     });
-    await service.rememberRemoteRepo({
+    const remoteRepo = {
       fullName: repoFullName,
       name: "RemoteFiles",
       private: false,
@@ -641,9 +669,12 @@ describe("基础路由", () => {
       htmlUrl: `https://github.com/${repoFullName}`,
       cloneUrl: `https://github.com/${repoFullName}.git`,
       openedAt: Date.now(),
-    });
+    };
 
-    const { router } = await renderAt("/repos/github%3Asena-nana%2FRemoteFiles/files");
+    const { router } = await renderAt(
+      "/repos/github%3Asena-nana%2FRemoteFiles/files",
+      (workspace) => workspace.rememberRemoteRepo(remoteRepo),
+    );
 
     expect(await screen.findByRole("heading", { level: 1, name: "Remote Files" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "文件树", selected: true })).toBeInTheDocument();
@@ -961,9 +992,6 @@ describe("基础路由", () => {
 
   it("冲突深链只自动打开一次，并可从仓库工具栏重新打开", async () => {
     const summary = repoSummary("LiliaGithub", { conflictCount: 1 });
-    state.repoDetails[summary.id] = repoDetail(summary, {
-      conflicts: { operation: "none", files: [], allResolved: true },
-    });
     mockRepoDetail(summary, {
       conflicts: {
         operation: "merge",
@@ -978,7 +1006,14 @@ describe("基础路由", () => {
       },
     });
 
-    const { router } = await renderAt("/repos/LiliaGithub/changes?resolveConflicts=1");
+    const { router } = await renderAt(
+      "/repos/LiliaGithub/changes?resolveConflicts=1",
+      async (workspace) => {
+        workspace.stateFeature.state.repoDetails[summary.id] = repoDetail(summary, {
+          conflicts: { operation: "none", files: [], allResolved: true },
+        });
+      },
+    );
 
     expect(await screen.findByRole("dialog", { name: "合并冲突" })).toBeInTheDocument();
     await waitFor(() => {
@@ -1089,7 +1124,7 @@ describe("基础路由", () => {
     });
     await renderAt("/repos/LiliaGithub/run");
     await waitFor(() => {
-      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn old-refresh-command");
+      expect(mountedWorkspace?.state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn old-refresh-command");
     });
 
     workspaceFallback.setFallbackLaunchCandidatesForTests({
@@ -1105,17 +1140,16 @@ describe("基础路由", () => {
     await waitFor(() => expect(refresh).toBeEnabled());
     await fireEvent.click(refresh);
     await waitFor(() => {
-      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn refreshed-command");
+      expect(mountedWorkspace?.state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn refreshed-command");
     });
   });
 
   it("仓库详情页右上角刷新 Stash 列表并保持当前路由", async () => {
-    const service = await import("../src/services/workspace");
-    await service.saveRepoStash("LiliaGithub", "On main: before page refresh");
+    await workspaceFallback.saveRepoStash("LiliaGithub", "On main: before page refresh");
     const { router } = await renderAt("/repos/LiliaGithub/stash");
     expect(await screen.findByRole("button", { name: /before page refresh/ })).toBeInTheDocument();
 
-    await service.saveRepoStash("LiliaGithub", "On main: after page refresh");
+    await workspaceFallback.saveRepoStash("LiliaGithub", "On main: after page refresh");
     await fireEvent.click(screen.getByRole("button", { name: "刷新当前页" }));
 
     expect(await screen.findByRole("button", { name: /after page refresh/ })).toBeInTheDocument();
@@ -1155,9 +1189,8 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页提供本地 stash 管理页签并按选中 stash 执行操作", async () => {
-    const service = await import("../src/services/workspace");
-    await service.saveRepoStash("LiliaGithub", "On main: newer stash");
-    const applyStash = vi.spyOn(service, "applyRepoStash");
+    await workspaceFallback.saveRepoStash("LiliaGithub", "On main: newer stash");
+    const applyStash = vi.spyOn(workspaceFallback, "applyRepoStash");
 
     await renderAt("/repos/LiliaGithub/stash");
 
@@ -1188,10 +1221,9 @@ describe("基础路由", () => {
   });
 
   it("stash 操作完成时不会把旧仓库状态写回新路由", async () => {
-    const service = await import("../src/services/workspace");
-    await service.saveRepoStash("LiliaGithub", "On main: delayed stash");
+    await workspaceFallback.saveRepoStash("LiliaGithub", "On main: delayed stash");
     const applyResult = deferred<RepoOperationResult>();
-    const applyStash = vi.spyOn(service, "applyRepoStash").mockReturnValue(applyResult.promise);
+    const applyStash = vi.spyOn(workspaceFallback, "applyRepoStash").mockReturnValue(applyResult.promise);
     workspaceFallback.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
 
     const { router } = await renderAt("/repos/LiliaGithub/stash");
@@ -1261,7 +1293,6 @@ describe("基础路由", () => {
   });
 
   it("仓库设置删除本地仓库使用仓库名确认并按内部 ID 删除", async () => {
-    const service = await import("../src/services/workspace");
     const repo = repoSummary("local:root-9de7877d8f4657fb/LiliaCodeCli", {
       name: "LiliaCodeCli",
       path: "D:\\PROJECT\\workspace\\LiliaCodeCli",
@@ -1285,7 +1316,7 @@ describe("基础路由", () => {
     await fireEvent.update(confirmInput, repo.id);
     expect(confirmButton).toBeDisabled();
     await fireEvent.click(confirmButton);
-    expect((await service.refreshRepos()).some((item) => item.id === repo.id)).toBe(true);
+    expect((await workspaceFallback.refreshRepos()).some((item) => item.id === repo.id)).toBe(true);
 
     await fireEvent.update(confirmInput, `  ${repo.name}  `);
     expect(confirmButton).toBeEnabled();
@@ -1299,7 +1330,7 @@ describe("基础路由", () => {
       expect(screen.queryByRole("dialog", { name: "删除本地仓库" })).toBeNull();
       expect(router.currentRoute.value.fullPath).toBe("/");
     });
-    expect((await service.refreshRepos()).some((item) => item.id === repo.id)).toBe(false);
+    expect((await workspaceFallback.refreshRepos()).some((item) => item.id === repo.id)).toBe(false);
   });
 
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
@@ -1339,12 +1370,14 @@ describe("基础路由", () => {
     await fireEvent.click(within(editingItem).getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText("#12 编辑后标题")).toBeInTheDocument();
-    expect(issueItemByTitle("#12 编辑后标题")).toHaveTextContent("backend, docs");
-    expect(issueItemByTitle("#12 编辑后标题")).toHaveTextContent("carol, dana");
+    const updatedIssue = issueItemByTitle("#12 编辑后标题");
+    expect(within(updatedIssue).getByText("backend")).toBeInTheDocument();
+    expect(within(updatedIssue).getByText("docs")).toBeInTheDocument();
 
     const updatedItem = issueItemByTitle("#12 编辑后标题");
     await fireEvent.click(within(updatedItem).getByRole("button", { name: "编辑" }));
     expect(within(updatedItem).getByDisplayValue("新正文")).toBeInTheDocument();
+    expect(within(updatedItem).getByDisplayValue("carol, dana")).toBeInTheDocument();
   });
 
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
@@ -1458,12 +1491,18 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(launchInput).toHaveValue("yarn tauri:dev");
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
+      expect(mountedWorkspace?.state.launchCandidates.LiliaGithub?.length).toBeGreaterThan(0);
     });
     await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/run");
     });
     expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mountedWorkspace?.state.launchCandidates.LiliaGithub?.length).toBeGreaterThan(0);
+      expect(launchInput).toHaveValue("yarn tauri:dev");
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
+    });
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
@@ -1473,8 +1512,10 @@ describe("基础路由", () => {
     await fireEvent.update(launchInput, "ver");
     expect(await screen.findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /^preview/ })).toBeNull();
-    expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));
+    const verifyCandidate = within(screen.getByRole("listbox", { name: "启动指令候选" }))
+      .getByRole("option", { name: /^verifypackage · package\.json script$/ });
+    expect(verifyCandidate).toBeInTheDocument();
+    await fireEvent.click(verifyCandidate);
     await waitFor(() => {
       expect(launchInput).toHaveValue("yarn verify");
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
@@ -1488,6 +1529,7 @@ describe("基础路由", () => {
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
+      expect(mountedWorkspace?.state.launchStatuses.LiliaGithub?.state).toBe("running");
       const terminal = screen.getByLabelText("启动终端");
       expect(terminal).toHaveTextContent("启动命令：yarn verify");
       expect(terminal).toHaveTextContent("开发服务已启动");
@@ -1530,6 +1572,9 @@ describe("基础路由", () => {
     });
     await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
     expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
+    });
 
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
     await waitFor(() => {
@@ -1582,8 +1627,10 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页优先显示最近同步失败而不重复仓库操作错误", async () => {
-    const { setRepoActionError, state } = await import("../src/composables/workspace/state");
     await renderAt("/repos/LiliaGithub");
+    const currentWorkspace = mountedWorkspace;
+    if (!currentWorkspace) throw new Error("workspace is not mounted");
+    const { setRepoActionError } = currentWorkspace.stateFeature;
     await waitForRepoTitle("LiliaGithub");
 
     const repo = state.repos.find((item) => item.id === "LiliaGithub") ?? repoSummary("LiliaGithub", { ahead: 1 });
@@ -1659,8 +1706,7 @@ describe("基础路由", () => {
   });
 
   it("设置页仓库 tab 可恢复隐藏仓库", async () => {
-    const service = await import("../src/services/workspace");
-    await service.hideRepo("LiliaGithub");
+    await workspaceFallback.hideRepo("LiliaGithub");
 
     await renderAt("/settings?tab=repositories");
 
@@ -1672,7 +1718,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "恢复管理" })).not.toBeInTheDocument();
     });
-    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
+    expect((await workspaceFallback.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
   it("设置页账户 tab 可更换 GitHub 账号", async () => {

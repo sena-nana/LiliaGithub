@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { UiButton, UiCard } from "../../../ui";
+import { UiButton, UiCard } from "@lilia/ui";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { useWorkspace } from "../../../composables/useWorkspace";
 

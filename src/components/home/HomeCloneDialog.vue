@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { FolderInput, LoaderCircle, Lock, Search, Sparkles } from "@lucide/vue";
-import { Dropdown, UiDialog } from "../../ui";
+import { Dropdown } from "@lilia/ui/search";
+import { UiDialog } from "@lilia/ui";
 import type {
   GitHubBindingStatus,
   GitHubRepoOwner,

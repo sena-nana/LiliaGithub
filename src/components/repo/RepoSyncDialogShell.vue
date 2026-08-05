@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { DialogSize } from "../../ui/contract";
-import { UiDialog } from "../../ui";
+import type { DialogSize } from "@lilia/ui-contract";
+import { UiDialog } from "@lilia/ui";
 
 const props = withDefaults(defineProps<{
   open: boolean;

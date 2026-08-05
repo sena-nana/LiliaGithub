@@ -1,13 +1,25 @@
 import type { BulkOperation, RepoPullLocalChangesMode } from "../../services/workspace";
-import { invalidateSessionContextSnapshot } from "../sessionContext";
-import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
-import { loadWorkspaceService } from "./serviceLoader";
-import { refreshLanguageStatsForRepos } from "./repositories";
+import type { SessionContext } from "../sessionContext";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceServiceLoader } from "./system";
+import type { WorkspaceRepositoriesFeature } from "./repositories";
+
+export function createWorkspaceBulkFeature(
+  {
+    bulkSyncRepoIds,
+    rememberRecentSync,
+    state,
+    upsertRepo,
+  }: Pick<WorkspaceStateFeature, "bulkSyncRepoIds" | "rememberRecentSync" | "state" | "upsertRepo">,
+  { refreshLanguageStatsForRepos }: Pick<WorkspaceRepositoriesFeature, "refreshLanguageStatsForRepos">,
+  loadWorkspaceService: WorkspaceServiceLoader,
+  sessionContext: Pick<SessionContext, "invalidate">,
+) {
 
 let bulkPreviewGeneration = 0;
 let bulkExecutionGeneration = 0;
 
-export async function previewBulk(
+async function previewBulk(
   operation: BulkOperation,
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ) {
@@ -27,7 +39,7 @@ function bulkExecutionRepoIds(preview = state.bulkPreview) {
   return preview.eligible.map((item) => item.repo.id);
 }
 
-export async function executeBulk(
+async function executeBulk(
   repoIds?: string[],
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ) {
@@ -52,7 +64,7 @@ export async function executeBulk(
   }
 }
 
-export async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reject") {
+async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reject") {
   if (state.bulkRunning) return;
   bulkPreviewGeneration += 1;
   const generation = ++bulkExecutionGeneration;
@@ -74,13 +86,13 @@ export async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reje
   }
 }
 
-export function closeBulkPreview() {
-  if (state.bulkPreview) invalidateSessionContextSnapshot();
+function closeBulkPreview() {
+  if (state.bulkPreview) sessionContext.invalidate();
   bulkPreviewGeneration += 1;
   state.bulkPreview = null;
 }
 
-export function resetBulkRuntime() {
+function resetBulkRuntime() {
   bulkPreviewGeneration += 1;
   bulkExecutionGeneration += 1;
   state.bulkPreview = null;
@@ -106,3 +118,8 @@ function applyBulkResults(preview: NonNullable<typeof state.bulkPreview>, result
   if (refreshedRepoIds.length) void refreshLanguageStatsForRepos(refreshedRepoIds);
   rememberRecentSync(preview, results);
 }
+
+return { previewBulk, executeBulk, syncAll, closeBulkPreview, resetBulkRuntime };
+}
+
+export type WorkspaceBulkFeature = ReturnType<typeof createWorkspaceBulkFeature>;

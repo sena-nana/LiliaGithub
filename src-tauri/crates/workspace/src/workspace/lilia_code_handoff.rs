@@ -25,7 +25,7 @@ pub async fn lilia_code_create_task_handoff(
     store.set(
         &format!("draft:{}", handoff.id),
         serde_json::to_value(&handoff).map_err(|error| error.to_string())?,
-    );
+    )?;
     store.save()?;
 
     match crate::workspace::app_delivery_handoff::deliver_task_handoff_via_app(&handoff).await {
@@ -130,7 +130,7 @@ fn create_task_handoff(
     store.set(
         &format!("draft:{}", handoff.id),
         serde_json::to_value(&handoff).map_err(|error| error.to_string())?,
-    );
+    )?;
     store.save()?;
 
     write_task_handoff_payload(&path, &handoff)?;
@@ -323,8 +323,8 @@ fn persist_handoff_status(
     store.set(
         &format!("status:{}", status.handoff_id),
         serde_json::to_value(status).map_err(|error| error.to_string())?,
-    );
-    store.save()
+    )?;
+    Ok(store.save()?)
 }
 
 fn load_handoff_status(
@@ -332,7 +332,7 @@ fn load_handoff_status(
     handoff_id: &str,
 ) -> Result<Option<LiliaCodeTaskHandoffStatus>, String> {
     app.store(LILIA_CODE_HANDOFF_STORE)?
-        .get(&format!("status:{handoff_id}"))
+        .get(&format!("status:{handoff_id}"))?
         .map(serde_json::from_value)
         .transpose()
         .map_err(|error| format!("读取任务交接状态失败：{error}"))
@@ -341,7 +341,7 @@ fn load_handoff_status(
 fn load_handoff_draft(app: &AppHandle, handoff_id: &str) -> Result<LiliaCodeTaskHandoff, String> {
     let value = app
         .store(LILIA_CODE_HANDOFF_STORE)?
-        .get(&format!("draft:{handoff_id}"))
+        .get(&format!("draft:{handoff_id}"))?
         .ok_or_else(|| "任务交接草稿已丢失，无法恢复结果入口".to_string())?;
     let handoff =
         serde_json::from_value(value).map_err(|error| format!("读取任务交接草稿失败：{error}"))?;

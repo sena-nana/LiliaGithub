@@ -11,8 +11,6 @@
     "core:window:allow-is-maximized",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-close",
-    "lilia:allow-set-window-backdrop",
-    "opener:default",
-    "store:default"
+    "lilia:allow-set-window-backdrop"
   ]
 }

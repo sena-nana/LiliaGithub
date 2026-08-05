@@ -2,13 +2,8 @@
 import { Heart, MessageCircle, Pencil, Trash2 } from "@lucide/vue";
 import { computed, reactive, ref, watch } from "vue";
 import { useWorkspace } from "../../composables/useWorkspace";
-import {
-  addGitHubIssueCommentReaction,
-  createGitHubIssueComment,
-  deleteGitHubIssueComment,
-  updateGitHubIssueComment,
-} from "../../services/workspace/client";
 import type { GitHubDiscussionTimelineItem } from "../../services/workspace/types";
+import { errorMessage, workspaceErrorCategory } from "../../services/workspace/errors";
 import RepoDiscussionTimeline from "./RepoDiscussionTimeline.vue";
 
 const props = defineProps<{
@@ -50,7 +45,8 @@ async function run<T>(key: string, action: () => Promise<T>): Promise<T | null> 
 
 async function submit() {
   const body = replyTo.value ? `@${replyTo.value.actor || ""} ${draft.value}`.trim() : draft.value;
-  const created = await run("create", () => createGitHubIssueComment(props.repoFullName, props.issueNumber, { body }));
+  const created = await run("create", async () =>
+    (await workspace.github.service()).createGitHubIssueComment(props.repoFullName, props.issueNumber, { body }));
   if (!created) return;
   items.value = [...items.value, created]; draft.value = ""; replyTo.value = null;
 }
@@ -58,29 +54,31 @@ async function submit() {
 function beginEdit(item: GitHubDiscussionTimelineItem) { editingId.value = item.id; editDraft.value = item.body ?? ""; }
 async function saveEdit(item: GitHubDiscussionTimelineItem) {
   if (!item.databaseId) return;
-  const updated = await run(`edit:${item.id}`, () => updateGitHubIssueComment(props.repoFullName, item.databaseId!, { body: editDraft.value }));
+  const updated = await run(`edit:${item.id}`, async () =>
+    (await workspace.github.service()).updateGitHubIssueComment(props.repoFullName, item.databaseId!, { body: editDraft.value }));
   if (!updated) return;
   items.value = items.value.map((value) => value.id === item.id ? updated : value); editingId.value = null; editDraft.value = "";
 }
 async function remove(item: GitHubDiscussionTimelineItem) {
   if (!item.databaseId) return;
-  const result = await run(`delete:${item.id}`, () => deleteGitHubIssueComment(props.repoFullName, item.databaseId!));
+  const result = await run(`delete:${item.id}`, async () =>
+    (await workspace.github.service()).deleteGitHubIssueComment(props.repoFullName, item.databaseId!));
   if (result !== null) { items.value = items.value.filter((value) => value.id !== item.id); deleteConfirmId.value = null; }
 }
 async function heart(item: GitHubDiscussionTimelineItem) {
   if (!item.databaseId) return;
-  const result = await run(`reaction:${item.id}`, () => addGitHubIssueCommentReaction(props.repoFullName, item.databaseId!, { content: "heart" }));
+  const result = await run(`reaction:${item.id}`, async () =>
+    (await workspace.github.service()).addGitHubIssueCommentReaction(props.repoFullName, item.databaseId!, { content: "heart" }));
   if (result !== null) reactionCounts[item.id] = (reactionCounts[item.id] ?? 0) + 1;
 }
 
 function recoverableError(error: unknown) {
-  const text = String(error).replace(/^Error:\s*/, "");
-  const lower = text.toLowerCase();
-  if (lower.includes("forbidden") || lower.includes("permission") || lower.includes("scope") || lower.includes("403") || text.includes("权限") || text.includes("授权")) return `当前 GitHub 授权无权执行此操作，请重新绑定有写权限的账号后重试。${text ? `（${text}）` : ""}`;
-  if (lower.includes("network") || lower.includes("timeout") || text.includes("连接失败") || text.includes("网络")) return `网络连接失败，草稿和当前页面状态已保留，请检查网络后重试。${text ? `（${text}）` : ""}`;
-  if (lower.includes("not found") || lower.includes("404") || text.includes("失效") || text.includes("不存在")) return `目标评论已不存在或对象已失效，请刷新详情后重试。${text ? `（${text}）` : ""}`;
-  if (text.includes("绑定已失效") || lower.includes("unauthorized")) return "GitHub 绑定已失效，请重新绑定后重试；草稿已保留。";
-  return text;
+  const category = workspaceErrorCategory(error);
+  if (category === "authentication") return "GitHub 绑定已失效，请重新绑定后重试；草稿已保留。";
+  if (category === "authorization") return "当前 GitHub 授权无权执行此操作，请重新绑定有写权限的账号后重试。";
+  if (category === "network" || category === "rate-limit") return "暂时无法连接 GitHub，草稿和当前页面状态已保留，请稍后重试。";
+  if (category === "not-found" || category === "conflict" || category === "validation") return "目标评论已不存在或对象已失效，请刷新详情后重试。";
+  return errorMessage(error);
 }
 </script>
 
@@ -119,7 +117,7 @@ function recoverableError(error: unknown) {
 <style scoped>
 .conversation-actions, .conversation-editor > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .conversation-actions button { min-height: 28px; }
-.conversation-actions .danger { color: var(--danger); }
+.conversation-actions .danger { color: var(--err); }
 .conversation-editor, .conversation-composer { display: grid; gap: 8px; margin-top: 10px; }
 .conversation-editor textarea, .conversation-composer textarea { width: 100%; resize: vertical; }
 .conversation-editor > div, .conversation-composer > button { justify-self: end; }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceCommandName } from "../src/services/workspace/contracts";
+import type { WorkspaceClient } from "../src/services/workspace/client";
 import {
   createGitHubRepositoryDiscussion,
   getGitHubRepositoryDiscussion,
@@ -10,15 +11,14 @@ import {
 } from "../src/services/workspace/discussions/client";
 
 const call = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/services/workspace/client", () => ({ call }));
+const client = { call } as unknown as WorkspaceClient;
 
 describe("workspace discussions client", () => {
   it("uses the registered commands and preserves nullable cursor/filter arguments", async () => {
     call.mockResolvedValue({});
 
-    await getGitHubRepositoryDiscussionMetadata("acme/repo");
-    await listGitHubRepositoryDiscussions("acme/repo", {
+    await getGitHubRepositoryDiscussionMetadata(client, "acme/repo");
+    await listGitHubRepositoryDiscussions(client, "acme/repo", {
       first: 10,
       after: "next",
       categoryId: "questions",
@@ -27,10 +27,10 @@ describe("workspace discussions client", () => {
       sort: "created",
       direction: "asc",
     });
-    await getGitHubRepositoryDiscussion("acme/repo", 7);
-    await listGitHubRepositoryDiscussionComments("acme/repo", 7, { first: 5, after: "comments" });
-    await listGitHubRepositoryDiscussionCommentReplies("acme/repo", "comment-id", { first: 4 });
-    await createGitHubRepositoryDiscussion("acme/repo", {
+    await getGitHubRepositoryDiscussion(client, "acme/repo", 7);
+    await listGitHubRepositoryDiscussionComments(client, "acme/repo", 7, { first: 5, after: "comments" });
+    await listGitHubRepositoryDiscussionCommentReplies(client, "acme/repo", "comment-id", { first: 4 });
+    await createGitHubRepositoryDiscussion(client, "acme/repo", {
       categoryId: "questions",
       title: "Question",
       body: "Body",

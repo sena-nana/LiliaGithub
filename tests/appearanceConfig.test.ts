@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiliaAppearanceSection } from "../src/ui";
+import { LiliaAppearanceSection } from "@lilia/ui/settings/sections";
 import {
   LILIA_UI_CONFIG,
   SETTINGS_SECTIONS,

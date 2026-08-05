@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Dropdown, UiButton, UiCard } from "../../../ui";
+import { Dropdown } from "@lilia/ui/search";
+import { UiButton, UiCard } from "@lilia/ui";
 import { computed, ref, watch } from "vue";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";

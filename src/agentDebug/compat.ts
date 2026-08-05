@@ -1,7 +1,9 @@
 import {
   recordAgentDebugLog,
+  summarizeAgentDebugValue,
+  type AgentDebugRedactionPolicy,
   type LiliaAgentDebugApi,
-} from "../ui";
+} from "@lilia/ui/diagnostics";
 
 type LiliaGithubAgentDebugWindow = Window & {
   __liliaAgentDebug?: LiliaAgentDebugApi;
@@ -15,6 +17,39 @@ interface InvokeTrace {
 }
 
 const MAX_SUMMARY_LENGTH = 500;
+const MAX_SUMMARY_DEPTH = 6;
+const SENSITIVE_FIELDS = new Set([
+  "authorization",
+  "body",
+  "cookie",
+  "devicecode",
+  "diff",
+  "log",
+  "logs",
+  "output",
+  "password",
+  "patch",
+  "privatekey",
+  "stderr",
+  "stdout",
+  "text",
+]);
+
+function isSensitiveField(key: string): boolean {
+  const normalized = key.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  return SENSITIVE_FIELDS.has(normalized) ||
+    normalized.endsWith("content") ||
+    normalized.endsWith("path") ||
+    normalized.endsWith("root") ||
+    normalized.endsWith("secret") ||
+    normalized.endsWith("token") ||
+    normalized.endsWith("url");
+}
+
+const workspaceInvokeRedactionPolicy: AgentDebugRedactionPolicy = ({ key, value }) => {
+  if (typeof value === "string" && (key === null || /^\d+$/.test(key))) return "redact";
+  return key !== null && isSensitiveField(key) ? "redact" : undefined;
+};
 
 export function installLiliaGithubAgentDebugCompat(): () => void {
   if (typeof window === "undefined") return () => undefined;
@@ -35,7 +70,7 @@ export function recordAgentDebugInvokeStart(command: string, args: unknown): Inv
   if (typeof window === "undefined" || command.startsWith("agent_debug_")) return null;
   if (!(window as LiliaGithubAgentDebugWindow).__liliaAgentDebug) return null;
   const trace: InvokeTrace = {
-    argsSummary: summarize(args),
+    argsSummary: summarizeWorkspaceInvoke(args),
     command,
     startedAt: Date.now(),
   };
@@ -59,9 +94,9 @@ export function recordAgentDebugInvokeEnd(
       kind: "invoke",
       ...trace,
       durationMs: finishedAt - trace.startedAt,
-      error: status === "error" ? errorMessage(value) : null,
+      error: status === "error" ? summarizeWorkspaceInvoke(value) : null,
       finishedAt,
-      resultSummary: status === "success" ? summarize(value) : null,
+      resultSummary: status === "success" ? summarizeWorkspaceInvoke(value) : null,
       status,
     },
     message: `invoke:${trace.command}:${status}`,
@@ -69,14 +104,11 @@ export function recordAgentDebugInvokeEnd(
   });
 }
 
-function summarize(value: unknown): string {
-  try {
-    return JSON.stringify(value)?.slice(0, MAX_SUMMARY_LENGTH) ?? "";
-  } catch {
-    return String(value).slice(0, MAX_SUMMARY_LENGTH);
-  }
-}
-
-function errorMessage(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
+function summarizeWorkspaceInvoke(value: unknown): string {
+  return summarizeAgentDebugValue(value, {
+    maxDepth: MAX_SUMMARY_DEPTH,
+    maxEntries: 100,
+    maxLength: MAX_SUMMARY_LENGTH,
+    policy: workspaceInvokeRedactionPolicy,
+  });
 }

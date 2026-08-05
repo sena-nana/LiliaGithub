@@ -25,17 +25,14 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
+import { Dropdown } from "@lilia/ui/search";
 import {
-  Dropdown,
   LiliaBottomPanel,
   LiliaInspector,
   LiliaPrimaryContent,
   LiliaWorkspace,
-  SettingsRow,
-  UiDialog,
-  UiSelect,
-  UiSwitch,
-} from "../../ui";
+} from "@lilia/ui/layouts";
+import { SettingsRow, UiDialog, UiSelect, UiSwitch } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoNotificationPreferencesCard from "./RepoNotificationPreferencesCard.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
@@ -45,7 +42,7 @@ import {
   type PullRequestState,
 } from "./pullRequestPanelTypes";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
-import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
+import { useSessionContext } from "../../composables/sessionContext";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -53,43 +50,6 @@ import { useWorkspaceRecentContext } from "../../composables/useWorkspaceRecentC
 import { useAccountPreferences } from "../../composables/useAccountPreferences";
 import type { RepoSyncIssueDisplay } from "../../composables/workspace/state";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
-import {
-  createGitHubIssue,
-  createGitHubPullRequest,
-  createGitHubRelease,
-  deleteGitHubRelease,
-  deleteGitHubReleaseAsset,
-  attachGitHubWorkflowArtifactAsset,
-  getGitHubIssueDiscussion,
-  getRepoFilePreview,
-  getRepoStorageStats,
-  getGitHubIssueFilterMetadata,
-  getGitHubPullRequest,
-  getGitHubPullRequestDiscussion,
-  getGitHubReleaseByTag,
-  getGitHubRepoManagement,
-  getGitHubWorkflowRunDetail,
-  listGitHubBranches,
-  listRepoFiles,
-  listGitHubIssues,
-  listGitHubReleases,
-  listGitHubPullRequestChecks,
-  listGitHubPullRequests,
-  listGitHubWorkflowRuns,
-  listGitHubIssueAssignees,
-  listGitHubIssueLabels,
-  mergeGitHubPullRequest,
-  pickFiles,
-  updateGitHubIssue,
-  updateGitHubPullRequest,
-  updateGitHubRelease,
-  updateGitHubRepoSettings,
-  uploadGitHubReleaseAsset,
-  deleteGitHubRepo,
-  openUrl,
-  isConfirmedMissingResource,
-  isGitHubBindingExpiredError,
-} from "../../services/workspace/client";
 import type {
   BranchSummary,
   CommitSummary,
@@ -113,7 +73,6 @@ import type {
   ProjectLaunchConfig,
   ProjectLaunchLog,
   RepoChange,
-  RepoFilePreview,
   RepoStorageStats,
   RepoSummary,
 } from "../../services/workspace/types";
@@ -125,13 +84,22 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
+import { workspaceErrorCategory } from "../../services/workspace/errors";
+import { isConfirmedMissingResource, isGitHubBindingExpiredError } from "../../utils/githubErrors";
 import {
-  normalizeRepoProjectCreateFlow,
   normalizeRepoProjectTab,
   repoRoute,
   type RepoProjectTab,
   type RepoRouteTab,
 } from "../../utils/repoRoutes";
+import {
+  RepoRouteStateCodec,
+  type RepoActionFilters,
+  type RepoActionState,
+  type RepoIssueFilters,
+  type RepoIssueState,
+  type RepoProjectRouteDefaults,
+} from "../../utils/repoRouteState";
 import {
   CommitDetailCard,
   MarkdownReadme,
@@ -167,6 +135,14 @@ import {
   loadGitHubIssueTemplates,
   loadGitHubPullRequestTemplates,
 } from "../../utils/githubTemplates";
+import {
+  useRepoActionsController,
+  useRepoFilesHistoryController,
+  useRepoIssuesController,
+  useRepoPullsController,
+  useRepoReleasesController,
+  useRepoSettingsController,
+} from "./controllers/useRepoProjectControllers";
 import type {
   GitHubIssueTemplate,
   GitHubIssueTemplateAnswers,
@@ -177,10 +153,8 @@ import type {
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = RepoProjectTab;
 type ProjectContentMode = RepoProjectSectionKey | GitTab;
-type IssueState = "open" | "closed" | "all";
-type ActionState = "all" | "active" | "completed";
-type ActionSort = "updated" | "created" | "run-number";
-type ActionDirection = "asc" | "desc";
+type IssueState = RepoIssueState;
+type ActionState = RepoActionState;
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
@@ -211,57 +185,12 @@ type ProjectSidebarError = {
   retrying?: boolean;
   guidance: RecoveryGuidance;
 };
-type IssuePanelFilters = {
-  creator: string | null;
-  assignee: string | null;
-  labels: string[];
-  milestone: string | number | null;
-  project: string | null;
-  sort: "number" | "created" | "updated" | "comments";
-  direction: "asc" | "desc";
-  query: string;
-};
-type ActionPanelFilters = {
-  workflow: string | null;
-  branch: string | null;
-  event: string | null;
-  actor: string | null;
-  status: string | null;
-  sort: ActionSort;
-  direction: ActionDirection;
-  query: string;
-};
+type IssuePanelFilters = RepoIssueFilters;
+type ActionPanelFilters = RepoActionFilters;
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = { scrollToAnchor: (hash: string) => void };
 type RefreshHandle = { refresh: () => Promise<void> };
-type SharedPanelFilters = Pick<
-  IssuePanelFilters,
-  "creator" | "assignee" | "labels" | "milestone" | "project" | "sort" | "direction" | "query"
->;
-type RouteFilterKeys = {
-  state: string;
-  query: string;
-  creator: string;
-  assignee: string;
-  labels: string;
-  milestone: string;
-  project: string;
-  sort: string;
-  direction: string;
-  review?: string;
-};
-type ActionRouteFilterKeys = {
-  state: string;
-  query: string;
-  workflow: string;
-  branch: string;
-  event: string;
-  actor: string;
-  status: string;
-  sort: string;
-  direction: string;
-};
 
 const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
   authors: [],
@@ -271,13 +200,6 @@ const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
   projects: [],
 });
 
-const issueStates = ["open", "closed", "all"] as const;
-const pullRequestStates = ["open", "closed", "merged"] as const;
-const actionStates = ["all", "active", "completed"] as const;
-const listSorts = ["number", "created", "updated", "comments"] as const;
-const actionSorts = ["updated", "created", "run-number"] as const;
-const listDirections = ["asc", "desc"] as const;
-const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
 const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string; agentId: string }[] = [
   { value: "all", label: "全部", agentId: "repo.release.filters.type.all" },
   { value: "stable", label: "Stable", agentId: "repo.release.filters.type.stable" },
@@ -285,40 +207,6 @@ const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string; ag
   { value: "prerelease", label: "Pre-release", agentId: "repo.release.filters.type.prerelease" },
   { value: "draft", label: "Draft", agentId: "repo.release.filters.type.draft" },
 ];
-const issueRouteKeys: RouteFilterKeys = {
-  state: "issueState",
-  query: "issueQ",
-  creator: "issueCreator",
-  assignee: "issueAssignee",
-  labels: "issueLabels",
-  milestone: "issueMilestone",
-  project: "issueProject",
-  sort: "issueSort",
-  direction: "issueDirection",
-};
-const pullRequestRouteKeys: RouteFilterKeys = {
-  state: "pullState",
-  query: "pullQ",
-  creator: "pullCreator",
-  assignee: "pullAssignee",
-  labels: "pullLabels",
-  milestone: "pullMilestone",
-  project: "pullProject",
-  sort: "pullSort",
-  direction: "pullDirection",
-  review: "pullReview",
-};
-const actionRouteKeys: ActionRouteFilterKeys = {
-  state: "actionState",
-  query: "actionQ",
-  workflow: "actionWorkflow",
-  branch: "actionBranch",
-  event: "actionEvent",
-  actor: "actionActor",
-  status: "actionStatus",
-  sort: "actionSort",
-  direction: "actionDirection",
-};
 
 const blankIssuePanelFilters = (): IssuePanelFilters => ({
   creator: null,
@@ -407,6 +295,7 @@ const emit = defineEmits<{
   retrySync: [];
 }>();
 const workspace = useWorkspace();
+const sessionContext = useSessionContext();
 const workspaceRecentContext = useWorkspaceRecentContext();
 const accountPreferences = useAccountPreferences();
 const route = useRoute();
@@ -434,20 +323,13 @@ const fileBrowser = useRepoFileBrowser({
 });
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
-const readmePreview = ref<RepoFilePreview | null>(null);
-const readmeLoaded = ref(false);
-const readmeLoading = ref(false);
-const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
-const pulls = ref<GitHubPullRequest[]>([]);
 const pullRequestDiscussion = ref<GitHubPullRequestDiscussion | null>(null);
 const pullRequestDiscussionLoading = ref(false);
 const pullRequestDiscussionError = ref<string | null>(null);
 const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
-const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
-const pullsLoadedKey = ref<string | null>(null);
 const focusedPullRequestNumber = ref<number | null>(null);
 const focusedDiscussionNumber = ref<number | null>(null);
 const discussionCreateView = ref(false);
@@ -462,7 +344,6 @@ const pullRequestTemplateKey = ref(blankPullRequestTemplate().key);
 const pullRequestTemplatesLoading = ref(false);
 const pullRequestTemplatesLoadedRepo = ref<string | null>(null);
 const pullRequestMergeMethod = ref<"merge" | "squash" | "rebase">("merge");
-const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
 const remoteDeleted = ref(false);
 const deleteDialogTarget = ref<DeleteTarget | null>(null);
@@ -471,29 +352,21 @@ const deleteError = ref<string | null>(null);
 const archiveDialogOpen = ref(false);
 const archiveConfirmInput = ref("");
 const archiveError = ref<string | null>(null);
-const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const settingsBranches = ref<BranchSummary[]>([]);
-const issues = ref<GitHubIssue[]>([]);
-const issuesLoading = ref(false);
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
 const issueDiscussionLoading = ref(false);
 const issueDiscussionError = ref<string | null>(null);
-const issuesLoadedKey = ref<string | null>(null);
-const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
-const releases = ref<GitHubRelease[]>([]);
-const releasesLoading = ref(false);
 const releasesLoaded = ref(false);
-const releasesError = ref<string | null>(null);
 const selectingReleaseAssets = ref(false);
 const focusedReleaseTag = ref<string | null>(null);
 const releaseTypeFilter = ref<ReleaseTypeFilter>("all");
+const releaseTargetError = ref<string | null>(null);
 const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
-const repoReleasesPanel = ref<{ openCreate: () => void } | null>(null);
 const repoDiscussionsPanel = ref<RefreshHandle | null>(null);
 const actionsInfoSidebar = ref<{ refreshCurrentRun: () => Promise<void> } | null>(null);
 const commitDetailCard = ref<RefreshHandle | null>(null);
@@ -533,18 +406,71 @@ const editingIssueAssignees = ref("");
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
 const focusedJobId = ref<number | null>(null);
+const issuesController = useRepoIssuesController({
+  workspace,
+  repoFullName: () => props.repoFullName,
+  available: () => resolvedRepoContext.value.capabilities.issues.available,
+  remoteDeleted: () => remoteDeleted.value,
+  options: () => ({ ...issueListOptions.value, labels: [...(issueListOptions.value.labels ?? [])] }),
+  focus: () => focusedIssueNumber.value,
+});
+const pullsController = useRepoPullsController({
+  workspace,
+  repoFullName: () => props.repoFullName,
+  available: () => resolvedRepoContext.value.capabilities.pulls.available,
+  remoteDeleted: () => remoteDeleted.value,
+  options: () => ({ ...pullListOptions.value, labels: [...(pullListOptions.value.labels ?? [])] }),
+  focus: () => focusedPullRequestNumber.value,
+});
+const actionsController = useRepoActionsController({
+  workspace,
+  repoFullName: () => props.repoFullName,
+  available: () => resolvedRepoContext.value.capabilities.actions.available,
+  remoteDeleted: () => remoteDeleted.value,
+  state: () => ({ state: actionState.value, filters: actionPanelFilters.value }),
+  focus: () => focusedRunId.value,
+});
+const releasesController = useRepoReleasesController({
+  workspace,
+  repoFullName: () => props.repoFullName,
+  available: () => resolvedRepoContext.value.capabilities.issues.available,
+  remoteDeleted: () => remoteDeleted.value,
+  filter: () => releaseTypeFilter.value,
+  focus: () => focusedReleaseTag.value,
+});
+const settingsController = useRepoSettingsController({
+  workspace,
+  repoFullName: () => props.repoFullName,
+  available: () => resolvedRepoContext.value.capabilities.settings.available,
+  remoteDeleted: () => remoteDeleted.value,
+});
+const filesHistoryController = useRepoFilesHistoryController({
+  workspace,
+  repoId: () => props.repoId,
+  provider: () => resolvedRepoContext.value.capabilities.files.provider,
+  available: () => resolvedRepoContext.value.capabilities.files.available,
+});
+const issues = issuesController.items;
+const issuesLoading = issuesController.loading;
+const pulls = pullsController.items;
+const pullsLoading = pullsController.loading;
+const workflowRuns = actionsController.items;
+const actionsLoading = actionsController.loading;
+const releases = releasesController.items;
+const releasesLoading = releasesController.loading;
+const releasesError = computed(() => releaseTargetError.value ?? releasesController.error.value);
+const settings = settingsController.data;
+const readmePreview = filesHistoryController.preview;
+const readmeLoading = filesHistoryController.loading;
+const readmeError = filesHistoryController.error;
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
 const componentEpoch = useComponentEpoch();
-const readmeLoader = createLatestAsyncLoader({ componentEpoch });
-const settingsLoader = createLatestAsyncLoader({ componentEpoch });
-const issuesLoader = createLatestAsyncLoader({ componentEpoch });
+const settingsBranchesLoader = createLatestAsyncLoader({ componentEpoch });
 const issueDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
-const pullsLoader = createLatestAsyncLoader({ componentEpoch });
 const pullRequestDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
 const pullChecksLoader = createLatestAsyncLoader({ componentEpoch });
-const actionsLoader = createLatestAsyncLoader({ componentEpoch });
-const releasesLoader = createLatestAsyncLoader({ componentEpoch });
+const projectTargetLoader = createLatestAsyncLoader({ componentEpoch });
 const settingsSaveTracker = createPendingTaskTracker();
 const issueCreateTracker = createPendingTaskTracker();
 const issueUpdateTracker = createPendingTaskTracker();
@@ -589,26 +515,24 @@ const deletingRepo = remoteDeleteTracker.running;
 const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
 let githubMutationGeneration = 0;
+let activeProjectTargetLoadKey = "";
+let projectRouteApplyGeneration = 0;
 let aboutTopicResizeObserver: ResizeObserver | null = null;
 
 function syncFileSelectionRoute(path: string) {
-  if (activeSection.value !== "files" || route.query.file === path) return;
-  const query: LocationQueryRaw = { ...route.query, file: path };
-  delete query.hash;
+  if (activeSection.value !== "files" || RepoRouteStateCodec.fileTarget(route.query).path === path) return;
+  const query = RepoRouteStateCodec.patchFileTarget(route.query, path);
   void router.replace({ path: route.path, query, hash: route.hash });
 }
 
 function clearMissingFileTarget(path: string) {
-  if (route.query.file !== path) return;
-  const query: LocationQueryRaw = { ...route.query };
-  delete query.file;
-  delete query.hash;
+  if (RepoRouteStateCodec.fileTarget(route.query).path !== path) return;
+  const query = RepoRouteStateCodec.patchFileTarget(route.query, null);
   void router.replace({ path: route.path, query, hash: route.hash });
 }
 
 function clearMissingProjectTarget(...keys: string[]) {
-  const query: LocationQueryRaw = { ...route.query };
-  for (const key of keys) delete query[key];
+  const query = RepoRouteStateCodec.without(route.query, ...keys);
   void router.replace({ path: route.path, query, hash: route.hash });
 }
 
@@ -1038,7 +962,6 @@ const issueListOptions = computed<GitHubIssueListOptions>(() => ({
   project: issuePanelFilters.value.project,
   query: issuePanelFilters.value.query,
 }));
-const issueListKey = computed(() => JSON.stringify(issueListOptions.value));
 const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
   state: pullState.value,
   perPage: 100,
@@ -1052,7 +975,6 @@ const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
   review: pullRequestPanelFilters.value.review,
   query: pullRequestPanelFilters.value.query,
 }));
-const pullListKey = computed(() => JSON.stringify(pullListOptions.value));
 const filteredActionRuns = computed(() =>
   sortActionRuns(workflowRuns.value.filter((run) => actionRunMatchesFilters(run)))
 );
@@ -1165,14 +1087,15 @@ const projectSidebarContentUnavailable = computed(() =>
   (projectSidebarMode.value === "release" && Boolean(releasesAccessUnavailable.value)) ||
   (projectSidebarMode.value === "settings" && Boolean(settingsAccessUnavailable.value))
 );
-const routedProjectTab = computed(() => normalizeRepoProjectTab(route.query.projectTab));
+const routedProjectTab = computed(() => RepoRouteStateCodec.projectTab(route.query));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeRepoProjectTab(props.projectTab) ?? "readme");
-const routedProjectCreateFlow = computed(() => normalizeRepoProjectCreateFlow(route.query.create));
-const routedReleaseTag = computed(() => routeStringValue(route.query.releaseTag));
+const routedProjectState = computed(() => currentRouteState());
+const routedProjectCreateFlow = computed(() => routedProjectState.value?.create ?? null);
+const routedReleaseTag = computed(() => routedProjectState.value?.releaseTag ?? null);
 const routedReleaseType = computed(() => releaseTypeFilterFromRoute());
-const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
-const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
-const routedProjectDiscussion = computed(() => normalizePositiveNumber(route.query.discussion));
+const routedProjectIssue = computed(() => routedProjectState.value?.issue ?? null);
+const routedProjectPullRequest = computed(() => routedProjectState.value?.pull ?? null);
+const routedProjectDiscussion = computed(() => routedProjectState.value?.discussion ?? null);
 const routedIssueFilterState = computed(() => JSON.stringify({
   state: issueStateFromRoute(),
   filters: issuePanelFiltersFromRoute(),
@@ -1314,7 +1237,8 @@ async function loadStorageStats() {
   const repoId = props.repoId;
   await storageStatsLoader.run(repoId, async (runId) => {
     try {
-      const result = await getRepoStorageStats(repoId);
+      const service = await workspace.github.service();
+      const result = await service.getRepoStorageStats(repoId);
       if (storageStatsLoader.isCurrent(runId) && props.repoId === repoId && isLocalRepo.value) {
         storageStats.value = result;
       }
@@ -1326,109 +1250,64 @@ async function loadStorageStats() {
   });
 }
 
-function routeStringValue(value: unknown) {
-  const next = Array.isArray(value) ? value[0] : value;
-  if (typeof next !== "string") return null;
-  const trimmed = next.trim();
-  return trimmed || null;
+function projectRouteDefaults(): RepoProjectRouteDefaults {
+  return {
+    issues: {
+      state: accountPreferences.value.issues.state,
+      sort: accountPreferences.value.issues.sort,
+      direction: accountPreferences.value.issues.direction,
+    },
+    pulls: {
+      state: accountPreferences.value.pullRequests.state,
+      sort: accountPreferences.value.pullRequests.sort,
+      direction: accountPreferences.value.pullRequests.direction,
+    },
+    actions: {
+      state: accountPreferences.value.actions.state,
+      sort: accountPreferences.value.actions.sort,
+      direction: accountPreferences.value.actions.direction,
+    },
+  };
 }
 
-function routeStringList(value: unknown) {
-  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
-  return values
-    .flatMap((item) => item.split(","))
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function routeEnum<T extends string>(value: unknown, allowed: readonly T[]) {
-  const next = routeStringValue(value);
-  return next && (allowed as readonly string[]).includes(next) ? next as T : null;
+function currentRouteState() {
+  return RepoRouteStateCodec.parse(route, projectRouteDefaults());
 }
 
 function issueStateFromRoute(): IssueState {
-  return routeEnum(route.query[issueRouteKeys.state], issueStates) ?? accountPreferences.value.issues.state;
+  return currentRouteState()?.filters.issues.state ?? accountPreferences.value.issues.state;
 }
 
 function pullRequestStateFromRoute(): PullRequestState {
-  return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? accountPreferences.value.pullRequests.state;
+  return currentRouteState()?.filters.pulls.state ?? accountPreferences.value.pullRequests.state;
 }
 
 function actionStateFromRoute(): ActionState {
-  return routeEnum(route.query[actionRouteKeys.state], actionStates) ?? accountPreferences.value.actions.state;
+  return currentRouteState()?.filters.actions.state ?? accountPreferences.value.actions.state;
 }
 
 function releaseTypeFilterFromRoute(): ReleaseTypeFilter {
-  return routeEnum(route.query.releaseType, releaseTypeFilters.map((item) => item.value)) ?? "all";
-}
-
-function sharedPanelFiltersFromRoute<T extends SharedPanelFilters>(
-  keys: RouteFilterKeys,
-  defaults: T,
-): T {
-  return {
-    ...defaults,
-    creator: routeStringValue(route.query[keys.creator]),
-    assignee: routeStringValue(route.query[keys.assignee]),
-    labels: routeStringList(route.query[keys.labels]),
-    milestone: routeStringValue(route.query[keys.milestone]),
-    project: routeStringValue(route.query[keys.project]),
-    sort: routeEnum(route.query[keys.sort], listSorts) ?? defaults.sort,
-    direction: routeEnum(route.query[keys.direction], listDirections) ?? defaults.direction,
-    query: routeStringValue(route.query[keys.query]) ?? "",
-  };
+  return currentRouteState()?.releaseType ?? "all";
 }
 
 function issuePanelFiltersFromRoute(): IssuePanelFilters {
-  return sharedPanelFiltersFromRoute(issueRouteKeys, {
-    ...blankIssuePanelFilters(),
-    sort: accountPreferences.value.issues.sort,
-    direction: accountPreferences.value.issues.direction,
-  });
+  const filters = currentRouteState()?.filters.issues.filters;
+  return filters ? { ...filters, labels: [...filters.labels] } : blankIssuePanelFilters();
 }
 
 function pullRequestPanelFiltersFromRoute(): PullRequestPanelFilters {
-  return {
-    ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, {
-      ...blankPullRequestPanelFilters(),
-      sort: accountPreferences.value.pullRequests.sort,
-      direction: accountPreferences.value.pullRequests.direction,
-    }),
-    review: routeEnum(route.query[pullRequestRouteKeys.review ?? ""], pullRequestReviews),
-  };
+  const filters = currentRouteState()?.filters.pulls.filters;
+  return filters ? { ...filters, labels: [...filters.labels] } : blankPullRequestPanelFilters();
 }
 
 function actionPanelFiltersFromRoute(): ActionPanelFilters {
-  const defaults = {
-    ...blankActionPanelFilters(),
-    sort: accountPreferences.value.actions.sort,
-    direction: accountPreferences.value.actions.direction,
-  };
-  return {
-    ...defaults,
-    workflow: routeStringValue(route.query[actionRouteKeys.workflow]),
-    branch: routeStringValue(route.query[actionRouteKeys.branch]),
-    event: routeStringValue(route.query[actionRouteKeys.event]),
-    actor: routeStringValue(route.query[actionRouteKeys.actor]),
-    status: routeStringValue(route.query[actionRouteKeys.status]),
-    sort: routeEnum(route.query[actionRouteKeys.sort], actionSorts) ?? defaults.sort,
-    direction: routeEnum(route.query[actionRouteKeys.direction], listDirections) ?? defaults.direction,
-    query: routeStringValue(route.query[actionRouteKeys.query]) ?? "",
-  };
-}
-
-function normalizePositiveNumber(value: unknown) {
-  const next = Array.isArray(value) ? value[0] : value;
-  if (typeof next !== "string") return null;
-  const parsed = Number.parseInt(next, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) return null;
-  return parsed;
+  return currentRouteState()?.filters.actions.filters ?? blankActionPanelFilters();
 }
 
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
   if (tab === "repo") {
     if (route.path.endsWith("/files")) return "files";
-    return normalizeRepoProjectTab(route.query.projectTab) ?? normalizeRepoProjectTab(props.projectTab) ?? "readme";
+    return RepoRouteStateCodec.projectTab(route.query) ?? normalizeRepoProjectTab(props.projectTab) ?? "readme";
   }
   if (tab === "run") return "launch";
   return tab;
@@ -1562,7 +1441,7 @@ function sameActionPanelFilters(left: ActionPanelFilters, right: ActionPanelFilt
     left.query === right.query;
 }
 
-function sameSharedPanelFilters(left: SharedPanelFilters, right: SharedPanelFilters) {
+function sameSharedPanelFilters(left: IssuePanelFilters, right: IssuePanelFilters) {
   return left.creator === right.creator &&
     left.assignee === right.assignee &&
     left.milestone === right.milestone &&
@@ -1581,140 +1460,41 @@ function pushProjectTabRoute(tab: ProjectTab) {
 }
 
 function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
-  const query: LocationQueryRaw = { ...route.query };
-  delete query.issue;
-  delete query.pr;
-  delete query.discussion;
-  delete query.run;
-  delete query.job;
-  delete query.releaseTag;
-  delete query.releaseType;
-  delete query.create;
-  clearRouteFilters(query, issueRouteKeys);
-  clearRouteFilters(query, pullRequestRouteKeys);
-  clearActionRouteFilters(query);
-
-  if (tab === "readme") {
-    delete query.projectTab;
-    return query;
-  }
-
-  query.projectTab = tab;
-  if (tab === "issues") {
-    applyRouteFilters(query, issueRouteKeys, issueState.value, "open", issuePanelFilters.value, blankIssuePanelFilters());
-    if (focusedIssueNumber.value) query.issue = String(focusedIssueNumber.value);
-  } else if (tab === "pulls") {
-    applyRouteFilters(
-      query,
-      pullRequestRouteKeys,
-      pullState.value,
-      "open",
-      pullRequestPanelFilters.value,
-      blankPullRequestPanelFilters(),
-    );
-    if (focusedPullRequestNumber.value) query.pr = String(focusedPullRequestNumber.value);
-  } else if (tab === "discussions") {
-    if (focusedDiscussionNumber.value) query.discussion = String(focusedDiscussionNumber.value);
-    if (discussionCreateView.value) query.create = "discussion";
-  } else if (tab === "actions") {
-    applyActionRouteFilters(query);
-    if (focusedRunId.value) query.run = String(focusedRunId.value);
-    if (focusedJobId.value) query.job = String(focusedJobId.value);
-  } else if (tab === "release") {
-    if (focusedReleaseTag.value) query.releaseTag = focusedReleaseTag.value;
-    if (releaseTypeFilter.value !== "all") query.releaseType = releaseTypeFilter.value;
-  }
-  return query;
-}
-
-function clearRouteFilters(query: LocationQueryRaw, keys: RouteFilterKeys) {
-  for (const key of Object.values(keys)) delete query[key];
-}
-
-function clearActionRouteFilters(query: LocationQueryRaw) {
-  for (const key of Object.values(actionRouteKeys)) delete query[key];
-}
-
-function applyRouteFilters<T extends SharedPanelFilters>(
-  query: LocationQueryRaw,
-  keys: RouteFilterKeys,
-  state: string,
-  defaultState: string,
-  filters: T,
-  defaults: T,
-) {
-  setRouteString(query, keys.state, state === defaultState ? null : state);
-  setRouteString(query, keys.query, filters.query);
-  setRouteString(query, keys.creator, filters.creator);
-  setRouteString(query, keys.assignee, filters.assignee);
-  setRouteList(query, keys.labels, filters.labels);
-  setRouteString(query, keys.milestone, filters.milestone);
-  setRouteString(query, keys.project, filters.project);
-  setRouteString(query, keys.sort, filters.sort === defaults.sort ? null : filters.sort);
-  setRouteString(query, keys.direction, filters.direction === defaults.direction ? null : filters.direction);
-  if (keys.review && "review" in filters) {
-    setRouteString(query, keys.review, filters.review as string | null);
-  }
-}
-
-function applyActionRouteFilters(query: LocationQueryRaw) {
-  const filters = actionPanelFilters.value;
-  const defaults = blankActionPanelFilters();
-  setRouteString(query, actionRouteKeys.state, actionState.value === "all" ? null : actionState.value);
-  setRouteString(query, actionRouteKeys.query, filters.query);
-  setRouteString(query, actionRouteKeys.workflow, filters.workflow);
-  setRouteString(query, actionRouteKeys.branch, filters.branch);
-  setRouteString(query, actionRouteKeys.event, filters.event);
-  setRouteString(query, actionRouteKeys.actor, filters.actor);
-  setRouteString(query, actionRouteKeys.status, filters.status);
-  setRouteString(query, actionRouteKeys.sort, filters.sort === defaults.sort ? null : filters.sort);
-  setRouteString(query, actionRouteKeys.direction, filters.direction === defaults.direction ? null : filters.direction);
-}
-
-function setRouteString(query: LocationQueryRaw, key: string, value: string | number | null | undefined) {
-  const next = typeof value === "number" ? String(value) : value?.trim();
-  if (next) {
-    query[key] = next;
-  } else {
-    delete query[key];
-  }
-}
-
-function setRouteList(query: LocationQueryRaw, key: string, values: readonly string[]) {
-  const next = values.map((value) => value.trim()).filter(Boolean);
-  if (next.length) {
-    query[key] = next;
-  } else {
-    delete query[key];
-  }
+  return RepoRouteStateCodec.projectQuery(route.query, tab, {
+    issues: { state: issueState.value, filters: issuePanelFilters.value },
+    pulls: { state: pullState.value, filters: pullRequestPanelFilters.value },
+    actions: { state: actionState.value, filters: actionPanelFilters.value },
+    issue: focusedIssueNumber.value,
+    pull: focusedPullRequestNumber.value,
+    discussion: focusedDiscussionNumber.value,
+    run: focusedRunId.value,
+    job: focusedJobId.value,
+    releaseTag: focusedReleaseTag.value,
+    releaseType: releaseTypeFilter.value,
+    create: discussionCreateView.value ? "discussion" : null,
+  }, projectRouteDefaults());
 }
 
 function sameRouteQuery(current: typeof route.query, next: LocationQueryRaw) {
-  return normalizedQueryEntries(current) === normalizedQueryEntries(next);
-}
-
-function normalizedQueryEntries(query: typeof route.query | LocationQueryRaw) {
-  return JSON.stringify(
-    Object.entries(query)
-      .flatMap(([key, value]) => {
-        if (value == null) return [];
-        const values = Array.isArray(value) ? value : [value];
-        return values
-          .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
-          .map((item) => [key, String(item)] as const);
-      })
-      .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
-        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
-      ),
-  );
+  return RepoRouteStateCodec.sameQuery(current, next);
 }
 
 function clearProjectCreateRoute() {
   if (!routedProjectCreateFlow.value) return;
-  const query: LocationQueryRaw = { ...route.query };
-  delete query.create;
+  const query = RepoRouteStateCodec.without(route.query, "create");
   if (sameRouteQuery(route.query, query)) return;
   void router.replace({ path: route.path, query });
+}
+
+function openReleaseCreateView() {
+  const query = RepoRouteStateCodec.projectQuery(route.query, "release", {
+    releaseTag: focusedReleaseTag.value,
+    releaseType: releaseTypeFilter.value,
+    create: "release",
+  }, projectRouteDefaults());
+  const path = repoRoute(props.repoId);
+  if (route.path === path && sameRouteQuery(route.query, query)) return;
+  void router.push({ path, query });
 }
 
 function hasRun(runId: number) {
@@ -1842,11 +1622,10 @@ function githubAccessUnavailable(
       reason: capability.reason ?? "GitHub 功能暂不可用。",
     };
   }
-  if (!error || !isGitHubBindingExpiredError(error)) return null;
-  const lower = error.toLowerCase();
-  const permissionDenied = error.includes("HTTP 403") ||
-    lower.includes("forbidden") ||
-    lower.includes("resource not accessible");
+  if (!error) return null;
+  const category = workspaceErrorCategory(error);
+  if (category !== "authentication" && category !== "authorization" && !isGitHubBindingExpiredError(error)) return null;
+  const permissionDenied = category === "authorization";
   return {
     title: `${section} 暂不可用`,
     reason: permissionDenied
@@ -1908,22 +1687,27 @@ async function focusRun(runId: number | null | undefined) {
   if (!hasRun(runId)) {
     const repoFullName = props.repoFullName;
     if (!repoFullName) return;
-    try {
-      const detail = await getGitHubWorkflowRunDetail(repoFullName, runId, { forceRefresh: true });
-      workflowRuns.value = [detail.run, ...workflowRuns.value.filter((run) => run.id !== runId)];
-      const jobId = focusedJobId.value;
-      if (jobId && !detail.jobs.some((job) => job.id === jobId)) {
-        focusedJobId.value = null;
-        clearMissingProjectTarget("job");
+    await projectTargetLoader.run(`${repoFullName}:run:${runId}`, async (loadId) => {
+      try {
+        const service = await workspace.github.service();
+        const detail = await service.getGitHubWorkflowRunDetail(repoFullName, runId, { forceRefresh: true });
+        if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+        actionsController.updateItems((runs) => [detail.run, ...runs.filter((run) => run.id !== runId)]);
+        const jobId = focusedJobId.value;
+        if (jobId && !detail.jobs.some((job) => job.id === jobId)) {
+          focusedJobId.value = null;
+          clearMissingProjectTarget("job");
+        }
+      } catch (err) {
+        if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+        if (isConfirmedMissingResource(err)) {
+          focusedRunId.value = null;
+          focusedJobId.value = null;
+          clearMissingProjectTarget("run", "job");
+        }
       }
-    } catch (err) {
-      if (isConfirmedMissingResource(err)) {
-        focusedRunId.value = null;
-        focusedJobId.value = null;
-        clearMissingProjectTarget("run", "job");
-      }
-      return;
-    }
+    });
+    if (!isCurrentRemoteRepo(repoFullName) || !hasRun(runId)) return;
   }
   focusedRunId.value = runId;
   await loadReleases();
@@ -1934,7 +1718,15 @@ async function focusRun(runId: number | null | undefined) {
   row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
 
-async function focusPullRequest(pullNumber: number | null | undefined) {
+async function focusPullRequest(
+  pullNumber: number | null | undefined,
+  routeGeneration = projectRouteApplyGeneration,
+) {
+  const alreadyFocused = Boolean(
+    pullNumber &&
+    focusedPullRequestNumber.value === pullNumber &&
+    pullRequestDiscussion.value?.pullRequest.number === pullNumber,
+  );
   focusedIssueNumber.value = null;
   focusedDiscussionNumber.value = null;
   discussionCreateView.value = false;
@@ -1944,25 +1736,38 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedReleaseTag.value = null;
   if (!pullNumber) {
     await loadPullRequests();
+    if (routeGeneration !== projectRouteApplyGeneration) return;
+    if ((props.projectPullRequestNumber ?? routedProjectPullRequest.value) != null) return;
     focusedPullRequestNumber.value = null;
     pullRequestDiscussion.value = null;
     pullRequestDiscussionError.value = null;
     return;
   }
+  if (alreadyFocused) return;
+  focusedPullRequestNumber.value = null;
+  pullRequestDiscussion.value = null;
   await loadPullRequests();
+  if (routeGeneration !== projectRouteApplyGeneration) return;
   const repoFullName = props.repoFullName;
   if (!repoFullName) return;
-  try {
-    const pull = await getGitHubPullRequest(repoFullName, pullNumber);
-    pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pullNumber)];
-  } catch (err) {
-    if (isConfirmedMissingResource(err)) {
-      focusedPullRequestNumber.value = null;
-      pullRequestDiscussion.value = null;
-      clearMissingProjectTarget("pr");
+  let loaded = false;
+  await projectTargetLoader.run(`${repoFullName}:pull:${pullNumber}`, async (loadId) => {
+    try {
+      const service = await workspace.github.service();
+      const pull = await service.getGitHubPullRequest(repoFullName, pullNumber);
+      if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+      pullsController.updateItems((items) => [pull, ...items.filter((item) => item.number !== pullNumber)]);
+      loaded = true;
+    } catch (err) {
+      if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+      if (isConfirmedMissingResource(err)) {
+        focusedPullRequestNumber.value = null;
+        pullRequestDiscussion.value = null;
+        clearMissingProjectTarget("pr");
+      }
     }
-    return;
-  }
+  });
+  if (!loaded || !isCurrentRemoteRepo(repoFullName)) return;
   focusedPullRequestNumber.value = pullNumber;
   await Promise.all([
     loadPullRequestChecks(pullNumber),
@@ -1986,18 +1791,28 @@ async function focusReleaseTag(tag: string | null | undefined, updateRoute = fal
   const normalized = tag?.trim() || null;
   focusedReleaseTag.value = normalized;
   if (normalized && props.repoFullName) {
-    try {
-      const release = await getGitHubReleaseByTag(props.repoFullName, normalized);
-      releases.value = [release, ...releases.value.filter((item) => item.id !== release.id)];
-      releasesError.value = null;
-    } catch (err) {
-      if (isConfirmedMissingResource(err)) {
-        focusedReleaseTag.value = null;
-        clearMissingProjectTarget("releaseTag");
-      } else {
-        releasesError.value = String(err);
+    const repoFullName = props.repoFullName;
+    let requestIsCurrent = false;
+    await projectTargetLoader.run(`${repoFullName}:release:${normalized}`, async (loadId) => {
+      try {
+        const service = await workspace.github.service();
+        const release = await service.getGitHubReleaseByTag(repoFullName, normalized);
+        if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+        requestIsCurrent = true;
+        releasesController.upsert(release);
+        releaseTargetError.value = null;
+      } catch (err) {
+        if (!isCurrentRemoteLoad(projectTargetLoader, loadId, repoFullName)) return;
+        requestIsCurrent = true;
+        if (isConfirmedMissingResource(err)) {
+          focusedReleaseTag.value = null;
+          clearMissingProjectTarget("releaseTag");
+        } else {
+          releaseTargetError.value = String(err);
+        }
       }
-    }
+    });
+    if (!requestIsCurrent || !isCurrentRemoteRepo(repoFullName)) return;
   }
   if (updateRoute && activeSection.value === "release") await pushProjectTabRoute("release");
   if (!focusedReleaseTag.value) return;
@@ -2028,6 +1843,8 @@ function isPullRequestRowFocused(pullNumber: number) {
 }
 
 async function applyProjectRouteState() {
+  const applyGeneration = ++projectRouteApplyGeneration;
+  invalidateChangedProjectTargetLoads();
   applyRoutedListFilters();
   activeSection.value = routeTabToSection(props.activeGitTab);
   if (props.activeGitTab !== "repo") {
@@ -2036,18 +1853,19 @@ async function applyProjectRouteState() {
   }
   const targetTab = projectTab.value;
   await nextTick();
-  clearProjectTargets();
+  if (applyGeneration !== projectRouteApplyGeneration) return;
   if (targetTab === "issues") {
     await focusIssue(props.projectIssueNumber ?? routedProjectIssue.value);
     await applyProjectCreateForm(targetTab);
     return;
   }
   if (targetTab === "pulls") {
-    await focusPullRequest(props.projectPullRequestNumber ?? routedProjectPullRequest.value);
+    await focusPullRequest(props.projectPullRequestNumber ?? routedProjectPullRequest.value, applyGeneration);
     await applyProjectCreateForm(targetTab);
     return;
   }
   if (targetTab === "discussions") {
+    clearProjectTargets();
     focusedDiscussionNumber.value = props.projectDiscussionNumber ?? routedProjectDiscussion.value;
     discussionCreateView.value =
       routedProjectCreateFlow.value === "discussion" && !discussionsAccessUnavailable.value;
@@ -2063,7 +1881,30 @@ async function applyProjectRouteState() {
     await focusReleaseTag(routedReleaseTag.value);
     return;
   }
+  clearProjectTargets();
   await ensureSectionData(targetTab);
+}
+
+function invalidateChangedProjectTargetLoads() {
+  const tab = projectTab.value;
+  const target = tab === "issues"
+    ? props.projectIssueNumber ?? routedProjectIssue.value
+    : tab === "pulls"
+      ? props.projectPullRequestNumber ?? routedProjectPullRequest.value
+      : tab === "discussions"
+        ? props.projectDiscussionNumber ?? routedProjectDiscussion.value
+        : tab === "actions"
+          ? `${props.projectRunId ?? ""}:${props.projectJobId ?? ""}`
+          : tab === "release"
+            ? routedReleaseTag.value ?? ""
+            : "";
+  const nextKey = `${props.repoId}:${props.repoFullName ?? ""}:${tab}:${target ?? ""}`;
+  if (nextKey === activeProjectTargetLoadKey) return;
+  activeProjectTargetLoadKey = nextKey;
+  projectTargetLoader.invalidate();
+  issueDiscussionLoader.invalidate();
+  pullRequestDiscussionLoader.invalidate();
+  pullChecksLoader.invalidate();
 }
 
 async function applyProjectCreateForm(targetTab: ProjectTab) {
@@ -2146,56 +1987,37 @@ function cancelEditAbout() {
   aboutEditing.value = false;
 }
 
+function isCurrentRemoteRepo(repoFullName: string) {
+  return repoFullName === props.repoFullName && !remoteDeleted.value;
+}
+
+function isCurrentRemoteLoad(
+  loader: Pick<ReturnType<typeof createLatestAsyncLoader>, "isCurrent">,
+  runId: number,
+  repoFullName: string,
+) {
+  return loader.isCurrent(runId) && isCurrentRemoteRepo(repoFullName);
+}
+
 async function loadReadme(force = false) {
-  if (!props.repoId) return;
-  if (!force && readmeLoaded.value) return;
-  const repoId = props.repoId;
-  const fileProvider = resolvedRepoContext.value.capabilities.files.provider;
-  await readmeLoader.run(null, async (runId) => {
-    readmeLoading.value = true;
-    readmeError.value = null;
-    try {
-      if (!resolvedRepoContext.value.capabilities.files.available) {
-        readmePreview.value = null;
-        readmeLoaded.value = true;
-        return;
-      }
-      const rootEntries = await listRepoFiles(repoId, null, undefined, { forceRefresh: force });
-      if (
-        !readmeLoader.isCurrent(runId) ||
-        repoId !== props.repoId ||
-        fileProvider !== resolvedRepoContext.value.capabilities.files.provider
-      ) return;
-      const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === README_PATH);
-      const nextPreview = readme
-        ? await getRepoFilePreview(repoId, README_PATH, undefined, { forceRefresh: force })
-        : null;
-      if (
-        !readmeLoader.isCurrent(runId) ||
-        repoId !== props.repoId ||
-        fileProvider !== resolvedRepoContext.value.capabilities.files.provider
-      ) return;
-      readmePreview.value = nextPreview;
-      readmeLoaded.value = true;
-    } catch (err) {
-      readmeError.value = String(err);
-    } finally {
-      if (readmeLoader.isCurrent(runId)) {
-        readmeLoading.value = false;
-      }
-    }
-  }, { reusePending: !force });
+  if (!props.repoId) return null;
+  return filesHistoryController.loadReadme(force);
 }
 
 async function loadSettingsBranches(force = false) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && settingsBranches.value.length) return;
-  try {
-    settingsBranches.value = await listGitHubBranches(repoFullName);
-  } catch (err) {
-    settingsBranches.value = [];
-  }
+  await settingsBranchesLoader.run(`${repoFullName}:branches`, async (runId) => {
+    try {
+      const service = await workspace.github.service();
+      const branches = await service.listGitHubBranches(repoFullName);
+      if (!isCurrentRemoteLoad(settingsBranchesLoader, runId, repoFullName)) return;
+      settingsBranches.value = branches;
+    } catch {
+      if (isCurrentRemoteLoad(settingsBranchesLoader, runId, repoFullName)) settingsBranches.value = [];
+    }
+  }, { reusePending: !force });
 }
 
 async function loadSettings(force = false) {
@@ -2205,32 +2027,20 @@ async function loadSettings(force = false) {
     return;
   }
   if (!repoFullName || remoteDeleted.value) {
-    settings.value = null;
     githubError.value = null;
     return;
   }
   if (!force && settingsLoaded.value) return;
-  await settingsLoader.run(null, async (runId) => {
-    githubLoading.value = true;
-    githubError.value = null;
-    try {
-      const nextSettings = force
-        ? await getGitHubRepoManagement(repoFullName, { forceRefresh: true })
-        : await getGitHubRepoManagement(repoFullName);
-      if (!settingsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      settings.value = nextSettings;
-      applySettingsForm(nextSettings);
-      preparePullRequestDefaults();
-      settingsLoaded.value = true;
-      await loadSettingsBranches(force);
-    } catch (err) {
-      githubError.value = String(err);
-    } finally {
-      if (settingsLoader.isCurrent(runId)) {
-        githubLoading.value = false;
-      }
-    }
-  }, { reusePending: !force });
+  githubError.value = null;
+  const nextSettings = await settingsController.load(force);
+  if (nextSettings && isCurrentRemoteRepo(repoFullName)) {
+    applySettingsForm(nextSettings);
+    preparePullRequestDefaults();
+    settingsLoaded.value = true;
+    await loadSettingsBranches(force);
+  } else if (settingsController.error.value) {
+    githubError.value = settingsController.error.value;
+  }
 }
 
 async function loadIssues(force = false) {
@@ -2240,28 +2050,10 @@ async function loadIssues(force = false) {
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  const loadKey = issueListKey.value;
-  if (!force && issuesLoadedKey.value === loadKey) return;
-  const options = { ...issueListOptions.value, labels: [...(issueListOptions.value.labels ?? [])] };
   githubError.value = null;
-  issuesLoading.value = true;
-  await issuesLoader.run(loadKey, async (runId) => {
-    try {
-      const nextIssues = force
-        ? await listGitHubIssues(repoFullName, options, { forceRefresh: true })
-        : await listGitHubIssues(repoFullName, options);
-      if (!issuesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      issues.value = nextIssues;
-      issuesLoadedKey.value = loadKey;
-      syncEditingIssue();
-    } catch (err) {
-      githubError.value = String(err);
-    } finally {
-      if (issuesLoader.isCurrent(runId)) {
-        issuesLoading.value = false;
-      }
-    }
-  }, { reusePending: !force });
+  const nextIssues = await issuesController.load(force);
+  if (nextIssues) syncEditingIssue();
+  else if (issuesController.error.value) githubError.value = issuesController.error.value;
 }
 
 async function loadIssueDiscussion(issueNumber: number, force = false): Promise<"loaded" | "missing" | "error"> {
@@ -2271,23 +2063,25 @@ async function loadIssueDiscussion(issueNumber: number, force = false): Promise<
   let outcome: "loaded" | "missing" | "error" = "error";
   issueDiscussionError.value = null;
   issueDiscussionLoading.value = true;
-  await issueDiscussionLoader.run(issueNumber, async (runId) => {
+  await issueDiscussionLoader.run(`${repoFullName}:${issueNumber}`, async (runId) => {
     try {
+      const service = await workspace.github.service();
       const discussion = force
-        ? await getGitHubIssueDiscussion(repoFullName, issueNumber, { forceRefresh: true })
-        : await getGitHubIssueDiscussion(repoFullName, issueNumber);
+        ? await service.getGitHubIssueDiscussion(repoFullName, issueNumber, { forceRefresh: true })
+        : await service.getGitHubIssueDiscussion(repoFullName, issueNumber);
       if (!issueDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issueDiscussion.value = discussion;
-      const issueIndex = issues.value.findIndex((issue) => issue.number === discussion.issue.number);
-      if (issueIndex >= 0) issues.value.splice(issueIndex, 1, discussion.issue);
+      issuesController.updateItems((items) => items.map((issue) =>
+        issue.number === discussion.issue.number ? discussion.issue : issue
+      ));
       outcome = "loaded";
     } catch (err) {
-      if (issueDiscussionLoader.isCurrent(runId)) {
+      if (isCurrentRemoteLoad(issueDiscussionLoader, runId, repoFullName)) {
         issueDiscussionError.value = String(err);
         outcome = isConfirmedMissingResource(err) ? "missing" : "error";
       }
     } finally {
-      if (issueDiscussionLoader.isCurrent(runId)) issueDiscussionLoading.value = false;
+      if (isCurrentRemoteLoad(issueDiscussionLoader, runId, repoFullName)) issueDiscussionLoading.value = false;
     }
   });
   return outcome;
@@ -2300,33 +2094,15 @@ async function loadPullRequests(force = false) {
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  const loadKey = pullListKey.value;
-  if (!force && pullsLoadedKey.value === loadKey) return;
-  const options = { ...pullListOptions.value, labels: [...(pullListOptions.value.labels ?? [])] };
   githubError.value = null;
-  pullsLoading.value = true;
-  await pullsLoader.run(loadKey, async (runId) => {
-    try {
-      const nextPulls = force
-        ? await listGitHubPullRequests(repoFullName, options, { forceRefresh: true })
-        : await listGitHubPullRequests(repoFullName, options);
-      if (!pullsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      pulls.value = nextPulls;
-      pullsLoadedKey.value = loadKey;
-      const current = focusedPullRequestNumber.value;
-      if (current && nextPulls.some((pull) => pull.number === current)) {
-        await loadPullRequestChecks(current, force);
-      } else {
-        focusedPullRequestNumber.value = null;
-      }
-    } catch (err) {
-      githubError.value = String(err);
-    } finally {
-      if (pullsLoader.isCurrent(runId)) {
-        pullsLoading.value = false;
-      }
-    }
-  }, { reusePending: !force });
+  const nextPulls = await pullsController.load(force);
+  if (!nextPulls) {
+    if (pullsController.error.value) githubError.value = pullsController.error.value;
+    return;
+  }
+  const current = focusedPullRequestNumber.value;
+  if (current && nextPulls.some((pull) => pull.number === current)) await loadPullRequestChecks(current, force);
+  else focusedPullRequestNumber.value = null;
 }
 
 async function loadPullRequestDiscussion(pullNumber: number, force = false) {
@@ -2335,18 +2111,21 @@ async function loadPullRequestDiscussion(pullNumber: number, force = false) {
   if (!force && pullRequestDiscussion.value?.pullRequest.number === pullNumber) return;
   pullRequestDiscussionError.value = null;
   pullRequestDiscussionLoading.value = true;
-  await pullRequestDiscussionLoader.run(pullNumber, async (runId) => {
+  await pullRequestDiscussionLoader.run(`${repoFullName}:${pullNumber}`, async (runId) => {
     try {
+      const service = await workspace.github.service();
       const discussion = force
-        ? await getGitHubPullRequestDiscussion(repoFullName, pullNumber, { forceRefresh: true })
-        : await getGitHubPullRequestDiscussion(repoFullName, pullNumber);
+        ? await service.getGitHubPullRequestDiscussion(repoFullName, pullNumber, { forceRefresh: true })
+        : await service.getGitHubPullRequestDiscussion(repoFullName, pullNumber);
       if (!pullRequestDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pullRequestDiscussion.value = discussion;
-      pulls.value = pulls.value.map((pull) => pull.number === discussion.pullRequest.number ? discussion.pullRequest : pull);
+      pullsController.updateItems((items) => items.map((pull) =>
+        pull.number === discussion.pullRequest.number ? discussion.pullRequest : pull
+      ));
     } catch (err) {
-      if (pullRequestDiscussionLoader.isCurrent(runId)) pullRequestDiscussionError.value = String(err);
+      if (isCurrentRemoteLoad(pullRequestDiscussionLoader, runId, repoFullName)) pullRequestDiscussionError.value = String(err);
     } finally {
-      if (pullRequestDiscussionLoader.isCurrent(runId)) pullRequestDiscussionLoading.value = false;
+      if (isCurrentRemoteLoad(pullRequestDiscussionLoader, runId, repoFullName)) pullRequestDiscussionLoading.value = false;
     }
   });
 }
@@ -2356,20 +2135,21 @@ async function loadPullRequestChecks(pullNumber: number, force = false) {
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && pullChecks.value[pullNumber]) return;
   pullChecksLoading.value = true;
-  await pullChecksLoader.run(pullNumber, async (runId) => {
+  await pullChecksLoader.run(`${repoFullName}:${pullNumber}`, async (runId) => {
     try {
+      const service = await workspace.github.service();
       const checks = force
-        ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
-        : await listGitHubPullRequestChecks(repoFullName, pullNumber);
+        ? await service.listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
+        : await service.listGitHubPullRequestChecks(repoFullName, pullNumber);
       if (!pullChecksLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pullChecks.value = {
         ...pullChecks.value,
         [pullNumber]: checks,
       };
     } catch (err) {
-      githubError.value = String(err);
+      if (isCurrentRemoteLoad(pullChecksLoader, runId, repoFullName)) githubError.value = String(err);
     } finally {
-      if (pullChecksLoader.isCurrent(runId)) {
+      if (isCurrentRemoteLoad(pullChecksLoader, runId, repoFullName)) {
         pullChecksLoading.value = false;
       }
     }
@@ -2380,65 +2160,33 @@ async function loadActions(force = false) {
   const repoFullName = props.repoFullName;
   if (!resolvedRepoContext.value.capabilities.actions.available) {
     clearBlockedGitHubState();
-    actionsLoading.value = false;
     return;
   }
   if (!repoFullName || remoteDeleted.value) {
-    workflowRuns.value = [];
     actionsError.value = null;
     return;
   }
   if (!force && actionsLoaded.value) return;
-  await actionsLoader.run(null, async (runId) => {
-    actionsLoading.value = true;
-    actionsError.value = null;
-    try {
-      const nextRuns = force
-        ? await listGitHubWorkflowRuns(repoFullName, 20, { forceRefresh: true })
-        : await listGitHubWorkflowRuns(repoFullName, 20);
-      if (!actionsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      workflowRuns.value = nextRuns;
-      actionsLoaded.value = true;
-    } catch (err) {
-      actionsError.value = String(err);
-    } finally {
-      if (actionsLoader.isCurrent(runId)) {
-        actionsLoading.value = false;
-      }
-    }
-  }, { reusePending: !force });
+  actionsError.value = null;
+  const nextRuns = await actionsController.load(force);
+  if (nextRuns) actionsLoaded.value = true;
+  else if (actionsController.error.value) actionsError.value = actionsController.error.value;
 }
 
 async function loadReleases(force = false) {
   const repoFullName = props.repoFullName;
   if (!resolvedRepoContext.value.capabilities.issues.available) {
     clearBlockedGitHubState();
-    releasesLoading.value = false;
     return;
   }
   if (!repoFullName || remoteDeleted.value) {
-    releases.value = [];
-    releasesError.value = null;
     return;
   }
   if (!force && releasesLoaded.value) return;
-  await releasesLoader.run(null, async (runId) => {
-    releasesLoading.value = true;
-    releasesError.value = null;
-    try {
-      const nextReleases = force
-        ? await listGitHubReleases(repoFullName, { forceRefresh: true })
-        : await listGitHubReleases(repoFullName);
-      if (!releasesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      releases.value = nextReleases;
-      releasesLoaded.value = true;
-      if (focusedReleaseTag.value && !hasReleaseTag(focusedReleaseTag.value)) focusedReleaseTag.value = null;
-    } catch (err) {
-      releasesError.value = String(err);
-    } finally {
-      if (releasesLoader.isCurrent(runId)) releasesLoading.value = false;
-    }
-  }, { reusePending: !force });
+  const nextReleases = await releasesController.load(force);
+  if (!nextReleases) return;
+  releasesLoaded.value = true;
+  if (focusedReleaseTag.value && !hasReleaseTag(focusedReleaseTag.value)) focusedReleaseTag.value = null;
 }
 
 async function loadRemoteSectionData(section: ProjectContentMode, tasks: Promise<unknown>[]) {
@@ -2621,60 +2369,48 @@ function mergeDefaultsChanged() {
 function clearBlockedGitHubState() {
   resetGitHubSectionState();
   githubLoading.value = false;
-  issuesLoading.value = false;
-  actionsLoading.value = false;
-  releasesLoading.value = false;
 }
 
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
   refreshingProjectSection.value = null;
   pageRefreshError.value = null;
-  readmeLoader.invalidate();
+  filesHistoryController.invalidate();
   invalidateRepoMutations();
-  readmePreview.value = null;
-  readmeLoaded.value = false;
-  readmeLoading.value = false;
-  readmeError.value = null;
   resetGitHubSectionState();
 }
 
 function resetGitHubSectionState() {
-  settingsLoader.invalidate();
-  issuesLoader.invalidate();
+  settingsController.invalidate();
+  settingsBranchesLoader.invalidate();
+  issuesController.invalidate();
   issueDiscussionLoader.invalidate();
-  pullsLoader.invalidate();
+  pullsController.invalidate();
   pullRequestDiscussionLoader.invalidate();
   pullChecksLoader.invalidate();
-  actionsLoader.invalidate();
-  releasesLoader.invalidate();
+  actionsController.invalidate();
+  releasesController.invalidate();
+  projectTargetLoader.invalidate();
   invalidateGitHubMutations();
-  settings.value = null;
   settingsLoaded.value = false;
   settingsBranches.value = [];
   archiveDialogOpen.value = false;
   archiveConfirmInput.value = "";
   archiveError.value = null;
-  issues.value = [];
-  issuesLoading.value = false;
   issueDiscussion.value = null;
   issueDiscussionLoading.value = false;
   issueDiscussionError.value = null;
-  issuesLoadedKey.value = null;
   issueState.value = issueStateFromRoute();
   issuePanelFilters.value = issuePanelFiltersFromRoute();
   issueFilterMetadata.value = emptyIssueFilterMetadata();
   issueFilterMetadataLoading.value = false;
   issueFilterMetadataLoadedRepo.value = null;
-  pulls.value = [];
   pullRequestDiscussion.value = null;
   pullRequestDiscussionLoading.value = false;
   pullRequestDiscussionError.value = null;
   pullChecks.value = {};
-  pullsLoadedKey.value = null;
   pullState.value = pullRequestStateFromRoute();
   pullRequestPanelFilters.value = pullRequestPanelFiltersFromRoute();
-  pullsLoading.value = false;
   pullChecksLoading.value = false;
   focusedPullRequestNumber.value = null;
   pullRequestTitle.value = "";
@@ -2688,12 +2424,9 @@ function resetGitHubSectionState() {
   pullRequestTemplatesLoading.value = false;
   pullRequestTemplatesLoadedRepo.value = null;
   pullRequestMergeMethod.value = "merge";
-  workflowRuns.value = [];
   actionsLoaded.value = false;
-  releases.value = [];
-  releasesLoading.value = false;
   releasesLoaded.value = false;
-  releasesError.value = null;
+  releaseTargetError.value = null;
   focusedReleaseTag.value = null;
   releaseTypeFilter.value = "all";
   githubError.value = null;
@@ -2770,11 +2503,11 @@ async function saveSettings(closeAboutOnSuccess = false) {
   const result = await runGitHubMutation(
     repoFullName,
     settingsSaveTracker,
-    () => updateGitHubRepoSettings(repoFullName, request),
+    async () => (await settingsController.update(request))!,
   );
   if (!result.ok) return false;
   const next = result.value;
-  settings.value = next;
+  settingsController.replace(next);
   applySettingsForm(next);
   if (!await syncRenamedSettingsIdentity(repoFullName, next)) return false;
   aboutTopicDraft.value = "";
@@ -2785,7 +2518,7 @@ async function saveSettings(closeAboutOnSuccess = false) {
 
 async function applyUpdatedSettingsManagement(next: GitHubRepoManagement) {
   const repoFullName = props.repoFullName;
-  settings.value = next;
+  settingsController.replace(next);
   applySettingsForm(next);
   if (repoFullName && !await syncRenamedSettingsIdentity(repoFullName, next)) return;
   clearHomeGitHubOverviewSnapshot();
@@ -2820,14 +2553,14 @@ async function toggleArchivedSetting() {
   const result = await runGitHubMutation(
     repoFullName,
     archiveSettingsTracker,
-    () => updateGitHubRepoSettings(repoFullName, { archived: !(current.archived ?? false) }),
+    async () => (await settingsController.update({ archived: !(current.archived ?? false) }))!,
   );
   if (!result.ok) {
     archiveError.value = githubError.value;
     return;
   }
   const next = result.value;
-  settings.value = next;
+  settingsController.replace(next);
   applySettingsForm(next);
   if (!await syncRenamedSettingsIdentity(repoFullName, next)) return;
   const currentRemoteFullName = parseRemoteRepoId(props.repoId);
@@ -2884,7 +2617,7 @@ async function syncRenamedSettingsIdentity(previousFullName: string, next: GitHu
       favorite: currentShortcut?.favorite ?? false,
       openedAt: Date.now(),
     });
-    const query: LocationQueryRaw = { ...route.query, projectTab: "settings" };
+    const query = RepoRouteStateCodec.projectQuery(route.query, "settings", {}, projectRouteDefaults());
     await router.replace({ path: remoteRepoRoute(next.fullName), query });
     return true;
   } catch (err) {
@@ -2914,7 +2647,7 @@ function openDeleteDialog(target: DeleteTarget) {
 
 function closeDeleteDialog() {
   if (deletingAnything.value) return;
-  if (deleteDialogTarget.value) invalidateSessionContextSnapshot();
+  if (deleteDialogTarget.value) sessionContext.invalidate();
   deleteDialogTarget.value = null;
   deleteConfirmInput.value = "";
   deleteError.value = null;
@@ -2954,15 +2687,16 @@ async function confirmDeleteRepo() {
   githubError.value = null;
   try {
     await remoteDeleteTracker.run(async () => {
-      await deleteGitHubRepo(repoFullName);
+      const service = await workspace.github.service();
+      await service.deleteGitHubRepo(repoFullName);
       await workspace.forgetRemoteRepo(repoFullName);
     });
     if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
     remoteDeleted.value = true;
-    settings.value = null;
-    issues.value = [];
-    workflowRuns.value = [];
+    settingsController.invalidate();
+    issuesController.invalidate();
+    actionsController.invalidate();
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
     const targetRoute = remoteRepoRoute(repoFullName);
@@ -3030,7 +2764,7 @@ async function openIssueCreateView() {
 }
 
 function closeIssueCreateView(resetDraft = true) {
-  if (issueCreateView.value) invalidateSessionContextSnapshot();
+  if (issueCreateView.value) sessionContext.invalidate();
   issueCreateView.value = false;
   if (resetDraft) clearProjectCreateRoute();
   if (!resetDraft) return;
@@ -3048,7 +2782,11 @@ async function loadIssueTemplates(force = false) {
   if (!force && issueTemplatesLoadedRepo.value === repoFullName) return;
   issueTemplatesLoading.value = true;
   try {
-    const nextTemplates = await loadGitHubIssueTemplates(repoFullName);
+    const service = await workspace.github.service();
+    const nextTemplates = await loadGitHubIssueTemplates(repoFullName, {
+      listFiles: service.listGitHubRepoFiles,
+      previewFile: service.getGitHubRepoFilePreview,
+    });
     if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
     issueTemplates.value = nextTemplates;
     issueTemplatesLoadedRepo.value = repoFullName;
@@ -3080,9 +2818,10 @@ async function loadIssueMetadata(force = false) {
   if (!force && issueMetadataLoadedRepo.value === repoFullName) return;
   issueMetadataLoading.value = true;
   try {
+    const service = await workspace.github.service();
     const [labelsResult, assigneesResult] = await Promise.allSettled([
-      listGitHubIssueLabels(repoFullName, { forceRefresh: force }),
-      listGitHubIssueAssignees(repoFullName, { forceRefresh: force }),
+      service.listGitHubIssueLabels(repoFullName, { forceRefresh: force }),
+      service.listGitHubIssueAssignees(repoFullName, { forceRefresh: force }),
     ]);
     if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
     remoteIssueLabels.value = labelsResult.status === "fulfilled" ? labelsResult.value : [];
@@ -3099,7 +2838,8 @@ async function loadIssueFilterMetadata(force = false, reportError = true) {
   if (!force && issueFilterMetadataLoadedRepo.value === repoFullName) return;
   issueFilterMetadataLoading.value = true;
   try {
-    const metadata = await getGitHubIssueFilterMetadata(repoFullName, { forceRefresh: force });
+    const service = await workspace.github.service();
+    const metadata = await service.getGitHubIssueFilterMetadata(repoFullName, { forceRefresh: force });
     if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
     issueFilterMetadata.value = metadata;
     issueFilterMetadataLoadedRepo.value = repoFullName;
@@ -3149,7 +2889,7 @@ async function openPullRequestCreateView() {
 }
 
 function closePullRequestCreateView(resetDraft = true) {
-  if (pullCreateView.value) invalidateSessionContextSnapshot();
+  if (pullCreateView.value) sessionContext.invalidate();
   pullCreateView.value = false;
   if (resetDraft) clearProjectCreateRoute();
   if (!resetDraft) return;
@@ -3167,7 +2907,11 @@ async function loadPullRequestTemplates(force = false) {
   if (!force && pullRequestTemplatesLoadedRepo.value === repoFullName) return;
   pullRequestTemplatesLoading.value = true;
   try {
-    const nextTemplates = await loadGitHubPullRequestTemplates(repoFullName);
+    const service = await workspace.github.service();
+    const nextTemplates = await loadGitHubPullRequestTemplates(repoFullName, {
+      listFiles: service.listGitHubRepoFiles,
+      previewFile: service.getGitHubRepoFilePreview,
+    });
     if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
     pullRequestTemplates.value = nextTemplates;
     pullRequestTemplatesLoadedRepo.value = repoFullName;
@@ -3226,11 +2970,9 @@ async function saveIssueEdit(issue: GitHubIssue) {
   const result = await runGitHubMutation(
     repoFullName,
     issueUpdateTracker,
-    () => updateGitHubIssue(repoFullName, issue.number, request),
+    async () => (await issuesController.updateIssue(issue.number, request))!,
   );
   if (!result.ok) return;
-  const updated = result.value;
-  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
   cancelEditIssue();
 }
 
@@ -3249,11 +2991,9 @@ async function createIssue() {
   const result = await runGitHubMutation(
     repoFullName,
     issueCreateTracker,
-    () => createGitHubIssue(repoFullName, request),
+    async () => (await issuesController.create(request))!,
   );
   if (!result.ok) return;
-  const issue = result.value;
-  issues.value = [issue, ...issues.value];
   issueTitle.value = "";
   issueBody.value = "";
   issueLabels.value = [];
@@ -3270,13 +3010,12 @@ async function toggleIssue(issue: GitHubIssue) {
   const result = await runGitHubMutation(
     repoFullName,
     issueUpdateTracker,
-    () => updateGitHubIssue(repoFullName, issue.number, {
+    async () => (await issuesController.updateIssue(issue.number, {
       state: issue.state === "open" ? "closed" : "open",
-    }),
+    }))!,
   );
   if (!result.ok) return;
   const updated = result.value;
-  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
   if (issueDiscussion.value?.issue.number === updated.number) {
     await loadIssueDiscussion(updated.number, true);
   }
@@ -3309,11 +3048,10 @@ async function createPullRequest() {
   const result = await runGitHubMutation(
     repoFullName,
     pullCreateTracker,
-    () => createGitHubPullRequest(repoFullName, request),
+    async () => (await pullsController.create(request))!,
   );
   if (!result.ok) return;
   const pull = result.value;
-  pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
   focusedPullRequestNumber.value = pull.number;
   pullRequestTitle.value = "";
   pullRequestBody.value = "";
@@ -3334,13 +3072,12 @@ async function togglePullRequestState(pull: GitHubPullRequest) {
   const result = await runGitHubMutation(
     repoFullName,
     pullUpdateTracker,
-    () => updateGitHubPullRequest(repoFullName, pull.number, {
+    async () => (await pullsController.updatePull(pull.number, {
       state: pull.state === "open" ? "closed" : "open",
-    }),
+    }))!,
   );
   if (!result.ok) return;
   const updated = result.value;
-  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
   if (pullRequestDiscussion.value?.pullRequest.number === updated.number) {
     await loadPullRequestDiscussion(updated.number, true);
   }
@@ -3353,13 +3090,12 @@ async function mergePullRequest(pull: GitHubPullRequest) {
   const result = await runGitHubMutation(
     repoFullName,
     pullUpdateTracker,
-    () => mergeGitHubPullRequest(repoFullName, pull.number, {
+    async () => (await pullsController.merge(pull.number, {
       method,
-    }),
+    }))!,
   );
   if (!result.ok) return;
   const updated = result.value;
-  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
   focusedPullRequestNumber.value = updated.number;
   await Promise.all([
     loadPullRequestChecks(updated.number, true),
@@ -3378,7 +3114,7 @@ async function focusIssueRow(issue: GitHubIssue) {
 }
 
 function closeIssueDetail() {
-  if (focusedIssueNumber.value || issueDiscussion.value) invalidateSessionContextSnapshot();
+  if (focusedIssueNumber.value || issueDiscussion.value) sessionContext.invalidate();
   focusedIssueNumber.value = null;
   issueDiscussion.value = null;
   issueDiscussionError.value = null;
@@ -3387,6 +3123,7 @@ function closeIssueDetail() {
 
 async function focusPullRequestRow(pull: GitHubPullRequest) {
   const pullNumber = pull.number;
+  projectRouteApplyGeneration += 1;
   focusedPullRequestNumber.value = pullNumber;
   await Promise.all([
     loadPullRequestChecks(pullNumber),
@@ -3399,7 +3136,7 @@ async function focusPullRequestRow(pull: GitHubPullRequest) {
 }
 
 function closePullRequestDetail() {
-  if (focusedPullRequestNumber.value || pullRequestDiscussion.value) invalidateSessionContextSnapshot();
+  if (focusedPullRequestNumber.value || pullRequestDiscussion.value) sessionContext.invalidate();
   focusedPullRequestNumber.value = null;
   pullRequestDiscussion.value = null;
   pullRequestDiscussionError.value = null;
@@ -3410,16 +3147,17 @@ async function openDiscussionTimelineItem(item: GitHubDiscussionTimelineItem) {
   const path = item.path?.trim();
   const line = item.line ?? item.originalLine ?? null;
   if (!path || !line || !canBrowseFiles.value) {
-    if (item.url) void openUrl(item.url);
+    if (item.url) openExternalUrl(item.url);
     return;
   }
 
   try {
     const repoRef = props.fileRepoRef ?? null;
-    if (repoRef) await getRepoFilePreview(props.repoId, path, repoRef);
-    else await getRepoFilePreview(props.repoId, path);
+    const service = await workspace.github.service();
+    if (repoRef) await service.getRepoFilePreview(props.repoId, path, repoRef);
+    else await service.getRepoFilePreview(props.repoId, path);
   } catch {
-    if (item.url) void openUrl(item.url);
+    if (item.url) openExternalUrl(item.url);
     return;
   }
 
@@ -3434,7 +3172,7 @@ async function openDiscussionTimelineItem(item: GitHubDiscussionTimelineItem) {
 
 async function openReadmeLink(target: ReadmeLinkTarget) {
   if (target.kind === "external") {
-    void openUrl(target.href);
+    openExternalUrl(target.href);
     return;
   }
 
@@ -3461,6 +3199,10 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
       },
     });
   }
+}
+
+function openExternalUrl(url: string) {
+  void workspace.github.service().then((service) => service.openUrl(url));
 }
 
 async function activateProjectTab(tab: ProjectTab) {
@@ -3499,29 +3241,15 @@ function focusActionJob(jobId: number | null) {
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 
-function upsertReleaseInView(release: GitHubRelease) {
-  releases.value = [
-    release,
-    ...releases.value.filter((item) => item.id !== release.id),
-  ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
-}
-
-function updateReleaseAssetsInView(releaseId: number, update: (assets: GitHubReleaseAsset[]) => GitHubReleaseAsset[]) {
-  releases.value = releases.value.map((release) =>
-    release.id === releaseId ? { ...release, assets: update(release.assets) } : release
-  );
-}
-
 async function createRelease(request: GitHubCreateReleaseRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseCreateTracker.running.value) return;
   const result = await runGitHubMutation(
     repoFullName,
     releaseCreateTracker,
-    () => createGitHubRelease(repoFullName, request),
+    async () => (await releasesController.create(request))!,
   );
   if (!result.ok) return;
-  upsertReleaseInView(result.value);
   releasesLoaded.value = true;
   await focusReleaseTag(result.value.tagName, true);
   clearHomeGitHubOverviewSnapshot();
@@ -3533,10 +3261,9 @@ async function updateRelease(releaseId: number, request: GitHubUpdateReleaseRequ
   const result = await runGitHubMutation(
     repoFullName,
     releaseUpdateTracker,
-    () => updateGitHubRelease(repoFullName, releaseId, request),
+    async () => (await releasesController.updateRelease(releaseId, request))!,
   );
   if (!result.ok) return;
-  upsertReleaseInView(result.value);
   await focusReleaseTag(result.value.tagName, true);
   clearHomeGitHubOverviewSnapshot();
 }
@@ -3547,10 +3274,11 @@ async function removeRelease(release: GitHubRelease) {
   const result = await runGitHubMutation(
     repoFullName,
     releaseDeleteTracker,
-    () => deleteGitHubRelease(repoFullName, release.id),
+    async () => {
+      await releasesController.deleteRelease(release.id);
+    },
   );
   if (!result.ok) return;
-  releases.value = releases.value.filter((item) => item.id !== release.id);
   if (focusedReleaseTag.value === release.tagName) focusedReleaseTag.value = null;
   clearHomeGitHubOverviewSnapshot();
 }
@@ -3560,19 +3288,16 @@ async function uploadReleaseAssets(release: GitHubRelease) {
   if (!repoFullName || selectingReleaseAssets.value || releaseAssetUploadTracker.running.value) return;
   selectingReleaseAssets.value = true;
   try {
-    const paths = await pickFiles();
+    const service = await workspace.github.service();
+    const paths = await service.pickFiles();
     if (!paths.length) return;
     for (const filePath of paths) {
       const result = await runGitHubMutation(
         repoFullName,
         releaseAssetUploadTracker,
-        () => uploadGitHubReleaseAsset(repoFullName, release.id, filePath),
+        async () => (await releasesController.uploadAsset(release.id, filePath))!,
       );
       if (!result.ok) return;
-      updateReleaseAssetsInView(release.id, (assets) => [
-        result.value,
-        ...assets.filter((asset) => asset.id !== result.value.id),
-      ]);
     }
   } finally {
     selectingReleaseAssets.value = false;
@@ -3585,13 +3310,9 @@ async function attachWorkflowArtifactAsset(request: GitHubAttachWorkflowArtifact
   const result = await runGitHubMutation(
     repoFullName,
     releaseAssetUploadTracker,
-    () => attachGitHubWorkflowArtifactAsset(repoFullName, request),
+    async () => (await releasesController.attachArtifact(request))!,
   );
   if (!result.ok) return;
-  updateReleaseAssetsInView(request.releaseId, (assets) => [
-    result.value,
-    ...assets.filter((asset) => asset.id !== result.value.id),
-  ]);
   clearHomeGitHubOverviewSnapshot();
 }
 
@@ -3601,10 +3322,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   const result = await runGitHubMutation(
     repoFullName,
     releaseAssetDeleteTracker,
-    () => deleteGitHubReleaseAsset(repoFullName, release.id, asset.id),
+    async () => {
+      await releasesController.deleteAsset(release.id, asset.id);
+    },
   );
   if (!result.ok) return;
-  updateReleaseAssetsInView(release.id, (assets) => assets.filter((candidate) => candidate.id !== asset.id));
 }
 
 </script>
@@ -4027,7 +3749,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <RepoReleasesPanel
             v-else-if="repoFullName"
-            ref="repoReleasesPanel"
             :repo-full-name="repoFullName"
             :releases="releases"
             :loading="releasesLoading"
@@ -4040,7 +3761,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             @delete="removeRelease"
             @upload-assets="uploadReleaseAssets"
             @delete-asset="removeReleaseAsset"
-            @open-url="openUrl"
+            @open-url="openExternalUrl"
             @close-create="clearProjectCreateRoute"
           />
         </section>
@@ -4541,7 +4262,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           v-if="projectSidebarMode === 'issues' && focusedIssueDetail"
           :issue="focusedIssueDetail"
           :updating-issue="updatingIssue"
-          @open-issue="(issue) => openUrl(issue.htmlUrl)"
+          @open-issue="(issue) => openExternalUrl(issue.htmlUrl)"
           @edit-issue="startEditIssue"
           @toggle-issue="toggleIssue"
         />
@@ -4563,7 +4284,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           v-if="projectSidebarMode === 'pulls' && focusedPullRequestDetail"
           :pull="focusedPullRequestDetail"
           :updating-pull-request="updatingPullRequest"
-          @open-pull-request="(pull) => openUrl(pull.htmlUrl)"
+          @open-pull-request="(pull) => openExternalUrl(pull.htmlUrl)"
           @toggle-pull-request="togglePullRequestState"
         />
 
@@ -4630,7 +4351,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               class="primary project-sidebar-summary-card__action"
               data-agent-id="repo.release.create"
               :disabled="releaseMutating || !!releasesAccessUnavailable"
-              @click="repoReleasesPanel?.openCreate()"
+              @click="openReleaseCreateView"
             >
               <Plus :size="14" aria-hidden="true" />
               新建 Release

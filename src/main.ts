@@ -1,5 +1,6 @@
 import { createLiliaGithubApp } from "./createLiliaGithubApp";
-import "./ui/styles.css";
+import "@lilia/ui/styles.css";
+import "@lilia/ui/styles/page.css";
 import "./styles.css";
 import "./styles/page.css";
 import "./styles/diffCodeTokens.css";

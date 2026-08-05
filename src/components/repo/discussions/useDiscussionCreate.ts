@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from "vue";
 import { createPendingTaskTracker } from "../../../composables/usePendingTaskTracker";
-import { createGitHubRepositoryDiscussion } from "../../../services/workspace/discussions/client";
+import type { WorkspaceClient } from "../../../services/workspace/client";
 import type {
   GitHubRepositoryDiscussion,
   GitHubRepositoryDiscussionMetadata,
@@ -9,6 +9,7 @@ import type {
 export function useDiscussionCreate(
   repoFullName: string,
   metadata: { value: GitHubRepositoryDiscussionMetadata | null },
+  github: WorkspaceClient,
 ) {
   const draft = reactive({ categoryId: "", title: "", body: "" });
   const error = ref<string | null>(null);
@@ -33,7 +34,7 @@ export function useDiscussionCreate(
     };
     error.value = null;
     try {
-      const created = await tracker.run(() => createGitHubRepositoryDiscussion(repoFullName, request));
+      const created = await tracker.run(() => github.createGitHubRepositoryDiscussion(repoFullName, request));
       reset();
       return created;
     } catch (nextError) {

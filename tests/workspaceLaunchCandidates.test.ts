@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import packageJson from "../package.json";
-import { listRepoLaunchCandidates } from "../src/services/workspace";
+import { createDefaultWorkspaceTransport, createWorkspaceClient } from "../src/services/workspace/client";
+
+const { listRepoLaunchCandidates } = createWorkspaceClient(createDefaultWorkspaceTransport());
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
 

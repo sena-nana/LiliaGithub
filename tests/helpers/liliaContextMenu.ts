@@ -1,4 +1,4 @@
-import { installLiliaContextMenu } from "../../src/ui";
+import { installLiliaContextMenu } from "@lilia/ui/runtime";
 import type { Plugin } from "vue";
 
 export const liliaContextMenuPlugin: Plugin = {

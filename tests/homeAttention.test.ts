@@ -10,30 +10,29 @@ import {
   mergeHomeAttentionPullRequestCandidates,
 } from "../src/services/homeAttention/fallback";
 import type { GitHubPullRequest, GitHubWorkflowRun } from "../src/services/workspace/types";
+import { createWorkspaceClient } from "../src/services/workspace/client";
 
 const workspace = vi.hoisted(() => ({
-  call: vi.fn(),
+  invoke: vi.fn(),
   listGitHubPullRequests: vi.fn(),
   listGitHubWorkflowRuns: vi.fn(),
 }));
-
-vi.mock("../src/services/workspace/client", () => workspace);
+const client = createWorkspaceClient({ invoke: workspace.invoke });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  workspace.call.mockImplementation((_command, _args, fallback) => fallback());
 });
 
 describe("home attention", () => {
   it("normalizes the repository batch and forwards force refresh to the home command", async () => {
-    workspace.call.mockResolvedValue(emptyResult());
+    workspace.invoke.mockResolvedValue(emptyResult());
 
-    await listGitHubHomeAttention([" acme/one ", "ACME/ONE", "acme/two"], { forceRefresh: true });
+    await listGitHubHomeAttention(client, [" acme/one ", "ACME/ONE", "acme/two"], { forceRefresh: true });
 
-    expect(workspace.call).toHaveBeenCalledWith(
+    expect(workspace.invoke).toHaveBeenCalledWith(
       "github_list_home_attention",
       { repoFullNames: ["acme/one", "acme/two"], forceRefresh: true },
-      expect.any(Function),
+      {},
     );
   });
 
@@ -66,6 +65,7 @@ describe("home attention", () => {
     });
 
     const result = await listHomeAttentionFallback(
+      workspace,
       ["acme/repo", "acme/failing"],
       { forceRefresh: true, now: new Date("2026-07-19T00:00:00Z") },
     );

@@ -6,7 +6,7 @@ import {
   GitPullRequest,
 } from "@lucide/vue";
 import { computed, reactive, ref, watch } from "vue";
-import { openUrl, updateGitHubPullRequest } from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import type {
   GitHubDiscussionTimelineItem,
   GitHubPullRequest,
@@ -38,6 +38,7 @@ const emit = defineEmits<{
   merge: [pull: GitHubPullRequest];
   "update:mergeMethod": [value: "merge" | "squash" | "rebase"];
 }>();
+const workspace = useWorkspace();
 
 const statusText = computed(() => {
   if (props.pull.merged) return "Merged";
@@ -64,7 +65,7 @@ async function saveMetadata() {
   if (milestone !== null && (!Number.isInteger(milestone) || milestone <= 0)) { metadataError.value = "请输入有效的 milestone 编号"; return; }
   metadataPending.value = true; metadataError.value = null; metadataNotice.value = null;
   try {
-    const updated = await updateGitHubPullRequest(props.repoFullName, props.pull.number, {
+    const updated = await (await workspace.github.service()).updateGitHubPullRequest(props.repoFullName, props.pull.number, {
       title: metadata.title.trim(), body: metadata.body, state: metadata.state,
       labels: splitList(metadata.labels), assignees: splitList(metadata.assignees), milestone,
     });
@@ -92,7 +93,7 @@ function checkUrl(check: GitHubPullRequestCheck) {
 
 function openCheck(check: GitHubPullRequestCheck) {
   const url = checkUrl(check);
-  if (url) void openUrl(url);
+  if (url) void workspace.openUrl(url);
 }
 </script>
 

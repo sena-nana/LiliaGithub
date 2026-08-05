@@ -4,17 +4,16 @@ use super::file_browser::{
 };
 use super::github::{
     add_pull_request_reviewers_from_reviews, forget_remote_repo_shortcut,
-    github_actions_permissions_payload, github_artifact_entry_path,
-    github_artifact_file_bytes_from_zip, github_artifact_preview_from_bytes,
-    github_branch_from_response, github_commit_file_changes, github_content_items_to_file_entries,
-    github_contribution_result, github_development_items_from_timeline,
-    github_file_preview_from_content, github_graphql_errors_require_read_project,
-    github_issue_cache_key, github_issue_from_response, github_issue_project_items_from_graphql,
-    github_organization_graphql_repositories, github_organization_profile_from_response,
-    github_project_cache_repo_key, github_pull_request_cache_key,
-    github_pull_request_reviewers_from_requested, github_pull_request_search_query,
-    github_pull_request_search_required, github_readme_endpoint, github_readme_image_path,
-    github_readme_image_paths, github_release_asset_bytes, github_release_asset_name,
+    github_actions_permissions_payload, github_artifact_entry_path, github_artifact_file_from_zip,
+    github_artifact_preview_from_bytes, github_branch_from_response, github_commit_file_changes,
+    github_content_items_to_file_entries, github_contribution_result,
+    github_development_items_from_timeline, github_file_preview_from_content,
+    github_graphql_errors_require_read_project, github_issue_cache_key, github_issue_from_response,
+    github_issue_project_items_from_graphql, github_organization_graphql_repositories,
+    github_organization_profile_from_response, github_project_cache_repo_key,
+    github_pull_request_cache_key, github_pull_request_reviewers_from_requested,
+    github_pull_request_search_query, github_pull_request_search_required, github_readme_endpoint,
+    github_readme_image_path, github_readme_image_paths, github_release_asset_name,
     github_release_from_response, github_release_upload_base_url,
     github_release_validate_asset_file_size, github_repo_management_from_response,
     github_repository_visibility_is_public, github_require_scope,
@@ -33,30 +32,29 @@ use super::github::{
     GitHubIssueTimelineSourceResponse, GitHubLabelResponse, GitHubOrganizationGraphQlOrganization,
     GitHubOrganizationGraphQlRepositoryConnection, GitHubOrganizationProfileResponse,
     GitHubPullRequestReviewCommentResponse, GitHubPullRequestReviewResponse,
-    GitHubPullRequestUserResponse, GitHubReadmeLocation, GitHubReleaseAssetResponse,
-    GitHubReleaseResponse, GitHubReleaseUserResponse, GitHubRepoLicenseResponse,
-    GitHubRepoOwnerResponse, GitHubRepoResponse, GitHubRepositoryVisibilityResponse,
-    GitHubRequestedReviewersResponse, GitHubRulesetSummaryResponse, GitHubTeamResponse,
+    GitHubPullRequestSearchQuery, GitHubPullRequestUserResponse, GitHubReadmeLocation,
+    GitHubReleaseAssetResponse, GitHubReleaseResponse, GitHubReleaseUserResponse,
+    GitHubRepoLicenseResponse, GitHubRepoOwnerResponse, GitHubRepoResponse,
+    GitHubRepositoryVisibilityResponse, GitHubRequestedReviewersResponse,
+    GitHubRulesetSummaryResponse, GitHubRuntimeState, GitHubTeamResponse,
     GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse, GitHubWorkflowJobResponse,
     GitHubWorkflowJobStepResponse, GitHubWorkflowResponse, GitHubWorkflowRunResponse,
     GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE, GITHUB_RELEASE_ASSET_MAX_BYTES,
     GITHUB_REPO_SCOPE, GITHUB_SCOPE,
 };
 use super::launch::{
-    clear_launch_logs, infer_launch_candidates, infer_launch_config, launch_logs, push_launch_log,
-    LaunchOutputParser,
+    clear_launch_logs, infer_launch_candidates, infer_launch_config, push_launch_log,
+    repo_get_launch_logs, LaunchOutputParser,
 };
 #[cfg(target_os = "macos")]
 use super::launch::{macos_launch_process, resolve_macos_launch_shell, stop_launch_process_tree};
 use super::readme::readme_image_data_urls;
-use super::repo_guard::repo_resource_id;
 use super::repos::{
     add_repo_files_to_gitignore, bootstrap_unborn_from_remotes, cached_managed_repos,
     canonical_repo_path, checkout_branch_at, commit_file_change_from_status,
     commit_file_changes_from_outputs, commit_file_numstats, commit_file_patches,
     commit_file_statuses, configured_rebase_target, conflict_operation, conflict_operation_args,
-    create_branch_at,
-    create_clone_parent_directories, current_branch_upstream, delete_branch_at,
+    create_branch_at, create_clone_parent_directories, current_branch_upstream, delete_branch_at,
     discard_all_repo_local_changes, discard_repo_files, ensure_clone_checkout,
     expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
     git_worktree_entries, infer_clone_directory_name, inspect_clone_target, is_conflict_status,
@@ -98,11 +96,13 @@ use lilia_github_contracts::workspace::{
     GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
     GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest,
     LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
-    RepoConflictChoice, RepoPullLocalChangesMode, RepoRemoteBranchState, RepoRemoteSyncConfig,
-    RepoRemoteSyncPolicy, RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest,
-    WorkspaceCloneRepositoryRef, WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement,
-    WorkspaceRepositoryBinding, WorkspaceSettings, WorkspaceStartupCache,
+    RepoConflictChoice, RepoConflictChoiceSide, RepoConflictOperation, RepoPullLocalChangesMode,
+    RepoRemoteBranchState, RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree,
+    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneTarget,
+    WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding, WorkspaceSettings,
+    WorkspaceStartupCache,
 };
+use lilia_github_github::{GitHubIssueCacheQuery, GitHubPullRequestCacheQuery};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
@@ -121,19 +121,28 @@ use std::sync::{Arc, Mutex};
 pub(super) struct NoopWorkspaceRuntime;
 
 impl WorkspaceRuntime for NoopWorkspaceRuntime {
-    fn store_get(&self, _file: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
+    fn store_get(
+        &self,
+        _file: &str,
+        _key: &str,
+    ) -> Result<Option<serde_json::Value>, crate::runtime::StoreError> {
         Ok(None)
     }
 
-    fn store_set(&self, _file: &str, _key: &str, _value: serde_json::Value) -> Result<(), String> {
+    fn store_set(
+        &self,
+        _file: &str,
+        _key: &str,
+        _value: serde_json::Value,
+    ) -> Result<(), crate::runtime::StoreError> {
         Ok(())
     }
 
-    fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+    fn store_delete(&self, _file: &str, _key: &str) -> Result<(), crate::runtime::StoreError> {
         Ok(())
     }
 
-    fn store_save(&self, _file: &str) -> Result<(), String> {
+    fn store_save(&self, _file: &str) -> Result<(), crate::runtime::StoreError> {
         Ok(())
     }
 
@@ -160,25 +169,45 @@ impl WorkspaceRuntime for NoopWorkspaceRuntime {
 
 #[derive(Default)]
 struct SettingsStoreRuntime {
-    value: Mutex<Option<serde_json::Value>>,
+    values: Mutex<HashMap<(String, String), serde_json::Value>>,
 }
 
 impl WorkspaceRuntime for SettingsStoreRuntime {
-    fn store_get(&self, _file: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
-        Ok(self.value.lock().unwrap().clone())
+    fn store_get(
+        &self,
+        file: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>, crate::runtime::StoreError> {
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .get(&(file.to_string(), key.to_string()))
+            .cloned())
     }
 
-    fn store_set(&self, _file: &str, _key: &str, value: serde_json::Value) -> Result<(), String> {
-        *self.value.lock().unwrap() = Some(value);
+    fn store_set(
+        &self,
+        file: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), crate::runtime::StoreError> {
+        self.values
+            .lock()
+            .unwrap()
+            .insert((file.to_string(), key.to_string()), value);
         Ok(())
     }
 
-    fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
-        *self.value.lock().unwrap() = None;
+    fn store_delete(&self, file: &str, key: &str) -> Result<(), crate::runtime::StoreError> {
+        self.values
+            .lock()
+            .unwrap()
+            .remove(&(file.to_string(), key.to_string()));
         Ok(())
     }
 
-    fn store_save(&self, _file: &str) -> Result<(), String> {
+    fn store_save(&self, _file: &str) -> Result<(), crate::runtime::StoreError> {
         Ok(())
     }
 
@@ -946,7 +975,7 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         unstaged_count: 0,
         untracked_count: 0,
         conflict_count: 0,
-        conflict_operation: "none".to_string(),
+        conflict_operation: RepoConflictOperation::None,
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),
@@ -1056,7 +1085,7 @@ fn favorites_and_workspace_groups_survive_settings_round_trip() {
     };
 
     save_settings(&app, &settings).unwrap();
-    let restored = load_settings(&app);
+    let restored = load_settings(&app).unwrap();
 
     assert_eq!(restored.favorite_repo_ids, vec!["local/repo"]);
     assert_eq!(restored.repo_groups.len(), 1);
@@ -1732,9 +1761,10 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
 }
 
 fn test_github_pull_request_cache_key(state: Option<&str>) -> String {
-    github_pull_request_cache_key(
-        state, None, None, None, None, None, None, None, None, None, None,
-    )
+    github_pull_request_cache_key(GitHubPullRequestCacheQuery {
+        state,
+        ..GitHubPullRequestCacheQuery::default()
+    })
 }
 
 fn test_github_release(id: u64, tag_name: &str) -> GitHubRelease {
@@ -1782,20 +1812,21 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
         "sena-nana/remote"
     );
     let labels = vec!["bug".to_string(), "docs".to_string()];
-    let key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
-        Some("closed"),
-        Some(200),
-        Some("updated"),
-        Some("asc"),
-        Some(" 2026-01-01T00:00:00Z "),
-        Some("sena"),
-        Some("mika"),
-        Some(&labels),
-        Some("1"),
-        Some("PVT_roadmap"),
-        Some(" roadmap "),
-    ))
-    .unwrap();
+    let key: serde_json::Value =
+        serde_json::from_str(&github_issue_cache_key(GitHubIssueCacheQuery {
+            state: Some("closed"),
+            per_page: Some(200),
+            sort: Some("updated"),
+            direction: Some("asc"),
+            since: Some(" 2026-01-01T00:00:00Z "),
+            creator: Some("sena"),
+            assignee: Some("mika"),
+            labels: Some(&labels),
+            milestone: Some("1"),
+            project: Some("PVT_roadmap"),
+            query: Some(" roadmap "),
+        }))
+        .unwrap();
     assert_eq!(
         key,
         serde_json::json!({
@@ -1812,35 +1843,29 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
             "query": "roadmap",
         })
     );
-    let fallback_key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
-        None,
-        None,
-        Some("invalid"),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ))
-    .unwrap();
+    let fallback_key: serde_json::Value =
+        serde_json::from_str(&github_issue_cache_key(GitHubIssueCacheQuery {
+            sort: Some("invalid"),
+            ..GitHubIssueCacheQuery::default()
+        }))
+        .unwrap();
     assert_eq!(fallback_key["state"], "open");
     assert_eq!(fallback_key["sort"], "created");
     assert_eq!(fallback_key["direction"], "desc");
     let pull_key: serde_json::Value = serde_json::from_str(&github_pull_request_cache_key(
-        Some("merged"),
-        Some(250),
-        Some("comments"),
-        Some("asc"),
-        Some("sena"),
-        Some("none"),
-        Some(&labels),
-        Some("2"),
-        Some("PVT_prs"),
-        Some("approved"),
-        Some(" docs "),
+        GitHubPullRequestCacheQuery {
+            state: Some("merged"),
+            per_page: Some(250),
+            sort: Some("comments"),
+            direction: Some("asc"),
+            creator: Some("sena"),
+            assignee: Some("none"),
+            labels: Some(&labels),
+            milestone: Some("2"),
+            project: Some("PVT_prs"),
+            review: Some("approved"),
+            query: Some(" docs "),
+        },
     ))
     .unwrap();
     assert_eq!(
@@ -1859,21 +1884,14 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
             "query": "docs",
         })
     );
-    let fallback_pull_key: serde_json::Value =
-        serde_json::from_str(&github_pull_request_cache_key(
-            Some("invalid"),
-            None,
-            Some("invalid"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ))
-        .unwrap();
+    let fallback_pull_key: serde_json::Value = serde_json::from_str(
+        &github_pull_request_cache_key(GitHubPullRequestCacheQuery {
+            state: Some("invalid"),
+            sort: Some("invalid"),
+            ..GitHubPullRequestCacheQuery::default()
+        }),
+    )
+    .unwrap();
     assert_eq!(fallback_pull_key["state"], "open");
     assert_eq!(fallback_pull_key["sort"], "updated");
     assert_eq!(fallback_pull_key["direction"], "desc");
@@ -1957,20 +1975,11 @@ fn github_release_asset_upload_helpers_validate_paths_and_size() {
     assert!(github_release_asset_name("").is_err());
     assert!(github_release_validate_asset_file_size(GITHUB_RELEASE_ASSET_MAX_BYTES).is_ok());
     assert!(github_release_validate_asset_file_size(GITHUB_RELEASE_ASSET_MAX_BYTES + 1).is_err());
-
-    let dir = temp_dir("github-release-asset-bytes");
-    assert!(github_release_asset_bytes(&dir.to_string_lossy()).is_err());
-    let file = dir.join("asset.bin");
-    fs::write(&file, b"asset").unwrap();
-    assert_eq!(
-        github_release_asset_bytes(&file.to_string_lossy()).unwrap(),
-        b"asset"
-    );
-    assert!(github_release_asset_bytes(&dir.join("missing.bin").to_string_lossy()).is_err());
 }
 
 #[test]
 fn github_artifact_release_asset_helpers_validate_zip_entry_and_release_target() {
+    let runtime = GitHubRuntimeState::default();
     let dir = temp_dir("github-artifact-release-asset");
     let zip_path = dir.join("artifact.zip");
     let file = fs::File::create(&zip_path).unwrap();
@@ -1982,14 +1991,17 @@ fn github_artifact_release_asset_helpers_validate_zip_entry_and_release_target()
     zip.add_directory("packages/empty/", options).unwrap();
     zip.finish().unwrap();
 
-    let (entry_path, bytes) =
-        github_artifact_file_bytes_from_zip(&zip_path, "\\packages\\Lilia_1.1.0_x64.msi").unwrap();
+    let (entry_path, temporary) =
+        github_artifact_file_from_zip(&runtime, &zip_path, "\\packages\\Lilia_1.1.0_x64.msi")
+            .unwrap();
     assert_eq!(entry_path, "packages/Lilia_1.1.0_x64.msi");
-    assert_eq!(bytes.len(), 9);
-    assert_eq!(bytes, b"installer");
-    assert!(github_artifact_file_bytes_from_zip(&zip_path, "../secret.msi").is_err());
-    assert!(github_artifact_file_bytes_from_zip(&zip_path, "packages/empty").is_err());
-    assert!(github_artifact_file_bytes_from_zip(&zip_path, "missing.msi").is_err());
+    assert_eq!(fs::read(temporary.path()).unwrap(), b"installer");
+    let temporary_path = temporary.path().to_path_buf();
+    drop(temporary);
+    assert!(!temporary_path.exists());
+    assert!(github_artifact_file_from_zip(&runtime, &zip_path, "../secret.msi").is_err());
+    assert!(github_artifact_file_from_zip(&runtime, &zip_path, "packages/empty").is_err());
+    assert!(github_artifact_file_from_zip(&runtime, &zip_path, "missing.msi").is_err());
 
     let mut release = GitHubRelease {
         id: 8001,
@@ -2050,16 +2062,18 @@ fn github_artifact_release_asset_helpers_validate_zip_entry_and_release_target()
 #[test]
 fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
     let labels = vec!["needs triage".to_string(), "bug".to_string()];
-    let query = github_pull_request_search_query(
-        "Sena-Nana/Remote",
-        "merged",
-        "dashboard",
-        Some("sena"),
-        Some("none"),
-        Some(&labels),
-        Some("v1"),
-        Some("approved"),
-    );
+    let query = github_pull_request_search_query(&GitHubPullRequestSearchQuery {
+        repo_full_name: "Sena-Nana/Remote",
+        state: "merged",
+        sort: "updated",
+        text: "dashboard",
+        creator: Some("sena"),
+        assignee: Some("none"),
+        labels: Some(&labels),
+        milestone: Some("v1"),
+        project: None,
+        review: Some("approved"),
+    });
 
     assert!(query.contains("repo:Sena-Nana/Remote"));
     assert!(query.contains("is:pr"));
@@ -2072,8 +2086,11 @@ fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
     assert!(query.contains("milestone:v1"));
     assert!(query.contains("review:approved"));
 
-    let closed_query =
-        github_pull_request_search_query("a/repo", "closed", "", None, None, None, None, None);
+    let closed_query = github_pull_request_search_query(&GitHubPullRequestSearchQuery {
+        repo_full_name: "a/repo",
+        state: "closed",
+        ..GitHubPullRequestSearchQuery::default()
+    });
     assert!(closed_query.contains("state:closed"));
     assert!(closed_query.contains("-is:merged"));
 }
@@ -2081,49 +2098,52 @@ fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
 #[test]
 fn github_pull_request_search_required_only_for_advanced_filters() {
     assert!(!github_pull_request_search_required(
-        "all", "updated", None, None, None, None, None, None, None
+        &GitHubPullRequestSearchQuery {
+            state: "all",
+            sort: "updated",
+            ..GitHubPullRequestSearchQuery::default()
+        }
     ));
     assert!(!github_pull_request_search_required(
-        "open",
-        "created",
-        Some("  "),
-        None,
-        Some(&[" ".to_string()]),
-        None,
-        None,
-        None,
-        None,
+        &GitHubPullRequestSearchQuery {
+            state: "open",
+            sort: "created",
+            creator: Some("  "),
+            labels: Some(&[" ".to_string()]),
+            ..GitHubPullRequestSearchQuery::default()
+        }
+    ));
+    for state in ["merged", "closed"] {
+        assert!(github_pull_request_search_required(
+            &GitHubPullRequestSearchQuery {
+                state,
+                sort: "updated",
+                ..GitHubPullRequestSearchQuery::default()
+            }
+        ));
+    }
+    assert!(github_pull_request_search_required(
+        &GitHubPullRequestSearchQuery {
+            state: "open",
+            sort: "comments",
+            ..GitHubPullRequestSearchQuery::default()
+        }
     ));
     assert!(github_pull_request_search_required(
-        "merged", "updated", None, None, None, None, None, None, None
+        &GitHubPullRequestSearchQuery {
+            state: "open",
+            sort: "updated",
+            labels: Some(&["bug".to_string()]),
+            ..GitHubPullRequestSearchQuery::default()
+        }
     ));
     assert!(github_pull_request_search_required(
-        "closed", "updated", None, None, None, None, None, None, None
-    ));
-    assert!(github_pull_request_search_required(
-        "open", "comments", None, None, None, None, None, None, None,
-    ));
-    assert!(github_pull_request_search_required(
-        "open",
-        "updated",
-        None,
-        None,
-        Some(&["bug".to_string()]),
-        None,
-        None,
-        None,
-        None,
-    ));
-    assert!(github_pull_request_search_required(
-        "open",
-        "updated",
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some("approved"),
-        None,
+        &GitHubPullRequestSearchQuery {
+            state: "open",
+            sort: "updated",
+            review: Some("approved"),
+            ..GitHubPullRequestSearchQuery::default()
+        }
     ));
 }
 
@@ -2135,35 +2155,17 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         .entry("sena-nana/remote".to_string())
         .or_default();
     repo_cache.issues.insert(
-        github_issue_cache_key(
-            Some("open"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
+        github_issue_cache_key(GitHubIssueCacheQuery {
+            state: Some("open"),
+            ..GitHubIssueCacheQuery::default()
+        }),
         vec![test_github_issue(1, "open")],
     );
     repo_cache.issues.insert(
-        github_issue_cache_key(
-            Some("closed"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
+        github_issue_cache_key(GitHubIssueCacheQuery {
+            state: Some("closed"),
+            ..GitHubIssueCacheQuery::default()
+        }),
         vec![test_github_issue(2, "closed")],
     );
     repo_cache.pull_requests.insert(
@@ -2181,36 +2183,18 @@ fn github_project_cache_serializes_distinct_query_buckets() {
     let restored_repo = restored.repos.get("sena-nana/remote").unwrap();
 
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(
-            Some("open"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None
-        )][0]
+        restored_repo.issues[&github_issue_cache_key(GitHubIssueCacheQuery {
+            state: Some("open"),
+            ..GitHubIssueCacheQuery::default()
+        })][0]
             .number,
         1
     );
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(
-            Some("closed"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None
-        )][0]
+        restored_repo.issues[&github_issue_cache_key(GitHubIssueCacheQuery {
+            state: Some("closed"),
+            ..GitHubIssueCacheQuery::default()
+        })][0]
             .number,
         2
     );
@@ -3420,11 +3404,11 @@ fn resolves_conflict_content_from_hunk_choices() {
         &[
             RepoConflictChoice {
                 hunk_id: "hunk-1".to_string(),
-                side: "ours".to_string(),
+                side: RepoConflictChoiceSide::Ours,
             },
             RepoConflictChoice {
                 hunk_id: "hunk-2".to_string(),
-                side: "theirs".to_string(),
+                side: RepoConflictChoiceSide::Theirs,
             },
         ],
     )
@@ -3439,48 +3423,40 @@ fn resolves_conflict_content_from_hunk_choices() {
 #[test]
 fn maps_conflict_abort_and_continue_args() {
     assert_eq!(
-        conflict_operation_args("merge", "终止").unwrap(),
+        conflict_operation_args(RepoConflictOperation::Merge, "终止").unwrap(),
         ["merge", "--abort"]
     );
     assert_eq!(
-        conflict_operation_args("rebase", "终止").unwrap(),
+        conflict_operation_args(RepoConflictOperation::Rebase, "终止").unwrap(),
         ["rebase", "--abort"]
     );
     assert_eq!(
-        conflict_operation_args("cherry-pick", "终止").unwrap(),
+        conflict_operation_args(RepoConflictOperation::CherryPick, "终止").unwrap(),
         ["cherry-pick", "--abort"]
     );
     assert_eq!(
-        conflict_operation_args("merge", "继续").unwrap(),
+        conflict_operation_args(RepoConflictOperation::Merge, "继续").unwrap(),
         ["commit", "--no-edit"]
     );
     assert_eq!(
-        conflict_operation_args("rebase", "继续").unwrap(),
+        conflict_operation_args(RepoConflictOperation::Rebase, "继续").unwrap(),
         ["rebase", "--continue"]
     );
     assert_eq!(
-        conflict_operation_args("cherry-pick", "继续").unwrap(),
+        conflict_operation_args(RepoConflictOperation::CherryPick, "继续").unwrap(),
         ["cherry-pick", "--continue"]
     );
 }
 
 #[test]
-fn rejects_missing_or_unknown_conflict_operations() {
+fn rejects_missing_conflict_operations() {
     assert_eq!(
-        conflict_operation_args("none", "终止").unwrap_err(),
+        conflict_operation_args(RepoConflictOperation::None, "终止").unwrap_err(),
         "当前没有进行中的冲突操作"
     );
     assert_eq!(
-        conflict_operation_args("none", "继续").unwrap_err(),
+        conflict_operation_args(RepoConflictOperation::None, "继续").unwrap_err(),
         "当前没有进行中的冲突操作"
-    );
-    assert_eq!(
-        conflict_operation_args("am", "终止").unwrap_err(),
-        "不支持终止 am 冲突"
-    );
-    assert_eq!(
-        conflict_operation_args("am", "继续").unwrap_err(),
-        "不支持继续 am 冲突"
     );
 }
 
@@ -3495,8 +3471,8 @@ fn repo_summary_exposes_active_conflict_operation_without_conflict_files() {
     let head = git_stdout(&repo, &["rev-parse", "HEAD"]);
 
     for (marker, expected) in [
-        ("MERGE_HEAD", "merge"),
-        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("MERGE_HEAD", RepoConflictOperation::Merge),
+        ("CHERRY_PICK_HEAD", RepoConflictOperation::CherryPick),
     ] {
         fs::write(repo.join(".git").join(marker), format!("{head}\n")).unwrap();
         assert_eq!(conflict_operation(&repo), expected);
@@ -3505,8 +3481,11 @@ fn repo_summary_exposes_active_conflict_operation_without_conflict_files() {
     }
 
     fs::create_dir_all(repo.join(".git").join("rebase-merge")).unwrap();
-    assert_eq!(conflict_operation(&repo), "rebase");
-    assert_eq!(summarize_repo(&root, &repo).conflict_operation, "rebase");
+    assert_eq!(conflict_operation(&repo), RepoConflictOperation::Rebase);
+    assert_eq!(
+        summarize_repo(&root, &repo).conflict_operation,
+        RepoConflictOperation::Rebase
+    );
 }
 
 #[test]
@@ -3667,10 +3646,6 @@ fn repo_branches_reports_checked_out_worktrees() {
     let main_common_dir = git_common_dir(&path).unwrap();
     let linked_common_dir = git_common_dir(&linked).unwrap();
     assert_eq!(main_common_dir, linked_common_dir);
-    assert_eq!(
-        repo_resource_id(main_common_dir),
-        repo_resource_id(linked_common_dir)
-    );
 }
 
 #[test]
@@ -3788,7 +3763,9 @@ fn repo_path_expansion_includes_root_worktrees_only_once() {
         ],
     );
 
-    let paths = expand_repo_paths_with_root_worktrees(&root, vec![main.clone(), linked.clone()]);
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+    let paths =
+        expand_repo_paths_with_root_worktrees(&app, &root, vec![main.clone(), linked.clone()]);
     let ids = paths
         .iter()
         .map(|path| repo_id(&root, path))
@@ -4038,7 +4015,7 @@ fn merge_branch_returns_conflict_result() {
     let result = merge_branch_at(&path, &path, "feature").unwrap();
 
     assert_eq!(result.status, "conflicts");
-    assert_eq!(result.conflicts.operation, "merge");
+    assert_eq!(result.conflicts.operation, RepoConflictOperation::Merge);
     assert!(!result.conflicts.files.is_empty());
 }
 
@@ -4467,7 +4444,7 @@ fn github_repo_template_response(
         id,
         name: name.to_string(),
         full_name: full_name.to_string(),
-        private: id % 2 == 0,
+        private: id.is_multiple_of(2),
         description: Some(format!("{name} description")),
         is_template,
         owner: GitHubRepoOwnerResponse {
@@ -5961,16 +5938,26 @@ fn parses_crlf_launch_output_as_append_events() {
 
 #[test]
 fn clears_launch_logs_for_one_repo() {
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+    let other_app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
     let repo_id = format!("repo-{}", now_millis());
     let other_repo_id = format!("other-repo-{}", now_millis());
-    push_launch_log(&repo_id, "stdout", "old output");
-    push_launch_log(&other_repo_id, "stdout", "kept output");
+    push_launch_log(&app, &repo_id, "stdout", "old output");
+    push_launch_log(&app, &other_repo_id, "stdout", "kept output");
+    assert!(repo_get_launch_logs(other_app, other_repo_id.clone(), None)
+        .unwrap()
+        .is_empty());
 
-    clear_launch_logs(&repo_id);
+    clear_launch_logs(&app, &repo_id);
 
-    let logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
-    assert!(logs.get(&repo_id).is_none());
-    assert_eq!(logs.get(&other_repo_id).unwrap().len(), 1);
-    drop(logs);
-    clear_launch_logs(&other_repo_id);
+    assert!(repo_get_launch_logs(app.clone(), repo_id, None)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        repo_get_launch_logs(app.clone(), other_repo_id.clone(), None)
+            .unwrap()
+            .len(),
+        1
+    );
+    clear_launch_logs(&app, &other_repo_id);
 }

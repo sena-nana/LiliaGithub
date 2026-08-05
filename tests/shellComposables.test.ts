@@ -1,11 +1,11 @@
 import { defineComponent } from "vue";
 import { fireEvent, render } from "@testing-library/vue";
 import { beforeEach, describe, expect, it } from "vitest";
+import { setLiliaUiConfig } from "@lilia/ui/shell";
 import {
-  setLiliaUiConfig,
   usePersistentBoolean,
   usePersistentNumber,
-} from "../src/ui";
+} from "@lilia/ui/composables";
 import { LILIA_UI_CONFIG } from "../src/config/appShell";
 
 beforeEach(() => {

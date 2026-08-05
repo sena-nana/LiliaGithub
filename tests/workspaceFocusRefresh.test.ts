@@ -1,24 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FOCUS_REFRESH_THRESHOLD_MS,
-  createWorkspace,
-  initialize,
-  installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
-import {
-  addLocalRepo,
-  refreshRepoSummaries,
-  resetRepositoryRuntimeForTests,
-} from "../src/composables/workspace/repositories";
-import {
-  applyWorkspaceRepoRefreshed,
-  applyWorkspaceTaskChanged,
-  resetRepoRefreshRuntimeForTests,
-} from "../src/composables/workspace/repoRefreshEvents";
-import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { resetLowPrioritySchedulerForTests } from "../src/utils/lowPriorityScheduler";
-import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import { repoDetailPatch, repoSummary, workspaceBootstrap, workspaceSettings } from "./fixtures/workspace";
+import { createWorkspaceStoreFixture, resetWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 
 const service = vi.hoisted(() => ({
   listManagedRepos: vi.fn(),
@@ -42,10 +28,17 @@ const service = vi.hoisted(() => ({
   setActiveWorkspaceRepo: vi.fn(),
   enqueueRepoRefresh: vi.fn(),
 }));
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
+const workspace = createWorkspaceStoreFixture(service);
+const {
+  createWorkspace,
+  initialize,
+  installWorkspaceFocusRefresh,
+  addLocalRepo,
+  refreshRepoSummaries,
+  applyWorkspaceRepoRefreshed,
+  applyWorkspaceTaskChanged,
+} = workspace;
+const { recentSyncErrorForRepo, state } = workspace.stateFeature;
 
 async function flushPromises() {
   await Promise.resolve();
@@ -78,9 +71,7 @@ describe("workspace focus refresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T00:00:00Z"));
-    resetWorkspaceStateForTests();
-    resetRepositoryRuntimeForTests();
-    resetRepoRefreshRuntimeForTests();
+    resetWorkspaceStoreFixture(workspace);
     resetLowPrioritySchedulerForTests();
     vi.clearAllMocks();
     const settings = workspaceSettings();

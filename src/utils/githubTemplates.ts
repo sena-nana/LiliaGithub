@@ -1,8 +1,4 @@
 import { parse as parseYaml } from "yaml";
-import {
-  getGitHubRepoFilePreview,
-  listGitHubRepoFiles,
-} from "../services/workspace/client";
 import type { RepoFilePreview, RepoFileTreeEntry } from "../services/workspace/types";
 
 export type GitHubIssueTemplateField =
@@ -69,12 +65,18 @@ export type GitHubPullRequestTemplate = {
 
 export type GitHubIssueTemplateAnswers = Record<string, string | string[]>;
 
-type GitHubTemplateListFiles = typeof listGitHubRepoFiles;
-type GitHubTemplatePreviewFile = typeof getGitHubRepoFilePreview;
+type GitHubTemplateListFiles = (
+  repoFullName: string,
+  parentPath: string | null,
+) => Promise<RepoFileTreeEntry[]>;
+type GitHubTemplatePreviewFile = (
+  repoFullName: string,
+  path: string,
+) => Promise<RepoFilePreview>;
 
 export type GitHubTemplateLoader = {
-  listFiles?: GitHubTemplateListFiles;
-  previewFile?: GitHubTemplatePreviewFile;
+  listFiles: GitHubTemplateListFiles;
+  previewFile: GitHubTemplatePreviewFile;
 };
 
 const ISSUE_TEMPLATE_DIR = ".github/ISSUE_TEMPLATE";
@@ -109,10 +111,9 @@ export function blankPullRequestTemplate(): GitHubPullRequestTemplate {
 
 export async function loadGitHubIssueTemplates(
   repoFullName: string,
-  loader: GitHubTemplateLoader = {},
+  loader: GitHubTemplateLoader,
 ): Promise<GitHubIssueTemplate[]> {
-  const listFiles = loader.listFiles ?? listGitHubRepoFiles;
-  const previewFile = loader.previewFile ?? getGitHubRepoFilePreview;
+  const { listFiles, previewFile } = loader;
   const candidates = uniqueByPath([
     ...issueTemplateCandidatesFromEntries(await safeListFiles(listFiles, repoFullName, ISSUE_TEMPLATE_DIR)),
     ...issueTemplateCandidatesFromEntries(await safeListFiles(listFiles, repoFullName, ".github")),
@@ -130,10 +131,9 @@ export async function loadGitHubIssueTemplates(
 
 export async function loadGitHubPullRequestTemplates(
   repoFullName: string,
-  loader: GitHubTemplateLoader = {},
+  loader: GitHubTemplateLoader,
 ): Promise<GitHubPullRequestTemplate[]> {
-  const listFiles = loader.listFiles ?? listGitHubRepoFiles;
-  const previewFile = loader.previewFile ?? getGitHubRepoFilePreview;
+  const { listFiles, previewFile } = loader;
   const candidates = uniqueByPath([
     ...pullRequestTemplateCandidatesFromEntries(await safeListFiles(listFiles, repoFullName, null)),
     ...pullRequestTemplateCandidatesFromEntries(await safeListFiles(listFiles, repoFullName, ".github")),

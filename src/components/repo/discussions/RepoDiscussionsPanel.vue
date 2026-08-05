@@ -9,7 +9,7 @@ import {
 } from "./discussionViewModules";
 import { useRepoDiscussionsStore } from "./useRepoDiscussions";
 import { useWorkspace } from "../../../composables/useWorkspace";
-import { isConfirmedMissingResource } from "../../../services/workspace/client";
+import { isConfirmedMissingResource } from "../../../utils/githubErrors";
 
 const props = defineProps<{
   repoFullName: string;

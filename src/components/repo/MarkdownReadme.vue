@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ExternalLink } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { useOverlayPresence } from "../../ui";
+import { useOverlayPresence } from "@lilia/ui/overlay";
 import { readmeHeadingId, resolveReadmeLink, type ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 const props = defineProps<{

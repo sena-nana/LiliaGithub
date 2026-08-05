@@ -31,13 +31,12 @@ import {
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { cloneAccountPreferences, useAccountPreferences } from "../composables/useAccountPreferences";
+import { Dropdown } from "@lilia/ui/search";
+import { UiDialog } from "@lilia/ui";
 import {
-  buildCalendarHeatmapModel,
-  Dropdown,
-  UiDialog,
   openContextMenuAt,
   type ContextMenuItem,
-} from "../ui";
+} from "@lilia/ui/composables";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import {
   findWorkflowFailureWorktree,
@@ -46,36 +45,25 @@ import {
   type WorkflowFailureHandoffSession,
 } from "../composables/useHomeWorkflowFailureHandoff";
 import { useWorkspace } from "../composables/useWorkspace";
+import { useHomeSetupController } from "../composables/home/useHomeSetupController";
+import { useHomeContributionController } from "../composables/home/useHomeContributionController";
 import {
-  repoSyncIssuesByRepoId,
-  type GitHubContributionsState,
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
-  cancelGitHubWorkflowRun,
-  listGitHubAccountIssues,
-  listGitHubActionNotifications,
-  mergeGitHubPullRequest,
-  rerunFailedGitHubWorkflowRun,
-  updateGitHubIssue,
-  updateGitHubPullRequest,
   type GitHubActionNotification,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepoSummary,
   type GitHubRepoOwner,
   type GitHubRepositoryScope,
-  type ContributionIdentityRecommendation,
-  type ContributionIdentityRecommendationResult,
   type BulkOperation,
   type RepoPullLocalChangesMode,
   type RepoSummary,
   type WorkspaceRepoPlacement,
   type WorkspaceSettings,
 } from "../services/workspace";
-import { clearGitHubRepoCache } from "../services/workspace/cache";
 import {
-  listGitHubHomeAttention,
   mergeHomeAttentionResult,
   type HomeAttentionResult,
 } from "../services/homeAttention";
@@ -144,10 +132,6 @@ import {
   type SortDirection,
 } from "../utils/repoSort";
 import {
-  contributionIdentityKey,
-  mergeContributionIdentity,
-} from "../utils/contributionIdentities";
-import {
   ALL_GITHUB_REPOSITORIES,
   githubOrganizationAccessLimited,
   githubOrganizationAccessMessage,
@@ -162,8 +146,9 @@ import {
 
 const workspace = useWorkspace();
 const workflowFailureHandoff = useHomeWorkflowFailureHandoff();
-const activeNamedWorkspace = computed(() => workspace.activeWorkspace.value);
-const hasAvailableWorkspaceRoot = computed(() => workspace.hasAvailableWorkspaceRoot.value);
+const homeSetup = useHomeSetupController(workspace);
+const activeNamedWorkspace = homeSetup.activeWorkspace;
+const hasAvailableWorkspaceRoot = homeSetup.hasAvailableWorkspaceRoot;
 const accountPreferences = useAccountPreferences();
 const router = useRouter();
 const route = useRoute();
@@ -179,45 +164,13 @@ const cloneDialog = useCloneRepoDialog({
 });
 const favoritePendingKeys = ref<Set<string>>(new Set());
 const favoriteError = ref<string | null>(null);
-const workspaceCreateOpen = ref(false);
-const workspaceCreateName = ref("");
-const workspaceCreateRoot = ref("");
-const workspaceCreateBusy = ref(false);
-const choosingInitialWorkspaceRoot = ref(false);
-
-async function chooseWorkspaceRoot() {
-  if (choosingInitialWorkspaceRoot.value) return;
-  choosingInitialWorkspaceRoot.value = true;
-  try {
-    const root = await workspace.pickWorkspaceRoot();
-    if (!root) return;
-    const active = activeNamedWorkspace.value;
-    if (active) {
-      await workspace.addWorkspaceRoot(active.id, root);
-      return;
-    }
-    workspaceCreateRoot.value = root;
-    const rootSegments = root.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
-    workspaceCreateName.value = rootSegments[rootSegments.length - 1] ?? "默认工作区";
-    workspaceCreateOpen.value = true;
-  } catch {
-    // The workspace lifecycle exposes the failure through its shared error state.
-  } finally {
-    choosingInitialWorkspaceRoot.value = false;
-  }
-}
-
-async function createInitialWorkspace() {
-  const name = workspaceCreateName.value.trim();
-  if (!name || workspaceCreateBusy.value) return;
-  workspaceCreateBusy.value = true;
-  try {
-    await workspace.createWorkspace(name, workspaceCreateRoot.value);
-    workspaceCreateOpen.value = false;
-  } finally {
-    workspaceCreateBusy.value = false;
-  }
-}
+const workspaceCreateOpen = homeSetup.createOpen;
+const workspaceCreateName = homeSetup.createName;
+const workspaceCreateRoot = homeSetup.createRoot;
+const workspaceCreateBusy = homeSetup.createBusy;
+const choosingInitialWorkspaceRoot = homeSetup.choosingRoot;
+const chooseWorkspaceRoot = homeSetup.chooseRoot;
+const createInitialWorkspace = homeSetup.createInitialWorkspace;
 
 type RepoAction = {
   label: string;
@@ -407,13 +360,22 @@ const repoStatusSort = ref<RepoStatusSortState>(
   },
 );
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
-const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
-const homeContributionIdentityRecommendations = ref<ContributionIdentityRecommendationResult | null>(null);
-const homeContributionIdentityScanning = ref(false);
-const homeContributionIdentitySavingKey = ref<string | null>(null);
-const homeContributionIdentityError = ref<string | null>(null);
-const homeContributionIdentityPanelOpen = ref(false);
 const componentEpoch = useComponentEpoch();
+const homeContribution = useHomeContributionController(workspace, componentEpoch);
+const homeContributionIdentityRecommendations = homeContribution.recommendations;
+const homeContributionIdentityScanning = homeContribution.scanning;
+const homeContributionIdentitySavingKey = homeContribution.savingKey;
+const homeContributionIdentityError = homeContribution.error;
+const overviewContributions = homeContribution.view;
+const contributionHeatmapModel = homeContribution.chartModel;
+const totalContributions = homeContribution.total;
+const hasContributionDays = homeContribution.hasDays;
+const skippedContributionRepoCount = homeContribution.skippedRepoCount;
+const homeContributionIdentityPanelVisible = homeContribution.identityPanelVisible;
+const commitInitialHomeContributionSnapshot = homeContribution.commitInitial;
+const refreshHomeContributionSnapshot = homeContribution.refresh;
+const scanHomeContributionIdentities = homeContribution.scanIdentities;
+const adoptHomeContributionIdentity = homeContribution.adoptIdentity;
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoOwnersLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
@@ -428,7 +390,6 @@ let homeOverviewInitialized = false;
 let activeHomeBindingIdentity: string | null | undefined;
 let repoStatusSortBindingIdentity: string | null | undefined;
 let repoStatusSortSelectedOnPage = false;
-let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const homeFavoritesByKey = computed(() => new Map(
   favoriteRepositories(workspace.state.settings, workspace.state.repos)
@@ -533,18 +494,6 @@ function cloneOverviewSettings(settings: typeof workspace.state.settings): HomeO
   };
 }
 
-function cloneContributions(contributions: typeof workspace.state.githubContributions): GitHubContributionsState {
-  return {
-    days: contributions.days.map((day) => ({
-      ...day,
-      repositories: day.repositories?.map((repo) => ({ ...repo })) ?? [],
-    })),
-    meta: contributions.meta ? { ...contributions.meta } : null,
-    loading: contributions.loading,
-    error: contributions.error,
-  };
-}
-
 function cloneRecordArray<T>(source: Record<string, T[] | undefined>) {
   return Object.fromEntries(
     Object.entries(source).map(([key, values]) => [
@@ -587,7 +536,7 @@ function buildHomeOverviewSnapshot(
         homeOverviewSnapshot.value?.actionNotificationsByRepo ??
         githubActionNotificationsByRepo.value,
     ),
-    syncIssuesByRepoId: new Map(repoSyncIssuesByRepoId()),
+    syncIssuesByRepoId: new Map(workspace.stateFeature.repoSyncIssuesByRepoId()),
   };
 }
 
@@ -614,37 +563,6 @@ function commitHomeOverviewSnapshotFromGitHubState() {
   });
 }
 
-function commitHomeContributionSnapshot() {
-  homeContributionSnapshot.value = cloneContributions(workspace.state.githubContributions);
-}
-
-async function refreshHomeContributionSnapshot(options: { requireReady?: boolean } = {}) {
-  const generation = ++homeContributionRefreshGeneration;
-  await workspace.refreshRepoContributions();
-  await nextTick();
-  await waitForOverviewContributionRefresh();
-  if (generation !== homeContributionRefreshGeneration || (options.requireReady !== false && !workspace.isReady.value)) {
-    return;
-  }
-  commitHomeContributionSnapshot();
-}
-
-function homeContributionRefreshSettled() {
-  const contributions = workspace.state.githubContributions;
-  return !contributions.loading && (
-    contributions.days.length > 0 ||
-    contributions.meta !== null ||
-    contributions.error !== null
-  );
-}
-
-function commitInitialHomeContributionSnapshot() {
-  if (!workspace.isReady.value || homeContributionSnapshot.value || !homeContributionRefreshSettled()) {
-    return;
-  }
-  commitHomeContributionSnapshot();
-}
-
 async function refreshHomeAfterRepoMutation() {
   commitHomeOverviewSnapshot();
   await refreshHomeContributionSnapshot();
@@ -659,40 +577,6 @@ const overviewPullRequestsByRepo = computed(() => homeOverviewSnapshot.value?.pu
 const overviewActionNotificationsByRepo = computed(() => homeOverviewSnapshot.value?.actionNotificationsByRepo ?? {});
 const overviewSyncIssuesByRepoId = computed(() =>
   homeOverviewSnapshot.value?.syncIssuesByRepoId ?? emptySyncIssuesByRepoId,
-);
-const overviewContributions = computed(() =>
-  homeContributionSnapshot.value ?? {
-    ...workspace.state.githubContributions,
-    loading: workspace.state.loading || workspace.state.githubContributions.loading,
-  },
-);
-
-const contributionHeatmapModel = computed(() =>
-  buildCalendarHeatmapModel(overviewContributions.value.days.map((day) => ({
-    date: day.date,
-    value: day.count,
-  })), {
-    cellSize: 13,
-    cellGap: 3,
-    cellRadius: 3,
-    titleFormatter: (day) => `${day.date}：${day.value} 次提交`,
-  })
-);
-
-const totalContributions = computed(() =>
-  overviewContributions.value.days.reduce((total, day) => total + day.count, 0),
-);
-const hasContributionDays = computed(() => overviewContributions.value.days.length > 0);
-const skippedContributionRepoCount = computed(() =>
-  overviewContributions.value.meta?.skippedRepoCount ?? 0,
-);
-const homeContributionIdentityPanelVisible = computed(() =>
-  homeContributionIdentityPanelOpen.value
-  && (
-    homeContributionIdentityScanning.value
-    || homeContributionIdentityError.value !== null
-    || homeContributionIdentityRecommendations.value !== null
-  ),
 );
 const languageOverview = computed<HomeCodeOverview>(() => {
   const overview = buildLanguageOverviewFromRepos(overviewCodeRepos.value);
@@ -924,7 +808,7 @@ watch(
 
 onUnmounted(() => {
   githubPendingGeneration += 1;
-  homeContributionRefreshGeneration += 1;
+  homeContribution.invalidate();
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
   githubRepoOwnersLoader.invalidate();
@@ -1171,7 +1055,7 @@ function currentGitHubBindingIdentity() {
 
 function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } = {}) {
   homeOverviewInitialized = false;
-  homeContributionRefreshGeneration += 1;
+  homeContribution.invalidate();
   githubPendingGeneration += 1;
   githubAccountIssuesGeneration += 1;
   githubRepoStatusLoader.invalidate();
@@ -1202,10 +1086,10 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
   homeAttentionError.value = null;
   homePendingMutationError.value = null;
   homeOverviewSnapshot.value = null;
-  homeContributionSnapshot.value = null;
+  homeContribution.resetSnapshot();
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
   if (options.clearAccountCaches) {
-    clearGitHubRepoCache();
+    workspace.clearGitHubRepoCache();
     clearHomeGitHubOverviewSnapshot();
   }
 }
@@ -1270,7 +1154,7 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
   githubAccountIssuesLoading.value = true;
   githubTimelineError.value = null;
   try {
-    const items = await listGitHubAccountIssues({
+    const items = await workspace.listGitHubAccountIssues({
       state: "open",
       perPage: GITHUB_ACCOUNT_ISSUES_PER_PAGE,
       sort: "updated",
@@ -1309,7 +1193,7 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
   githubActionNotificationsLoading.value = true;
   githubTimelineError.value = null;
   try {
-    const notifications = await listGitHubActionNotifications(
+    const notifications = await workspace.listGitHubActionNotifications(
       GITHUB_ACTION_NOTIFICATIONS_PER_PAGE,
       { forceRefresh: refresh },
     );
@@ -1358,7 +1242,7 @@ async function loadHomeAttention(repos: GitHubRepoSummary[], refresh = false) {
   homeAttentionLoading.value = true;
   homeAttentionError.value = null;
   try {
-    const result = await listGitHubHomeAttention(repoFullNames, { forceRefresh: refresh });
+    const result = await workspace.listGitHubHomeAttention(repoFullNames, { forceRefresh: refresh });
     if (generation !== homeAttentionGeneration || pendingGeneration !== githubPendingGeneration) return;
     homeAttentionResult.value = mergeHomeAttentionResult(previous, result);
     const failures = new Set([
@@ -1457,12 +1341,14 @@ function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
-  if (!workspace.isReady.value || githubReposLoading.value) return;
+  if (!workspace.isReady.value) return;
   const scope = githubRepositoryScope.value;
   const scopeKey = githubRepositoryScopeKey(scope);
   githubRepoMoreLoader.invalidate();
   githubReposLoadingMore.value = false;
-  await githubRepoStatusLoader.run(options.force ? "overview-repos:force" : "overview-repos", async (runId) => {
+  await githubRepoStatusLoader.run(
+    `overview-repos:${scopeKey}:${options.force ? "force" : "cached"}`,
+    async (runId) => {
     githubReposLoading.value = true;
     githubReposError.value = null;
     try {
@@ -1485,7 +1371,12 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
         githubReposLoading.value = false;
       }
     }
-  });
+    },
+  );
+}
+
+function retryWorkspaceBootstrap() {
+  void workspace.initialize();
 }
 
 async function loadMoreGitHubRepos() {
@@ -1875,9 +1766,9 @@ async function updateHomePendingWorkflow(
   if (target.kind !== "workflow" || !target.run || target.runId == null) return;
   try {
     if (action === "workflow-rerun") {
-      await rerunFailedGitHubWorkflowRun(target.repoFullName, target.runId);
+      await workspace.rerunFailedGitHubWorkflowRun(target.repoFullName, target.runId);
     } else {
-      await cancelGitHubWorkflowRun(target.repoFullName, target.runId);
+      await workspace.cancelGitHubWorkflowRun(target.repoFullName, target.runId);
     }
   } finally {
     await loadHomeAttention(homeTimelineRepos.value, true);
@@ -1887,7 +1778,7 @@ async function updateHomePendingWorkflow(
 async function updateHomePendingIssue(item: HomePendingItem, action: Extract<HomePendingAction, "issue-complete" | "issue-close">) {
   const target = item.target;
   if (target.kind !== "issue") return;
-  const updated = await updateGitHubIssue(target.repoFullName, target.number, {
+  const updated = await workspace.updateGitHubIssue(target.repoFullName, target.number, {
     state: "closed",
     stateReason: action === "issue-complete" ? "completed" : "not_planned",
   });
@@ -1900,8 +1791,8 @@ async function updateHomePendingPullRequest(item: HomePendingItem, action: Extra
   const target = item.target;
   if (target.kind !== "pull") return;
   const updated = action === "pull-merge"
-    ? await mergeGitHubPullRequest(target.repoFullName, target.number, { method: "merge" })
-    : await updateGitHubPullRequest(target.repoFullName, target.number, { state: "closed" });
+    ? await workspace.mergeGitHubPullRequest(target.repoFullName, target.number, { method: "merge" })
+    : await workspace.updateGitHubPullRequest(target.repoFullName, target.number, { state: "closed" });
   githubAccountIssuesGeneration += 1;
   replaceHomePendingPullRequest(target.repoFullName, updated);
   await loadHomePendingAccountIssues(homeTimelineRepos.value, true);
@@ -2168,66 +2059,6 @@ async function refreshOverviewContributions() {
   await refreshHomeContributionSnapshot();
 }
 
-async function scanHomeContributionIdentities() {
-  if (homeContributionIdentityScanning.value || homeContributionIdentitySavingKey.value) return;
-  homeContributionIdentityPanelOpen.value = true;
-  homeContributionIdentityScanning.value = true;
-  homeContributionIdentityError.value = null;
-  try {
-    const result = await workspace.scanContributionIdentities();
-    if (!componentEpoch.assertAlive()) return;
-    homeContributionIdentityRecommendations.value = result;
-  } catch (err) {
-    if (!componentEpoch.assertAlive()) return;
-    homeContributionIdentityError.value = String(err);
-  } finally {
-    if (componentEpoch.assertAlive()) homeContributionIdentityScanning.value = false;
-  }
-}
-
-async function adoptHomeContributionIdentity(recommendation: ContributionIdentityRecommendation) {
-  const key = contributionIdentityKey(recommendation.identity);
-  if (homeContributionIdentityScanning.value || homeContributionIdentitySavingKey.value) return;
-  homeContributionIdentitySavingKey.value = key;
-  homeContributionIdentityError.value = null;
-  try {
-    const current = workspace.state.settings?.contributionIdentities ?? [];
-    await workspace.setContributionIdentities(mergeContributionIdentity(current, recommendation.identity));
-    if (!componentEpoch.assertAlive()) return;
-    if (homeContributionIdentityRecommendations.value) {
-      homeContributionIdentityRecommendations.value = {
-        ...homeContributionIdentityRecommendations.value,
-        recommendations: homeContributionIdentityRecommendations.value.recommendations.filter(
-          (item) => contributionIdentityKey(item.identity) !== key,
-        ),
-      };
-    }
-    if (!workspace.state.repos.length) {
-      await workspace.refreshRepos();
-    }
-    await refreshHomeContributionSnapshot({ requireReady: false });
-  } catch (err) {
-    if (!componentEpoch.assertAlive()) return;
-    homeContributionIdentityError.value = String(err);
-  } finally {
-    if (componentEpoch.assertAlive()) homeContributionIdentitySavingKey.value = null;
-  }
-}
-
-function waitForOverviewContributionRefresh() {
-  if (!workspace.state.githubContributions.loading) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    const stop = watch(
-      () => workspace.state.githubContributions.loading,
-      (loading) => {
-        if (loading) return;
-        stop();
-        resolve();
-      },
-    );
-  });
-}
-
 async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   if (cloningFullNames.has(repo.fullName)) return;
   cloningFullNames.add(repo.fullName);
@@ -2350,7 +2181,46 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 <template>
   <section class="home-page" data-agent-id="home.page" :class="{ 'setup-page': !workspace.isReady.value }">
-    <div v-if="!workspace.isReady.value" class="setup-screen" data-agent-id="setup.screen">
+    <div
+      v-if="workspace.state.bootstrapStatus === 'idle' || workspace.state.bootstrapStatus === 'loading'"
+      class="setup-screen"
+      data-agent-id="setup.loading"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="setup-status">
+        <LoaderCircle :size="20" aria-hidden="true" class="sb-spin" />
+        <div>
+          <h1>正在打开 LiliaGithub</h1>
+          <p class="muted">正在恢复工作区和 GitHub 授权状态。</p>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-else-if="workspace.state.bootstrapStatus === 'error'"
+      class="setup-screen"
+      data-agent-id="setup.error"
+    >
+      <div class="setup-status">
+        <AlertCircle :size="20" aria-hidden="true" />
+        <div>
+          <h1>无法打开工作区</h1>
+          <p class="error-line">{{ workspace.state.error || "工作区初始化失败。" }}</p>
+          <button
+            type="button"
+            class="primary"
+            data-agent-id="setup.retry"
+            @click="retryWorkspaceBootstrap"
+          >
+            <RotateCw :size="14" aria-hidden="true" />
+            重试
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="!workspace.isReady.value" class="setup-screen" data-agent-id="setup.screen">
       <div class="page-header">
         <div>
           <h1>LiliaGithub 初始化</h1>
@@ -3357,6 +3227,28 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .setup-screen .page-header {
   margin-bottom: 24px;
+}
+
+.setup-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--text-muted);
+}
+
+.setup-status h1 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.setup-status p {
+  margin: 0;
+}
+
+.setup-status button {
+  margin-top: 14px;
 }
 
 .setup-list {

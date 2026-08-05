@@ -1,14 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import ContextMenuHost from "../src/ui/contextMenuHost";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import {
   closeContextMenu,
   installContextMenu,
   uninstallContextMenu,
-} from "../src/ui";
+} from "@lilia/ui/composables";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
+import { createSessionContext } from "../src/composables/sessionContext";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry, RepoSummary } from "../src/services/workspace/types";
 
@@ -23,16 +27,7 @@ const clientMocks = vi.hoisted(() => ({
 }));
 
 const { listRepoFiles, getRepoFilePreview, deleteRepoFile, refreshRepoDetailPatch, openPath, openPathTarget, openUrl } = clientMocks;
-
-vi.mock("../src/services/workspace/client", () => ({
-  listRepoFiles: clientMocks.listRepoFiles,
-  getRepoFilePreview: clientMocks.getRepoFilePreview,
-  deleteRepoFile: clientMocks.deleteRepoFile,
-  refreshRepoDetailPatch: clientMocks.refreshRepoDetailPatch,
-  openPath: clientMocks.openPath,
-  openPathTarget: clientMocks.openPathTarget,
-  openUrl: clientMocks.openUrl,
-}));
+let unrelatedSessionContext = createSessionContext();
 
 async function renderFilesPanel(props: Record<string, unknown> = {}) {
   const panelProps = {
@@ -45,9 +40,19 @@ async function renderFilesPanel(props: Record<string, unknown> = {}) {
     props: ["repoId", "repoPath", "repoRef", "changes", "targetPath", "targetHash"],
     template: "<RepoFilesPanel v-bind=\"$props\" /><ContextMenuHost />",
   });
+  const store = createWorkspaceStoreFixture({
+    listRepoFiles,
+    getRepoFilePreview,
+    deleteRepoFile,
+    refreshRepoDetailPatch,
+    openPath,
+    openPathTarget,
+    openUrl,
+  });
   return render(Wrapper, {
     props: panelProps,
     global: {
+      provide: provideWorkspaceStoreFixture(store),
       plugins: [liliaContextMenuPlugin],
       stubs: {
         transition: false,
@@ -134,7 +139,7 @@ describe("RepoFilesPanel", () => {
     vi.resetAllMocks();
     closeContextMenu();
     installContextMenu();
-    resetSessionContextForTests();
+    unrelatedSessionContext = createSessionContext();
     openPath.mockResolvedValue(undefined);
     openPathTarget.mockResolvedValue(undefined);
     deleteRepoFile.mockResolvedValue(summary());
@@ -235,7 +240,7 @@ describe("RepoFilesPanel", () => {
     getRepoFilePreview.mockReturnValueOnce(readmePreview.promise);
 
     await renderFilesPanel();
-    invalidateSessionContextSnapshot();
+    unrelatedSessionContext.invalidate();
     rootEntries.resolve([file("README.md")]);
 
     expect(await screen.findByRole("button", { name: /README\.md/ })).toBeInTheDocument();

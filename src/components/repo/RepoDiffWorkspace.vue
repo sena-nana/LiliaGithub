@@ -4,7 +4,7 @@ import {
   LiliaPrimaryContent,
   LiliaResourcePanel,
   LiliaWorkspace,
-} from "../../ui";
+} from "@lilia/ui/layouts";
 import DiffCodeRenderer from "./DiffCodeRenderer.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 

@@ -1,18 +1,26 @@
+import {
+  errorMessage,
+  workspaceErrorCategory,
+  workspaceErrorCode,
+} from "../services/workspace/errors";
+
 export function isGitHubBindingExpiredError(err: unknown): boolean {
-  const message = String(err);
+  const code = workspaceErrorCode(err);
+  const category = workspaceErrorCategory(err);
+  if (category === "authentication" || code === "github_authentication_required") return true;
+  const message = errorMessage(err);
   return message.includes("GitHub 绑定已失效") ||
     message.includes("HTTP 401") ||
     message.toLowerCase().includes("bad credentials");
 }
 
 export function githubErrorCode(error: unknown): string | null {
-  const message = (error instanceof Error ? error.message : String(error))
-    .replace(/^Error:\s*/, "")
-    .trim();
-  return message.match(/^(github_[a-z0-9_]+)\s*[:：]/i)?.[1]?.toLocaleLowerCase() ?? null;
+  const code = workspaceErrorCode(error);
+  return code?.startsWith("github_") ? code : null;
 }
 
 export function isGitHubPermissionError(error: unknown): boolean {
+  if (workspaceErrorCategory(error) === "authorization") return true;
   const code = githubErrorCode(error);
   return code === "github_forbidden"
     || code === "github_org_sso_required"
@@ -20,7 +28,12 @@ export function isGitHubPermissionError(error: unknown): boolean {
 }
 
 export function isConfirmedMissingResource(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const category = workspaceErrorCategory(error);
+  if (category === "not-found") return true;
+  if (category === "authentication" || category === "authorization" || category === "network" || category === "rate-limit") {
+    return false;
+  }
+  const message = errorMessage(error);
   const code = githubErrorCode(error);
   if (code === "github_repository_not_accessible") return true;
   if (

@@ -1,5 +1,10 @@
-import { state } from "./state";
-import { loadWorkspaceService } from "./serviceLoader";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceServiceLoader } from "./system";
+
+export function createWorkspaceLaunchFeature(
+  { state }: Pick<WorkspaceStateFeature, "state">,
+  loadWorkspaceService: WorkspaceServiceLoader,
+) {
 
 let launchLoadCount = 0;
 let launchStateGenerations = new Map<string, number>();
@@ -47,7 +52,7 @@ function mergeLaunchLogs(
   return [...byIndex.values()].sort((a, b) => a.index - b.index).slice(-500);
 }
 
-export async function loadLaunch(repoId: string, options: { forceRefresh?: boolean } = {}) {
+async function loadLaunch(repoId: string, options: { forceRefresh?: boolean } = {}) {
   const pending = pendingLaunchLoads.get(repoId);
   if (pending) {
     if (!options.forceRefresh) return pending;
@@ -93,7 +98,7 @@ export async function loadLaunch(repoId: string, options: { forceRefresh?: boole
   }
 }
 
-export async function saveLaunchConfig(repoId: string, command: string, cwd?: string | null) {
+async function saveLaunchConfig(repoId: string, command: string, cwd?: string | null) {
   const generation = bumpLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   const config = await service.saveRepoLaunchConfig(repoId, command, cwd);
@@ -107,7 +112,7 @@ export async function saveLaunchConfig(repoId: string, command: string, cwd?: st
   return config;
 }
 
-export async function refreshLaunchStatus(repoId: string) {
+async function refreshLaunchStatus(repoId: string) {
   const generation = currentLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   const status = await service.getRepoLaunchStatus(repoId);
@@ -117,7 +122,7 @@ export async function refreshLaunchStatus(repoId: string) {
   return status;
 }
 
-export async function refreshLaunchLogs(repoId: string) {
+async function refreshLaunchLogs(repoId: string) {
   const generation = currentLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   const current = state.launchLogs[repoId] ?? [];
@@ -134,7 +139,7 @@ export async function refreshLaunchLogs(repoId: string) {
   return state.launchLogs[repoId] ?? [];
 }
 
-export async function refreshLaunchHistory(repoId: string) {
+async function refreshLaunchHistory(repoId: string) {
   const generation = currentLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   const history = await service.listRepoLaunchHistory(repoId);
@@ -144,7 +149,7 @@ export async function refreshLaunchHistory(repoId: string) {
   return history;
 }
 
-export async function startLaunch(repoId: string) {
+async function startLaunch(repoId: string) {
   const generation = bumpLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   state.launchLogs[repoId] = [];
@@ -157,7 +162,7 @@ export async function startLaunch(repoId: string) {
   return status;
 }
 
-export async function stopLaunch(repoId: string) {
+async function stopLaunch(repoId: string) {
   const generation = bumpLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
   const status = await service.stopRepoLaunch(repoId);
@@ -169,7 +174,7 @@ export async function stopLaunch(repoId: string) {
   return status;
 }
 
-export function resetLaunchRuntime() {
+function resetLaunchRuntime() {
   launchLoadCount = 0;
   state.launchLoading = false;
   for (const repoId of new Set([...launchStateGenerations.keys(), ...pendingLaunchLoads.keys()])) {
@@ -177,3 +182,17 @@ export function resetLaunchRuntime() {
   }
   pendingLaunchLoads = new Map();
 }
+
+return {
+  loadLaunch,
+  saveLaunchConfig,
+  refreshLaunchStatus,
+  refreshLaunchLogs,
+  refreshLaunchHistory,
+  startLaunch,
+  stopLaunch,
+  resetLaunchRuntime,
+};
+}
+
+export type WorkspaceLaunchFeature = ReturnType<typeof createWorkspaceLaunchFeature>;

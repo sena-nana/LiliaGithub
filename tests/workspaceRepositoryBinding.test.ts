@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
+import { workspaceFallbackForTests } from "../src/services/workspace";
+import { createDefaultWorkspaceTransport, createWorkspaceClient } from "../src/services/workspace/client";
+const {
   cloneRepo,
   createLocalRepo,
   createRepoGroup,
@@ -9,8 +11,7 @@ import {
   reconcileOrganizationRepoGroups,
   rememberRemoteRepo,
   renameRepoGroup,
-  workspaceFallbackForTests,
-} from "../src/services/workspace";
+} = createWorkspaceClient(createDefaultWorkspaceTransport());
 
 describe("workspace repository binding fallback", () => {
   beforeEach(async () => {

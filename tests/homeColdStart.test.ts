@@ -1,11 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
-import ContextMenuHost from "../src/ui/contextMenuHost";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useWorkspace } from "../src/composables/useWorkspace";
-import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { createWorkspaceStore, workspaceStoreKey } from "../src/composables/workspace/store";
+import { createDefaultWorkspaceTransport } from "../src/services/workspace/client";
+import { createSessionContext, sessionContextKey } from "../src/composables/sessionContext";
 import {
-  clearGitHubRepoCache,
   resetWorkspaceFallbacksForTests,
   workspaceFallbackForTests,
   type GitHubRepoSummary,
@@ -15,13 +15,15 @@ import {
   clearHomeGitHubOverviewSnapshot,
 } from "../src/pages/homeOverviewCache";
 import Home from "../src/pages/Home.vue";
-import { upsertRepo } from "../src/composables/workspace/state";
 import { repoSummary } from "./fixtures/workspace";
 
 const STORAGE_KEY = "lilia-github.home.overviewSnapshot.v1";
 const SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v2:lilia-user";
 const repoFullName = "sena-nana/LiliaGithub";
 const accountLogin = "lilia-user";
+const sessionContext = createSessionContext();
+const workspace = createWorkspaceStore({ transport: createDefaultWorkspaceTransport(), sessionContext });
+const { resetWorkspaceStateForTests, upsertRepo } = workspace.stateFeature;
 
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 
@@ -61,7 +63,6 @@ async function renderHomeFromStoredSnapshot(
   repos: GitHubRepoSummary[] = [githubRepoSummary()],
   withContextMenu = false,
 ) {
-  const workspace = useWorkspace();
   await workspace.initialize();
   clearHomeGitHubOverviewSnapshot();
   writeRepoOnlySnapshot(cachedAt, repos);
@@ -93,6 +94,10 @@ async function renderHomeFromStoredSnapshot(
     ...render(component, {
       global: {
         plugins: [router],
+        provide: {
+          [workspaceStoreKey as symbol]: workspace,
+          [sessionContextKey as symbol]: sessionContext,
+        },
       },
     }),
     router,
@@ -138,7 +143,9 @@ beforeEach(async () => {
     contributions: null,
   });
   resetWorkspaceStateForTests();
-  clearGitHubRepoCache();
+  workspace.resetRepositoryRuntimeForTests();
+  workspace.resetRepoRefreshRuntimeForTests();
+  workspace.clearGitHubRepoCache();
   clearHomeGitHubOverviewSnapshot();
   localStorage.clear();
 });

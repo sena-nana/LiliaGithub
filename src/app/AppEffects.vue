@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from "vue";
-import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
-import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
-import { installRepoRefreshEvents } from "../composables/workspace/repoRefreshEvents";
+import { useWorkspace } from "../composables/useWorkspace";
 import { useWorkspaceRecentContext } from "../composables/useWorkspaceRecentContext";
 
 const workspaceRecentContext = useWorkspaceRecentContext();
+const workspace = useWorkspace();
 
 let cleanupEffects: (() => void) | null = null;
 let disposed = false;
@@ -14,9 +13,9 @@ onMounted(async () => {
   await workspaceRecentContext.initialize();
   if (disposed) return;
   const [cleanupFocus, cleanupLaunch, cleanupRepoRefresh] = await Promise.all([
-    installWorkspaceFocusRefresh(),
-    installLaunchStatusEvents(),
-    installRepoRefreshEvents(),
+    workspace.installWorkspaceFocusRefresh(),
+    workspace.installLaunchStatusEvents(),
+    workspace.installRepoRefreshEvents(),
   ]);
   const cleanup = () => {
     cleanupFocus();

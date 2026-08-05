@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
+import { createSessionContext } from "../src/composables/sessionContext";
 import { createComponentEpoch } from "../src/composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../src/composables/useLatestAsyncLoader";
 
@@ -13,7 +13,7 @@ function deferred() {
 
 describe("createLatestAsyncLoader", () => {
   it("显式开启时同 key 请求复用当前 pending 任务", async () => {
-    const loader = createLatestAsyncLoader();
+    const loader = createLatestAsyncLoader({ sessionContext: createSessionContext() });
     const first = deferred();
     let runs = 0;
 
@@ -35,7 +35,7 @@ describe("createLatestAsyncLoader", () => {
   });
 
   it("默认让同 key 新任务覆盖旧任务", async () => {
-    const loader = createLatestAsyncLoader();
+    const loader = createLatestAsyncLoader({ sessionContext: createSessionContext() });
     const first = deferred();
     const second = deferred();
     const currentStates: boolean[] = [];
@@ -57,7 +57,7 @@ describe("createLatestAsyncLoader", () => {
   });
 
   it("invalidate 会清掉 pending 并使旧 runId 失效", async () => {
-    const loader = createLatestAsyncLoader();
+    const loader = createLatestAsyncLoader({ sessionContext: createSessionContext() });
     const first = deferred();
     let currentAfterInvalidate = true;
 
@@ -76,7 +76,7 @@ describe("createLatestAsyncLoader", () => {
   });
 
   it("任务同步抛错时也会清理 pending", async () => {
-    const loader = createLatestAsyncLoader();
+    const loader = createLatestAsyncLoader({ sessionContext: createSessionContext() });
 
     await expect(loader.run("open", () => {
       throw new Error("boom");
@@ -87,7 +87,7 @@ describe("createLatestAsyncLoader", () => {
 
   it("绑定 componentEpoch 后组件失活会让当前任务不可更新", async () => {
     const componentEpoch = createComponentEpoch();
-    const loader = createLatestAsyncLoader({ componentEpoch });
+    const loader = createLatestAsyncLoader({ componentEpoch, sessionContext: createSessionContext() });
     const first = deferred();
     let currentAfterDispose = true;
 
@@ -106,8 +106,8 @@ describe("createLatestAsyncLoader", () => {
   });
 
   it("会话上下文失效后当前任务不可更新", async () => {
-    resetSessionContextForTests();
-    const loader = createLatestAsyncLoader();
+    const sessionContext = createSessionContext();
+    const loader = createLatestAsyncLoader({ sessionContext });
     const first = deferred();
     let currentAfterInvalidation = true;
 
@@ -117,7 +117,7 @@ describe("createLatestAsyncLoader", () => {
     });
 
     expect(loader.isPending("repo")).toBe(true);
-    invalidateSessionContextSnapshot();
+    sessionContext.invalidate();
     first.resolve();
     await running;
 
@@ -126,8 +126,8 @@ describe("createLatestAsyncLoader", () => {
   });
 
   it("关闭会话上下文跟踪后当前任务不受会话失效影响", async () => {
-    resetSessionContextForTests();
     const loader = createLatestAsyncLoader({ trackSessionContext: false });
+    const unrelatedContext = createSessionContext();
     const first = deferred();
     let currentAfterInvalidation = false;
 
@@ -137,11 +137,39 @@ describe("createLatestAsyncLoader", () => {
     });
 
     expect(loader.isPending("repo")).toBe(true);
-    invalidateSessionContextSnapshot();
+    unrelatedContext.invalidate();
     first.resolve();
     await running;
 
     expect(currentAfterInvalidation).toBe(true);
     expect(loader.isPending()).toBe(false);
+  });
+
+  it("keeps loaders from different app contexts isolated", async () => {
+    const firstContext = createSessionContext();
+    const secondContext = createSessionContext();
+    const firstLoader = createLatestAsyncLoader({ sessionContext: firstContext });
+    const secondLoader = createLatestAsyncLoader({ sessionContext: secondContext });
+    const first = deferred();
+    const second = deferred();
+    let firstCurrent = true;
+    let secondCurrent = false;
+
+    const firstRun = firstLoader.run("repo", async (runId) => {
+      await first.promise;
+      firstCurrent = firstLoader.isCurrent(runId);
+    });
+    const secondRun = secondLoader.run("repo", async (runId) => {
+      await second.promise;
+      secondCurrent = secondLoader.isCurrent(runId);
+    });
+
+    firstContext.invalidate();
+    first.resolve();
+    second.resolve();
+    await Promise.all([firstRun, secondRun]);
+
+    expect(firstCurrent).toBe(false);
+    expect(secondCurrent).toBe(true);
   });
 });

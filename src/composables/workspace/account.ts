@@ -1,5 +1,7 @@
 import type {
   AccountPreferences,
+  GitHubActionNotification,
+  GitHubAccountIssueItem,
   GitHubAccountProfile,
   GitHubBindingStatus,
   GitHubCreateRepoRequest,
@@ -16,13 +18,29 @@ import type {
   GitHubRepositorySubscription,
   GitHubRepositorySubscriptionMode,
   GitHubUpdateAccountProfileRequest,
+  GitHubUpdateIssueRequest,
+  GitHubUpdatePullRequestRequest,
+  GitHubIssue,
+  GitHubIssueListOptions,
+  GitHubPullRequest,
+  GitHubMergePullRequestRequest,
   GitHubWatchedRepoPage,
 } from "../../services/workspace";
-import { loadWorkspaceService } from "./serviceLoader";
-import { refreshRepos } from "./repositories";
-import { replaceRepos, state } from "./state";
+import type {
+  HomeAttentionLoadOptions,
+  HomeAttentionResult,
+} from "../../services/homeAttention/types";
+import type { WorkspaceRepositoriesFeature } from "./repositories";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceServiceLoader } from "./system";
 
-export async function reloadAccountWorkspace() {
+export function createWorkspaceAccountFeature(
+  { replaceRepos, state }: Pick<WorkspaceStateFeature, "replaceRepos" | "state">,
+  { refreshRepos }: Pick<WorkspaceRepositoriesFeature, "refreshRepos">,
+  loadWorkspaceService: WorkspaceServiceLoader,
+) {
+
+async function reloadAccountWorkspace() {
   const service = await loadWorkspaceService();
   state.settings = await service.getWorkspaceSettings();
   if (state.settings.activeWorkspace?.roots.some((root) => root.available)) {
@@ -33,36 +51,36 @@ export async function reloadAccountWorkspace() {
   return state.settings;
 }
 
-export async function updateAccountPreferences(preferences: AccountPreferences) {
+async function updateAccountPreferences(preferences: AccountPreferences) {
   const service = await loadWorkspaceService();
   const settings = await service.updateAccountPreferences(preferences);
   state.settings = settings;
   return settings;
 }
 
-export async function getAccountProfile(): Promise<GitHubAccountProfile> {
+async function getAccountProfile(): Promise<GitHubAccountProfile> {
   const service = await loadWorkspaceService();
   return service.getGitHubAccountProfile();
 }
 
-export async function getAccountReadme(): Promise<GitHubProfileReadmeSection> {
+async function getAccountReadme(): Promise<GitHubProfileReadmeSection> {
   const service = await loadWorkspaceService();
   return service.getGitHubAccountReadme();
 }
 
-export async function updateAccountProfile(
+async function updateAccountProfile(
   request: GitHubUpdateAccountProfileRequest,
 ): Promise<GitHubAccountProfile> {
   const service = await loadWorkspaceService();
   return service.updateGitHubAccountProfile(request);
 }
 
-export async function getOrganizationProfile(login: string): Promise<GitHubOrganizationProfile> {
+async function getOrganizationProfile(login: string): Promise<GitHubOrganizationProfile> {
   const service = await loadWorkspaceService();
   return service.getGitHubOrganizationProfile(login);
 }
 
-export async function getOrganizationOverview(
+async function getOrganizationOverview(
   login: string,
   view: GitHubOrganizationProfileView,
 ): Promise<GitHubOrganizationOverview> {
@@ -70,24 +88,24 @@ export async function getOrganizationOverview(
   return service.getGitHubOrganizationOverview(login, view);
 }
 
-export async function getAccountRepositoryOwners(opts: { force?: boolean } = {}): Promise<GitHubRepoOwner[]> {
+async function getAccountRepositoryOwners(opts: { force?: boolean } = {}): Promise<GitHubRepoOwner[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubRepoOwners(opts);
 }
 
-export async function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
+async function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
   const service = await loadWorkspaceService();
   return service.listGitHubWatchedRepos(page);
 }
 
-export async function getGitHubRepositorySubscription(
+async function getGitHubRepositorySubscription(
   repoFullName: string,
 ): Promise<GitHubRepositorySubscription> {
   const service = await loadWorkspaceService();
   return service.getGitHubRepositorySubscription(repoFullName);
 }
 
-export async function updateGitHubRepositorySubscription(
+async function updateGitHubRepositorySubscription(
   repoFullName: string,
   mode: GitHubRepositorySubscriptionMode,
 ): Promise<GitHubRepositorySubscription> {
@@ -95,24 +113,24 @@ export async function updateGitHubRepositorySubscription(
   return service.updateGitHubRepositorySubscription(repoFullName, mode);
 }
 
-export async function createGitHubRepo(
+async function createGitHubRepo(
   request: GitHubCreateRepoRequest,
 ): Promise<GitHubRepoSummary> {
   const service = await loadWorkspaceService();
   return service.createGitHubRepo(request);
 }
 
-export async function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
+async function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubRepoTemplates();
 }
 
-export async function listGitHubRepoLicenses(): Promise<GitHubRepoLicense[]> {
+async function listGitHubRepoLicenses(): Promise<GitHubRepoLicense[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubRepoLicenses();
 }
 
-export async function listGitHubRepos(
+async function listGitHubRepos(
   scope: GitHubRepositoryScope,
   page?: number | null,
 ): Promise<GitHubRepoPage> {
@@ -120,14 +138,106 @@ export async function listGitHubRepos(
   return service.listGitHubRepos(scope, page ?? null);
 }
 
-export async function preloadGitHubRepos(
+async function preloadGitHubRepos(
   opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
 ): Promise<GitHubRepoPage> {
   const service = await loadWorkspaceService();
   return service.preloadGitHubRepos(opts);
 }
 
-export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
+async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
   const service = await loadWorkspaceService();
   return service.getGitHubBindingStatus();
 }
+
+async function listGitHubAccountIssues(
+  options: Pick<GitHubIssueListOptions, "state" | "perPage" | "sort" | "direction"> = {},
+  fetchOptions: { forceRefresh?: boolean } = {},
+): Promise<GitHubAccountIssueItem[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubAccountIssues(options, fetchOptions);
+}
+
+async function listGitHubActionNotifications(
+  perPage = 50,
+  fetchOptions: { forceRefresh?: boolean } = {},
+): Promise<GitHubActionNotification[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubActionNotifications(perPage, fetchOptions);
+}
+
+async function updateGitHubIssue(
+  repoFullName: string,
+  issueNumber: number,
+  request: GitHubUpdateIssueRequest,
+): Promise<GitHubIssue> {
+  const service = await loadWorkspaceService();
+  return service.updateGitHubIssue(repoFullName, issueNumber, request);
+}
+
+async function updateGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  request: GitHubUpdatePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  const service = await loadWorkspaceService();
+  return service.updateGitHubPullRequest(repoFullName, pullNumber, request);
+}
+
+async function mergeGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  request: GitHubMergePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  const service = await loadWorkspaceService();
+  return service.mergeGitHubPullRequest(repoFullName, pullNumber, request);
+}
+
+async function rerunFailedGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  const service = await loadWorkspaceService();
+  return service.rerunFailedGitHubWorkflowRun(repoFullName, runId);
+}
+
+async function cancelGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  const service = await loadWorkspaceService();
+  return service.cancelGitHubWorkflowRun(repoFullName, runId);
+}
+
+async function listGitHubHomeAttention(
+  repoFullNames: readonly string[],
+  options: HomeAttentionLoadOptions = {},
+): Promise<HomeAttentionResult> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubHomeAttention(repoFullNames, options);
+}
+
+return {
+  reloadAccountWorkspace,
+  updateAccountPreferences,
+  getAccountProfile,
+  getAccountReadme,
+  updateAccountProfile,
+  getOrganizationProfile,
+  getOrganizationOverview,
+  getAccountRepositoryOwners,
+  listGitHubWatchedRepos,
+  getGitHubRepositorySubscription,
+  updateGitHubRepositorySubscription,
+  createGitHubRepo,
+  listGitHubRepoTemplates,
+  listGitHubRepoLicenses,
+  listGitHubRepos,
+  preloadGitHubRepos,
+  getGitHubBindingStatus,
+  listGitHubAccountIssues,
+  listGitHubActionNotifications,
+  updateGitHubIssue,
+  updateGitHubPullRequest,
+  mergeGitHubPullRequest,
+  rerunFailedGitHubWorkflowRun,
+  cancelGitHubWorkflowRun,
+  listGitHubHomeAttention,
+};
+}
+
+export type WorkspaceAccountFeature = ReturnType<typeof createWorkspaceAccountFeature>;

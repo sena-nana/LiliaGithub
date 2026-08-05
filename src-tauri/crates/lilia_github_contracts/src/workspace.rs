@@ -155,7 +155,7 @@ pub struct WorkspaceBootstrap {
     pub context_revision: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountPreferences {
     #[serde(default)]
@@ -168,18 +168,6 @@ pub struct AccountPreferences {
     pub pull_requests: PullRequestListPreferences,
     #[serde(default)]
     pub actions: ActionsListPreferences,
-}
-
-impl Default for AccountPreferences {
-    fn default() -> Self {
-        Self {
-            repository_scope: GitHubRepositoryScope::default(),
-            repository_sort: RepositorySortPreferences::default(),
-            issues: IssueListPreferences::default(),
-            pull_requests: PullRequestListPreferences::default(),
-            actions: ActionsListPreferences::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -517,7 +505,7 @@ pub struct ProjectLaunchStatus {
     #[serde(default)]
     pub context_revision: u64,
     pub repo_id: String,
-    pub state: String,
+    pub state: ProjectLaunchState,
     #[serde(default)]
     pub pid: Option<u32>,
     #[serde(default)]
@@ -560,13 +548,22 @@ pub struct ProjectLaunchHistoryEntry {
     pub started_at: i64,
     #[serde(default)]
     pub finished_at: Option<i64>,
-    pub state: String,
+    pub state: ProjectLaunchState,
     #[serde(default)]
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
     pub last_output: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectLaunchState {
+    Idle,
+    Running,
+    Exited,
+    Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -628,10 +625,17 @@ pub struct GitHubUpdateAccountProfileRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubBindingStatus {
-    pub state: String,
+    pub state: GitHubBindingState,
     pub client_id_configured: bool,
     pub client_id_source: String,
     pub binding: Option<GitHubBindingMetadata>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubBindingState {
+    Bound,
+    Unbound,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -647,10 +651,18 @@ pub struct GitHubDeviceFlowStart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubDeviceFlowPollResult {
-    pub status: String,
+    pub status: GitHubDeviceFlowPollStatus,
     pub interval_seconds: i64,
     pub binding_status: Option<GitHubBindingStatus>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubDeviceFlowPollStatus {
+    Authorized,
+    Pending,
+    Expired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1045,8 +1057,8 @@ pub struct RepoSummary {
     pub unstaged_count: usize,
     pub untracked_count: usize,
     pub conflict_count: usize,
-    #[serde(default = "default_conflict_operation")]
-    pub conflict_operation: String,
+    #[serde(default)]
+    pub conflict_operation: RepoConflictOperation,
     pub last_commit_at: Option<i64>,
     pub last_commit_message: Option<String>,
     #[serde(default)]
@@ -1056,8 +1068,25 @@ pub struct RepoSummary {
     pub worktree: RepoWorktree,
 }
 
-fn default_conflict_operation() -> String {
-    "none".to_string()
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RepoConflictOperation {
+    #[default]
+    None,
+    Merge,
+    Rebase,
+    CherryPick,
+}
+
+impl RepoConflictOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+            Self::CherryPick => "cherry-pick",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1073,25 +1102,80 @@ pub struct RepoRefreshSummaryOptions {
     pub fetch_remote: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoRefreshMode {
+    Local,
+    Remote,
+}
+
+impl std::fmt::Display for RepoRefreshMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoRefreshPriority {
+    High,
+    Normal,
+    Low,
+}
+
+impl RepoRefreshPriority {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Normal => "normal",
+            Self::Low => "low",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoRefreshDetailScope {
+    #[default]
+    Auto,
+    Summary,
+    Detail,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RepoRefreshTrigger {
+    #[serde(rename = "startup")]
+    Startup,
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "activeRepo")]
+    ActiveRepo,
+    #[serde(rename = "autoSync")]
+    AutoSync,
+    #[serde(rename = "watch")]
+    Watch,
+    #[serde(rename = "reconcile")]
+    Reconcile,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoRefreshRequest {
     pub repo_id: String,
-    pub mode: String,
-    pub priority: String,
+    pub mode: RepoRefreshMode,
+    pub priority: RepoRefreshPriority,
     #[serde(default)]
     pub force: bool,
-    #[serde(default = "default_repo_refresh_detail_scope")]
-    pub detail_scope: String,
+    #[serde(default)]
+    pub detail_scope: RepoRefreshDetailScope,
     #[serde(default)]
     pub include_commits: bool,
     #[serde(default)]
     pub include_branches: bool,
-    pub trigger: String,
-}
-
-fn default_repo_refresh_detail_scope() -> String {
-    "auto".to_string()
+    pub trigger: RepoRefreshTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1102,7 +1186,7 @@ pub struct RepoRefreshedEvent {
     #[serde(default)]
     pub context_revision: u64,
     pub repo_id: String,
-    pub mode: String,
+    pub mode: RepoRefreshMode,
     pub summary: RepoSummary,
     #[serde(default)]
     pub detail_patch: Option<RepoDetailPatch>,
@@ -1136,7 +1220,7 @@ pub struct RepoChange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoConflictState {
-    pub operation: String,
+    pub operation: RepoConflictOperation,
     pub files: Vec<RepoConflictFile>,
     pub all_resolved: bool,
 }
@@ -1167,7 +1251,23 @@ pub struct RepoConflictHunk {
 #[serde(rename_all = "camelCase")]
 pub struct RepoConflictChoice {
     pub hunk_id: String,
-    pub side: String,
+    pub side: RepoConflictChoiceSide,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoConflictChoiceSide {
+    Ours,
+    Theirs,
+}
+
+impl RepoConflictChoiceSide {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ours => "ours",
+            Self::Theirs => "theirs",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1179,18 +1279,13 @@ pub struct RepoMergePullResult {
     pub conflicts: RepoConflictState,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum RepoPullLocalChangesMode {
+    #[default]
     Reject,
     Stash,
     Discard,
-}
-
-impl Default for RepoPullLocalChangesMode {
-    fn default() -> Self {
-        Self::Reject
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1424,10 +1519,29 @@ pub struct RepoFilePreview {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkSyncPreview {
-    pub operation: String,
+    pub operation: BulkSyncOperation,
     pub eligible: Vec<BulkSyncRepo>,
     pub blocked: Vec<BulkSyncRepo>,
     pub warnings: Vec<BulkSyncRepo>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BulkSyncOperation {
+    Sync,
+    Pull,
+    Push,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BulkSyncTrigger {
+    #[default]
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "syncAll")]
+    SyncAll,
+    #[serde(rename = "autoSync")]
+    AutoSync,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2443,4 +2557,115 @@ pub struct LiliaCodeTaskHandoffStatus {
     #[serde(default)]
     pub error: Option<String>,
     pub updated_at: String,
+}
+
+#[cfg(test)]
+mod closed_set_wire_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn closed_set_enums_keep_the_existing_wire_values() {
+        let values = [
+            serde_json::to_value(GitHubBindingState::Bound).unwrap(),
+            serde_json::to_value(GitHubDeviceFlowPollStatus::Authorized).unwrap(),
+            serde_json::to_value(RepoRefreshMode::Remote).unwrap(),
+            serde_json::to_value(RepoRefreshPriority::Normal).unwrap(),
+            serde_json::to_value(RepoRefreshDetailScope::Summary).unwrap(),
+            serde_json::to_value(RepoRefreshTrigger::ActiveRepo).unwrap(),
+            serde_json::to_value(BulkSyncOperation::Sync).unwrap(),
+            serde_json::to_value(BulkSyncTrigger::AutoSync).unwrap(),
+            serde_json::to_value(RepoConflictOperation::CherryPick).unwrap(),
+            serde_json::to_value(ProjectLaunchState::Running).unwrap(),
+        ];
+        assert_eq!(
+            values,
+            [
+                json!("bound"),
+                json!("authorized"),
+                json!("remote"),
+                json!("normal"),
+                json!("summary"),
+                json!("activeRepo"),
+                json!("sync"),
+                json!("autoSync"),
+                json!("cherry-pick"),
+                json!("running"),
+            ]
+        );
+    }
+
+    #[test]
+    fn repo_refresh_request_preserves_keys_and_rejects_unknown_closed_values() {
+        let request: RepoRefreshRequest = serde_json::from_value(json!({
+            "repoId": "local:root/repo",
+            "mode": "remote",
+            "priority": "high",
+            "force": true,
+            "detailScope": "detail",
+            "includeCommits": true,
+            "includeBranches": false,
+            "trigger": "manual"
+        }))
+        .unwrap();
+        assert_eq!(request.mode, RepoRefreshMode::Remote);
+        assert_eq!(request.priority, RepoRefreshPriority::High);
+        assert_eq!(request.detail_scope, RepoRefreshDetailScope::Detail);
+        assert_eq!(request.trigger, RepoRefreshTrigger::Manual);
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({
+                "repoId": "local:root/repo",
+                "mode": "remote",
+                "priority": "high",
+                "force": true,
+                "detailScope": "detail",
+                "includeCommits": true,
+                "includeBranches": false,
+                "trigger": "manual"
+            })
+        );
+
+        for (field, value) in [
+            ("mode", "background"),
+            ("priority", "urgent"),
+            ("detailScope", "everything"),
+            ("trigger", "unknown"),
+        ] {
+            let mut invalid = json!({
+                "repoId": "local:root/repo",
+                "mode": "local",
+                "priority": "normal",
+                "detailScope": "auto",
+                "trigger": "watch"
+            });
+            invalid[field] = json!(value);
+            assert!(serde_json::from_value::<RepoRefreshRequest>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn command_input_enums_accept_legacy_values_and_reject_unknown_values() {
+        let choice: RepoConflictChoice = serde_json::from_value(json!({
+            "hunkId": "hunk-1",
+            "side": "ours"
+        }))
+        .unwrap();
+        assert_eq!(choice.side, RepoConflictChoiceSide::Ours);
+        assert_eq!(
+            serde_json::from_value::<BulkSyncOperation>(json!("push")).unwrap(),
+            BulkSyncOperation::Push
+        );
+        assert_eq!(
+            serde_json::from_value::<BulkSyncTrigger>(json!("syncAll")).unwrap(),
+            BulkSyncTrigger::SyncAll
+        );
+        assert!(serde_json::from_value::<RepoConflictChoice>(json!({
+            "hunkId": "hunk-1",
+            "side": "both"
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<BulkSyncOperation>(json!("publish")).is_err());
+        assert!(serde_json::from_value::<BulkSyncTrigger>(json!("scheduled")).is_err());
+    }
 }

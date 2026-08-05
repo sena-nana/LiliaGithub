@@ -5,14 +5,13 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
 import type { CommitDetail } from "../../services/workspace";
-import { copyText } from "../../composables/workspace/system";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 import {
   commitFileStatusText,
   formatRepoTime,
 } from "../../utils/repoDisplay";
-import { isConfirmedMissingResource } from "../../services/workspace/client";
+import { isConfirmedMissingResource } from "../../utils/githubErrors";
 
 const props = withDefaults(defineProps<{
   repoId: string;
@@ -153,7 +152,7 @@ function toggleDiffCollapsed() {
 async function copyHash() {
   if (!detail.value) return;
   try {
-    await copyText(detail.value.hash);
+    await workspace.copyText(detail.value.hash);
     showCopyNotice("完整 hash 已复制");
   } catch {
     showCopyNotice("复制失败");

@@ -11,12 +11,7 @@ import {
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
-import {
-  getGitHubWorkflowArtifactFilePreview,
-  getGitHubWorkflowRunDetail,
-  listGitHubWorkflowArtifactFiles,
-  openUrl,
-} from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import type {
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubRelease,
@@ -52,6 +47,7 @@ const emit = defineEmits<{
   attachArtifactAsset: [request: GitHubAttachWorkflowArtifactAssetRequest];
   focusJob: [jobId: number | null];
 }>();
+const workspace = useWorkspace();
 
 const selectedArtifactId = ref<number | null>(null);
 const selectedArtifactPath = ref<string | null>(null);
@@ -132,7 +128,8 @@ async function loadDetail(runId: number, force = false) {
     detailLoading.value = true;
     detailError.value = null;
     try {
-      const nextDetail = await getGitHubWorkflowRunDetail(props.repoFullName, runId, { forceRefresh: force });
+      const nextDetail = await (await workspace.github.service())
+        .getGitHubWorkflowRunDetail(props.repoFullName, runId, { forceRefresh: force });
       if (!detailLoader.isCurrent(loaderRunId) || props.focusedRunId !== runId) return;
       detail.value = nextDetail;
     } catch (err) {
@@ -171,7 +168,8 @@ async function loadArtifactEntries(artifactId: number, force = false) {
   artifactLoading.value = { ...artifactLoading.value, [artifactId]: true };
   artifactErrors.value = { ...artifactErrors.value, [artifactId]: undefined };
   try {
-    const entries = await listGitHubWorkflowArtifactFiles(props.repoFullName, artifactId, { forceRefresh: force });
+    const entries = await (await workspace.github.service())
+      .listGitHubWorkflowArtifactFiles(props.repoFullName, artifactId, { forceRefresh: force });
     artifactEntries.value = { ...artifactEntries.value, [artifactId]: entries };
     const firstFile = entries.find((entry) => entry.kind === "file");
     if (firstFile) await selectArtifactFile(firstFile);
@@ -190,7 +188,8 @@ async function selectArtifactFile(entry: GitHubWorkflowArtifactEntry) {
     artifactPreviewLoading.value = true;
     artifactPreviewError.value = null;
     try {
-      const preview = await getGitHubWorkflowArtifactFilePreview(props.repoFullName, artifactId, entry.path);
+      const preview = await (await workspace.github.service())
+        .getGitHubWorkflowArtifactFilePreview(props.repoFullName, artifactId, entry.path);
       if (!artifactPreviewLoader.isCurrent(runId) || selectedArtifactId.value !== artifactId || selectedArtifactPath.value !== entry.path) return;
       artifactPreview.value = preview;
     } catch (err) {
@@ -251,7 +250,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
             <span>Run #{{ detailRun?.runNumber ?? detailRun?.id }}</span>
           </div>
         </div>
-        <button v-if="detailRun?.htmlUrl" type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.detail.open-github" aria-label="打开 GitHub" title="打开 GitHub" @click="openUrl(detailRun.htmlUrl)">
+        <button v-if="detailRun?.htmlUrl" type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.detail.open-github" aria-label="打开 GitHub" title="打开 GitHub" @click="workspace.openUrl(detailRun.htmlUrl)">
           <ExternalLink :size="14" aria-hidden="true" />
         </button>
       </header>

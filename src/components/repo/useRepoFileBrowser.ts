@@ -1,15 +1,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
-import { copyText } from "../../composables/workspace/system";
-import {
-  deleteRepoFile,
-  getRepoFilePreview,
-  listRepoFiles,
-  openPath,
-  openPathTarget,
-  openUrl,
-} from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry, SystemOpenTarget } from "../../services/workspace/types";
 import {
   diffCodeLanguageLabel,
@@ -19,7 +11,7 @@ import {
 } from "../../utils/diffCode";
 import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
-import { isConfirmedMissingResource } from "../../services/workspace/client";
+import { isConfirmedMissingResource } from "../../utils/githubErrors";
 
 type MarkdownReadmeHandle = {
   scrollToAnchor(hash: string): void;
@@ -41,6 +33,7 @@ export interface RepoFileBrowserInput {
 const ROOT_KEY = "";
 
 export function useRepoFileBrowser(input: RepoFileBrowserInput) {
+  const workspace = useWorkspace();
   const markdownReadme = ref<MarkdownReadmeHandle | null>(null);
   const directoryEntries = ref<Record<string, RepoFileTreeEntry[]>>({});
   const expandedDirectories = ref<string[]>([]);
@@ -218,11 +211,12 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     let loadPromise!: Promise<RepoFileTreeEntry[]>;
     loadPromise = (async () => {
       try {
+        const service = await workspace.github.service();
         const entries = options.forceRefresh
-          ? await listRepoFiles(repoId, parentPath, repoRef, { forceRefresh: true })
+          ? await service.listRepoFiles(repoId, parentPath, repoRef, { forceRefresh: true })
           : repoRef
-            ? await listRepoFiles(repoId, parentPath, repoRef)
-            : await listRepoFiles(repoId, parentPath);
+            ? await service.listRepoFiles(repoId, parentPath, repoRef)
+            : await service.listRepoFiles(repoId, parentPath);
         if (isCurrentRepoRequest(repoId, repoRef) && directoryLoadRuns.get(key) === loadRun) {
           directoryEntries.value = {
             ...directoryEntries.value,
@@ -280,11 +274,12 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       try {
         const ancestorsReady = await expandAncestors(path, repoId);
         if (!ancestorsReady || !previewLoader.isCurrent(runId)) return;
+        const service = await workspace.github.service();
         const nextPreview = options.forceRefresh
-          ? await getRepoFilePreview(repoId, path, repoRef, { forceRefresh: true })
+          ? await service.getRepoFilePreview(repoId, path, repoRef, { forceRefresh: true })
           : repoRef
-            ? await getRepoFilePreview(repoId, path, repoRef)
-            : await getRepoFilePreview(repoId, path);
+            ? await service.getRepoFilePreview(repoId, path, repoRef)
+            : await service.getRepoFilePreview(repoId, path);
         if (
           !previewLoader.isCurrent(runId) ||
           !isCurrentRepoRequest(repoId, repoRef) ||
@@ -395,7 +390,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
 
   async function openPreviewLink(target: ReadmeLinkTarget) {
     if (target.kind === "external") {
-      void openUrl(target.href);
+      void workspace.openUrl(target.href);
       return;
     }
     if (target.kind === "anchor") {
@@ -444,7 +439,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       if (!canUseLocalFileActions.value) return;
       const absolutePath = absoluteFilePath(path);
       if (!absolutePath) return;
-      await openPath(absolutePath);
+      await workspace.openPath(absolutePath);
     });
   }
 
@@ -457,19 +452,19 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       if (!canUseLocalFileActions.value) return;
       const absolutePath = absoluteEntryTargetDirectory(entry);
       if (!absolutePath) return;
-      await openPathTarget(absolutePath, target);
+      await workspace.openPathTarget(absolutePath, target);
     });
   }
 
   async function copyTreeEntryPath(entry: RepoFileTreeEntry) {
-    await runFileAction(() => copyText(entry.path));
+    await runFileAction(() => workspace.copyText(entry.path));
   }
 
   async function copyTreeEntryAbsolutePath(entry: RepoFileTreeEntry) {
     await runFileAction(async () => {
       const absolutePath = absoluteEntryPath(entry);
       if (!absolutePath) return;
-      await copyText(absolutePath);
+      await workspace.copyText(absolutePath);
     });
   }
 
@@ -479,7 +474,8 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       const repoId = input.repoId.value;
       const repoRef = currentRepoRef();
       const selectedDeletedFile = selectedPath.value === path;
-      await (input.deleteFile ?? ((targetPath: string) => deleteRepoFile(repoId, targetPath)))(path);
+      await (input.deleteFile ?? (async (targetPath: string) =>
+        (await workspace.github.service()).deleteRepoFile(repoId, targetPath)))(path);
       if (!isCurrentRepoRequest(repoId, repoRef)) return;
       const refreshedEntries = await refreshDirectoriesForFile(path, repoId, repoRef);
       if (!isCurrentRepoRequest(repoId, repoRef) || !selectedDeletedFile) return;
@@ -528,7 +524,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
 
   function openPreviewFile() {
     if (!absolutePreviewPath.value) return;
-    void openPath(absolutePreviewPath.value);
+    void workspace.openPath(absolutePreviewPath.value);
   }
 
   return {

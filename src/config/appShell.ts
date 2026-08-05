@@ -9,12 +9,12 @@ import {
   type LiliaSidebarConfigInput,
   type LiliaUiConfig,
   type SidebarNavItem,
-} from "../ui";
+} from "@lilia/ui/shell";
 import {
   createLiliaSettingsModel,
-  LiliaAppearanceSection,
   normalizeSettingsTab as normalizeLiliaSettingsTab,
-} from "../ui";
+} from "@lilia/ui/settings";
+import { LiliaAppearanceSection } from "@lilia/ui/settings/sections";
 import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import appConfig from "../../app.config.json";

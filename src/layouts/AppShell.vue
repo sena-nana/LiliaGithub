@@ -2,17 +2,19 @@
 import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { RouterView, useRoute } from "vue-router";
 import { resolveBackdropSurfaces } from "@lilia/ui/composables/resolveBackdropSurfaces";
+import { LiliaAppShell } from "@lilia/ui/shell";
 import {
-  LiliaAppShell,
   LiliaPrimaryContent,
   LiliaResourcePanel,
-  LiliaSettingsSidebar,
   LiliaWorkspace,
+} from "@lilia/ui/layouts";
+import { LiliaSettingsSidebar } from "@lilia/ui/settings";
+import {
   useContextMenu,
   useNativeAppearance,
   usePersistentBoolean,
   usePersistentNumber,
-} from "../ui";
+} from "@lilia/ui/composables";
 import {
   APP_TITLE,
   LILIA_SETTINGS_MODEL,
@@ -23,7 +25,7 @@ import {
 import { useWorkspace } from "../composables/useWorkspace";
 import SecondaryPanel from "./SecondaryPanel.vue";
 
-const ContextMenuHost = defineAsyncComponent(() => import("../ui/contextMenuHost"));
+const ContextMenuHost = defineAsyncComponent(() => import("@lilia/ui/components/ContextMenuHost"));
 const route = useRoute();
 const workspace = useWorkspace();
 const appearance = useNativeAppearance();
