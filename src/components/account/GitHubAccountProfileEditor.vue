@@ -8,7 +8,7 @@ import {
   Mail,
   MapPin,
 } from "@lucide/vue";
-import { UiButton, UiInput, UiSwitch, UiTextarea } from "../../ui";
+import { UiButton, UiInput, UiSwitch, UiTextarea } from "@lilia/ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
@@ -17,6 +17,7 @@ import type {
   GitHubAccountProfile,
   GitHubProfileReadmeSection,
 } from "../../services/workspace";
+import { workspaceErrorCategory } from "../../services/workspace/errors";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";
 import MarkdownReadme from "../repo/MarkdownReadme.vue";
@@ -105,10 +106,10 @@ function applyProfile(next: GitHubAccountProfile) {
 }
 
 function profileError(err: unknown) {
-  const message = String(err).replace(/^Error:\s*/, "");
-  if (/401|绑定.*失效|unauthorized/i.test(message)) return "GitHub 绑定已失效，请重新绑定后再试。";
-  if (/403|scope|permission|权限/i.test(message)) return "当前授权不能修改个人资料，请先授权编辑资料。";
-  if (/422|validation|invalid/i.test(message)) return "资料未能保存，请检查邮箱、网站和用户名格式。";
+  const category = workspaceErrorCategory(err);
+  if (category === "authentication") return "GitHub 绑定已失效，请重新绑定后再试。";
+  if (category === "authorization") return "当前授权不能修改个人资料，请先授权编辑资料。";
+  if (category === "validation" || category === "conflict") return "资料未能保存，请检查邮箱、网站和用户名格式。";
   return "暂时无法读取或更新个人资料，请稍后重试。";
 }
 

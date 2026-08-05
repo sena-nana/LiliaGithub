@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CheckCircle2, Heart, MessageCircle, Pencil, Trash2 } from "@lucide/vue";
 import { ref } from "vue";
-import { openUrl } from "../../../services/workspace/client";
+import { useWorkspace } from "../../../composables/useWorkspace";
 import type { GitHubDiscussionReactionContent, GitHubRepositoryDiscussionComment } from "../../../services/workspace/discussions/types";
 import type { ReadmeLinkTarget } from "../../../utils/readmeLinks";
 import MarkdownReadme from "../MarkdownReadme.vue";
@@ -21,6 +21,7 @@ const props = defineProps<{
   react: (commentId: string, content: GitHubDiscussionReactionContent, remove?: boolean) => Promise<unknown>;
   setAnswer: (commentId: string, mark: boolean) => Promise<unknown>;
 }>();
+const workspace = useWorkspace();
 
 const emit = defineEmits<{ loadReplies: [commentId: string]; loadMoreReplies: [commentId: string] }>();
 const replyDraft = ref("");
@@ -65,7 +66,7 @@ function formatDate(value: string) {
 }
 
 function openMarkdownTarget(target: ReadmeLinkTarget) {
-  if (target.kind === "external") void openUrl(target.href);
+  if (target.kind === "external") void workspace.openUrl(target.href);
 }
 </script>
 
@@ -218,7 +219,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 }
 
 .discussion-comment__actions button { min-height: 28px; }
-.discussion-comment__actions .danger { color: var(--danger); }
+.discussion-comment__actions .danger { color: var(--err); }
 .discussion-comment__editor { display: grid; gap: 7px; }
 .discussion-comment__editor textarea { width: 100%; resize: vertical; }
 .discussion-comment__editor > div { justify-content: flex-end; }

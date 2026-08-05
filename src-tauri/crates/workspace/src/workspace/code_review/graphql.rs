@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::mapping::{non_empty, ActorResponse};
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::workspace::github::{github_headers, github_json, github_send};
+use crate::workspace::github::{github_headers, github_json, github_send, GitHubSession};
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 pub(super) const MAX_REVIEW_THREAD_COMMENT_PAGES: usize = 5;
@@ -290,7 +290,7 @@ fn graph_ql_error<T>(prefix: &str, response: &GraphQlResponse<T>) -> Option<Stri
 pub(super) fn fetch_review_graphql(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     repo_full_name: &str,
     pull_number: u64,
 ) -> Result<ReviewDetailPullRequest, String> {
@@ -402,7 +402,7 @@ impl ReviewCommentPagination {
 fn fetch_remaining_review_comments(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     thread_id: &str,
     comments: &mut ReviewCommentConnection,
 ) -> Option<String> {
@@ -456,7 +456,7 @@ fn fetch_remaining_review_comments(
 pub(super) fn reply_to_review_thread(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     thread_id: &str,
     body: &str,
 ) -> Result<GitHubPullRequestReviewComment, String> {

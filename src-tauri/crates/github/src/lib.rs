@@ -1,9 +1,10 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
-    GitHubBindingMetadata, GitHubBindingStatus, GitHubIssue, GitHubIssueMilestone,
-    GitHubIssueProjectItem,
+    GitHubBindingMetadata, GitHubBindingState, GitHubBindingStatus, GitHubIssue,
+    GitHubIssueMilestone, GitHubIssueProjectItem,
 };
 use serde::Deserialize;
+use std::time::Duration;
 
 pub mod discussions;
 
@@ -11,6 +12,60 @@ pub const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const GITHUB_JSON_TIMEOUT: Duration = Duration::from_secs(8);
+pub const GITHUB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+pub struct GitHubApiClient {
+    json: Option<reqwest::blocking::Client>,
+    transfer: Option<reqwest::blocking::Client>,
+}
+
+impl GitHubApiClient {
+    pub fn new() -> Result<Self, String> {
+        Ok(Self {
+            json: Some(
+                reqwest::blocking::Client::builder()
+                    .timeout(GITHUB_JSON_TIMEOUT)
+                    .build()
+                    .map_err(|error| format!("构造 GitHub JSON 客户端失败：{error}"))?,
+            ),
+            transfer: Some(
+                reqwest::blocking::Client::builder()
+                    .timeout(GITHUB_TRANSFER_TIMEOUT)
+                    .build()
+                    .map_err(|error| format!("构造 GitHub 传输客户端失败：{error}"))?,
+            ),
+        })
+    }
+
+    pub fn json(&self) -> reqwest::blocking::Client {
+        self.json
+            .as_ref()
+            .expect("GitHubApiClient is alive")
+            .clone()
+    }
+
+    pub fn transfer(&self) -> reqwest::blocking::Client {
+        self.transfer
+            .as_ref()
+            .expect("GitHubApiClient is alive")
+            .clone()
+    }
+}
+
+impl Drop for GitHubApiClient {
+    fn drop(&mut self) {
+        let clients = (self.json.take(), self.transfer.take());
+        let _ = std::thread::Builder::new()
+            .name("github-client-drop".to_string())
+            .spawn(move || drop(clients))
+            .and_then(|thread| {
+                thread
+                    .join()
+                    .map_err(|_| std::io::Error::other("GitHub client drop thread panicked"))
+            });
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedGitHubRepo {
@@ -45,9 +100,9 @@ pub fn client_id_source() -> &'static str {
 pub fn binding_status(binding: Option<GitHubBindingMetadata>) -> GitHubBindingStatus {
     GitHubBindingStatus {
         state: if binding.is_some() {
-            "bound".to_string()
+            GitHubBindingState::Bound
         } else {
-            "unbound".to_string()
+            GitHubBindingState::Unbound
         },
         client_id_configured: client_id().is_some(),
         client_id_source: client_id_source().to_string(),
@@ -135,20 +190,24 @@ pub fn github_project_cache_repo_key(repo_full_name: &str) -> Result<String, Str
         .to_ascii_lowercase())
 }
 
-pub fn github_issue_cache_key(
-    state: Option<&str>,
-    per_page: Option<u32>,
-    sort: Option<&str>,
-    direction: Option<&str>,
-    since: Option<&str>,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-    project: Option<&str>,
-    query: Option<&str>,
-) -> String {
-    let mut issue_labels = labels
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GitHubIssueCacheQuery<'a> {
+    pub state: Option<&'a str>,
+    pub per_page: Option<u32>,
+    pub sort: Option<&'a str>,
+    pub direction: Option<&'a str>,
+    pub since: Option<&'a str>,
+    pub creator: Option<&'a str>,
+    pub assignee: Option<&'a str>,
+    pub labels: Option<&'a [String]>,
+    pub milestone: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub query: Option<&'a str>,
+}
+
+pub fn github_issue_cache_key(filter: GitHubIssueCacheQuery<'_>) -> String {
+    let mut issue_labels = filter
+        .labels
         .unwrap_or(&[])
         .iter()
         .map(|value| value.trim().to_string())
@@ -156,24 +215,76 @@ pub fn github_issue_cache_key(
         .collect::<Vec<_>>();
     issue_labels.sort();
     serde_json::json!({
-        "state": state.unwrap_or("open"),
-        "perPage": per_page.unwrap_or(100).clamp(1, 100),
-        "sort": match sort {
+        "state": filter.state.unwrap_or("open"),
+        "perPage": filter.per_page.unwrap_or(100).clamp(1, 100),
+        "sort": match filter.sort {
             Some("updated") => "updated",
             Some("comments") => "comments",
             _ => "created",
         },
-        "direction": match direction {
+        "direction": match filter.direction {
             Some("asc") => "asc",
             _ => "desc",
         },
-        "since": trimmed_or_empty(since),
-        "creator": trimmed_or_empty(creator),
-        "assignee": trimmed_or_empty(assignee),
+        "since": trimmed_or_empty(filter.since),
+        "creator": trimmed_or_empty(filter.creator),
+        "assignee": trimmed_or_empty(filter.assignee),
         "labels": issue_labels,
-        "milestone": trimmed_or_empty(milestone),
-        "project": trimmed_or_empty(project),
-        "query": trimmed_or_empty(query),
+        "milestone": trimmed_or_empty(filter.milestone),
+        "project": trimmed_or_empty(filter.project),
+        "query": trimmed_or_empty(filter.query),
+    })
+    .to_string()
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GitHubPullRequestCacheQuery<'a> {
+    pub state: Option<&'a str>,
+    pub per_page: Option<u32>,
+    pub sort: Option<&'a str>,
+    pub direction: Option<&'a str>,
+    pub creator: Option<&'a str>,
+    pub assignee: Option<&'a str>,
+    pub labels: Option<&'a [String]>,
+    pub milestone: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub review: Option<&'a str>,
+    pub query: Option<&'a str>,
+}
+
+pub fn github_pull_request_cache_key(filter: GitHubPullRequestCacheQuery<'_>) -> String {
+    let mut labels = filter
+        .labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    labels.sort();
+    serde_json::json!({
+        "state": match filter.state {
+            Some("closed") => "closed",
+            Some("merged") => "merged",
+            Some("all") => "all",
+            _ => "open",
+        },
+        "perPage": filter.per_page.unwrap_or(100).clamp(1, 100),
+        "sort": match filter.sort {
+            Some("created") => "created",
+            Some("comments") => "comments",
+            _ => "updated",
+        },
+        "direction": match filter.direction {
+            Some("asc") => "asc",
+            _ => "desc",
+        },
+        "creator": trimmed_or_empty(filter.creator),
+        "assignee": trimmed_or_empty(filter.assignee),
+        "labels": labels,
+        "milestone": trimmed_or_empty(filter.milestone),
+        "project": trimmed_or_empty(filter.project),
+        "review": trimmed_or_empty(filter.review),
+        "query": trimmed_or_empty(filter.query),
     })
     .to_string()
 }
@@ -316,32 +427,24 @@ mod tests {
             "sena-nana/liliagithub"
         );
         assert_ne!(
-            github_issue_cache_key(
-                Some("open"),
-                Some(10),
-                Some("created"),
-                Some("desc"),
-                None,
-                None,
-                None,
-                Some(&["bug".to_string()]),
-                None,
-                None,
-                Some("alpha"),
-            ),
-            github_issue_cache_key(
-                Some("open"),
-                Some(10),
-                Some("created"),
-                Some("desc"),
-                None,
-                None,
-                None,
-                Some(&["bug".to_string()]),
-                None,
-                None,
-                Some("beta"),
-            ),
+            github_issue_cache_key(GitHubIssueCacheQuery {
+                state: Some("open"),
+                per_page: Some(10),
+                sort: Some("created"),
+                direction: Some("desc"),
+                labels: Some(&["bug".to_string()]),
+                query: Some("alpha"),
+                ..GitHubIssueCacheQuery::default()
+            },),
+            github_issue_cache_key(GitHubIssueCacheQuery {
+                state: Some("open"),
+                per_page: Some(10),
+                sort: Some("created"),
+                direction: Some("desc"),
+                labels: Some(&["bug".to_string()]),
+                query: Some("beta"),
+                ..GitHubIssueCacheQuery::default()
+            },),
         );
     }
 }

@@ -3,7 +3,7 @@ import {
   installAgentDebugHarness,
   uninstallAgentDebugHarness,
   type LiliaAgentDebugApi,
-} from "../src/ui";
+} from "@lilia/ui/diagnostics";
 import { installLiliaGithubAgentDebugCompat } from "../src/agentDebug/compat";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -114,6 +114,38 @@ describe("agent debug compatibility", () => {
         type: "action",
       }),
     );
+
+    cleanup();
+  });
+
+  it("redacts credentials and workspace content before recording invoke traces", async () => {
+    installAgentDebugHarness({ enabled: true });
+    const cleanup = installLiliaGithubAgentDebugCompat();
+    const { recordAgentDebugInvokeEnd, recordAgentDebugInvokeStart } = await import("../src/agentDebug/compat");
+
+    const trace = recordAgentDebugInvokeStart("github_bind", {
+      login: "octocat",
+      deviceCode: "device-secret",
+      token: "access-secret",
+      repoPath: "/Users/octocat/private-repo",
+      body: "private issue body",
+      values: ["private array entry"],
+    });
+    recordAgentDebugInvokeEnd(trace, "success", {
+      login: "octocat",
+      fileContent: "private source",
+      stdout: "private log",
+    });
+
+    const serialized = JSON.stringify(debugWindow().__liliaAgentDebug?.getRecentErrors());
+    expect(serialized).toContain("octocat");
+    expect(serialized).not.toContain("device-secret");
+    expect(serialized).not.toContain("access-secret");
+    expect(serialized).not.toContain("private-repo");
+    expect(serialized).not.toContain("private issue body");
+    expect(serialized).not.toContain("private array entry");
+    expect(serialized).not.toContain("private source");
+    expect(serialized).not.toContain("private log");
 
     cleanup();
   });

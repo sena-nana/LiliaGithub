@@ -21,6 +21,7 @@ import type {
   NamedWorkspace,
 } from "../../services/workspace";
 import { normalizeWorkspaceTasks } from "../../services/workspace/taskRetention";
+import type { SessionContext } from "../sessionContext";
 
 export interface WorkspaceState {
   settings: WorkspaceSettings | null;
@@ -37,6 +38,7 @@ export interface WorkspaceState {
   launchStatuses: Record<string, ProjectLaunchStatus | undefined>;
   launchLogs: Record<string, ProjectLaunchLog[] | undefined>;
   launchHistory: Record<string, ProjectLaunchHistoryEntry[] | undefined>;
+  bootstrapStatus: "idle" | "loading" | "ready" | "error";
   loading: boolean;
   scanning: boolean;
   authLoading: boolean;
@@ -91,65 +93,86 @@ export interface GitHubContributionsState {
   error: string | null;
 }
 
-export const state = reactive<WorkspaceState>({
-  settings: null,
-  contextRevision: 0,
-  switchingWorkspace: false,
-  bindingStatus: null,
-  repos: [],
-  repoListVerifiedWorkspaceId: null,
-  repoListChange: {
-    revision: 0,
-    changedRepoIds: [],
-    structural: true,
-  },
-  repoDetails: {},
-  repoRemoteCheckedAt: {},
-  launchConfigs: {},
-  launchCandidates: {},
-  launchStatuses: {},
-  launchLogs: {},
-  launchHistory: {},
-  loading: false,
-  scanning: false,
-  authLoading: false,
-  authFlowStatus: "idle",
-  authRemainingSeconds: null,
-  authNotice: null,
-  launchLoading: false,
-  error: null,
-  bulkPreview: null,
-  bulkResults: [],
-  bulkRunning: false,
-  recentSync: null,
-  repoActionErrors: {},
-  repoSyncResults: {},
-  githubContributions: {
-    days: [],
-    meta: null,
+export function createWorkspaceState(): WorkspaceState {
+  return {
+    settings: null,
+    contextRevision: 0,
+    switchingWorkspace: false,
+    bindingStatus: null,
+    repos: [],
+    repoListVerifiedWorkspaceId: null,
+    repoListChange: {
+      revision: 0,
+      changedRepoIds: [],
+      structural: true,
+    },
+    repoDetails: {},
+    repoRemoteCheckedAt: {},
+    launchConfigs: {},
+    launchCandidates: {},
+    launchStatuses: {},
+    launchLogs: {},
+    launchHistory: {},
+    bootstrapStatus: "idle",
     loading: false,
+    scanning: false,
+    authLoading: false,
+    authFlowStatus: "idle",
+    authRemainingSeconds: null,
+    authNotice: null,
+    launchLoading: false,
     error: null,
-  },
-  tasks: [],
-  languageStatsLoadingRepoIds: [],
-  syncingRepoIds: [],
-});
+    bulkPreview: null,
+    bulkResults: [],
+    bulkRunning: false,
+    recentSync: null,
+    repoActionErrors: {},
+    repoSyncResults: {},
+    githubContributions: {
+      days: [],
+      meta: null,
+      loading: false,
+      error: null,
+    },
+    tasks: [],
+    languageStatsLoadingRepoIds: [],
+    syncingRepoIds: [],
+  };
+}
 
-export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
+export function createWorkspaceStateFeature(sessionContext?: SessionContext) {
+const state = reactive<WorkspaceState>(createWorkspaceState());
 
-export const workspaceRoot = computed(() => state.settings?.workspaceRoot ?? null);
-export const activeWorkspace = computed<NamedWorkspace | null>(() => state.settings?.activeWorkspace ?? null);
-export const workspaceCatalog = computed(() => state.settings?.workspaceCatalog ?? []);
-export const switchingWorkspace = computed(() => state.switchingWorkspace);
-export const contextRevision = computed(() => state.contextRevision);
-export const hasAvailableWorkspaceRoot = computed(() =>
+const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
+let activeSessionIdentity: string | null = null;
+
+function syncSessionIdentity() {
+  const binding = state.bindingStatus?.binding ?? state.settings?.githubBinding ?? null;
+  const identity = [
+    state.contextRevision,
+    state.settings?.activeWorkspaceId ?? "",
+    binding?.login.toLocaleLowerCase() ?? "",
+    binding?.boundAt ?? "",
+  ].join(":");
+  if (activeSessionIdentity !== null && activeSessionIdentity !== identity) {
+    sessionContext?.invalidate();
+  }
+  activeSessionIdentity = identity;
+}
+
+const workspaceRoot = computed(() => state.settings?.workspaceRoot ?? null);
+const activeWorkspace = computed<NamedWorkspace | null>(() => state.settings?.activeWorkspace ?? null);
+const workspaceCatalog = computed(() => state.settings?.workspaceCatalog ?? []);
+const switchingWorkspace = computed(() => state.switchingWorkspace);
+const contextRevision = computed(() => state.contextRevision);
+const hasAvailableWorkspaceRoot = computed(() =>
   activeWorkspace.value?.roots.some((root) => root.available) ?? false
 );
-export const githubBinding = computed(() => state.bindingStatus?.binding ?? state.settings?.githubBinding ?? null);
-export const isAuthorized = computed(() => state.bindingStatus?.state === "bound" && Boolean(githubBinding.value));
-export const isReady = computed(() => hasAvailableWorkspaceRoot.value && isAuthorized.value);
+const githubBinding = computed(() => state.bindingStatus?.binding ?? state.settings?.githubBinding ?? null);
+const isAuthorized = computed(() => state.bindingStatus?.state === "bound" && Boolean(githubBinding.value));
+const isReady = computed(() => hasAvailableWorkspaceRoot.value && isAuthorized.value);
 
-export function isCurrentWorkspaceContext(value: {
+function isCurrentWorkspaceContext(value: {
   workspaceId: string | null;
   contextRevision: number;
 }) {
@@ -157,7 +180,7 @@ export function isCurrentWorkspaceContext(value: {
     value.workspaceId === (state.settings?.activeWorkspaceId ?? null);
 }
 
-export function resetWorkspaceScopedState() {
+function resetWorkspaceScopedState() {
   state.repos = [];
   state.repoListVerifiedWorkspaceId = null;
   state.repoListChange = {
@@ -187,19 +210,20 @@ export function resetWorkspaceScopedState() {
   state.syncingRepoIds = [];
 }
 
-export function applyWorkspaceBootstrap(bootstrap: WorkspaceBootstrap) {
+function applyWorkspaceBootstrap(bootstrap: WorkspaceBootstrap) {
   resetWorkspaceScopedState();
   state.settings = bootstrap.settings;
   state.contextRevision = bootstrap.contextRevision;
+  syncSessionIdentity();
 }
-export const authRemainingText = computed(() => {
+const authRemainingText = computed(() => {
   const seconds = state.authRemainingSeconds;
   if (seconds == null) return null;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 });
-export const authPendingStatusText = computed(() => {
+const authPendingStatusText = computed(() => {
   switch (state.authFlowStatus) {
     case "pending":
       return "等待 GitHub 授权确认";
@@ -211,11 +235,11 @@ export const authPendingStatusText = computed(() => {
       return null;
   }
 });
-export const authBindingStatusText = computed(() =>
+const authBindingStatusText = computed(() =>
   authPendingStatusText.value ?? (githubBinding.value ? "GitHub 已授权" : "尚未绑定 GitHub"),
 );
 
-export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
+function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
   state.bindingStatus = bindingStatus;
   if (state.settings) {
     state.settings = {
@@ -223,9 +247,10 @@ export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
       githubBinding: bindingStatus.binding,
     };
   }
+  syncSessionIdentity();
 }
 
-export function upsertRepo(summary: RepoSummary) {
+function upsertRepo(summary: RepoSummary) {
   const index = state.repos.findIndex((repo) => repo.id === summary.id);
   let nextSummary = summary;
   if (index >= 0) {
@@ -245,7 +270,7 @@ export function upsertRepo(summary: RepoSummary) {
   }
 }
 
-export function upsertReposBatch(summaries: RepoSummary[]) {
+function upsertReposBatch(summaries: RepoSummary[]) {
   if (!summaries.length) return;
   const nextRepos = state.repos.slice();
   const indexById = new Map(nextRepos.map((repo, index) => [repo.id, index]));
@@ -291,7 +316,7 @@ export function upsertReposBatch(summaries: RepoSummary[]) {
   }
 }
 
-export function replaceRepos(summaries: RepoSummary[]) {
+function replaceRepos(summaries: RepoSummary[]) {
   const currentById = new Map(state.repos.map((repo) => [repo.id, repo]));
   const currentIds = state.repos.map((repo) => repo.id);
   for (const detail of Object.values(state.repoDetails)) {
@@ -331,11 +356,11 @@ export function replaceRepos(summaries: RepoSummary[]) {
   }
 }
 
-export function markRepoListVerified(workspaceId: string | null) {
+function markRepoListVerified(workspaceId: string | null) {
   state.repoListVerifiedWorkspaceId = workspaceId;
 }
 
-export function removeRepo(repoId: string) {
+function removeRepo(repoId: string) {
   const nextRepos = state.repos.filter((repo) => repo.id !== repoId);
   if (nextRepos.length === state.repos.length) return;
   state.repos = nextRepos;
@@ -440,7 +465,7 @@ function sameLanguageStats(left: RepoSummary, right: RepoSummary) {
   });
 }
 
-export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
+function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
   const summary = detail.summary.id === repoId
     ? detail.summary
     : {
@@ -459,7 +484,7 @@ export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
   upsertRepo(normalizedDetail.summary);
 }
 
-export function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summary.id) {
+function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summary.id) {
   const normalizedSummary = patch.summary.id === repoId
     ? { ...patch.summary, conflictOperation: patch.conflicts.operation }
     : {
@@ -481,23 +506,23 @@ export function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summar
   upsertRepo(nextSummary);
 }
 
-export function setWorkspaceTasks(tasks: WorkspaceTask[]) {
+function setWorkspaceTasks(tasks: WorkspaceTask[]) {
   state.tasks = normalizeWorkspaceTasks([...tasks, ...state.tasks]);
 }
 
-export function upsertWorkspaceTask(task: WorkspaceTask) {
+function upsertWorkspaceTask(task: WorkspaceTask) {
   state.tasks = normalizeWorkspaceTasks([...state.tasks, task]);
 }
 
-export function repoById(repoId: string) {
+function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
 
-export function repoUsesSystemGit(repoId: string) {
+function repoUsesSystemGit(repoId: string) {
   return state.settings?.systemGitRepoIds.includes(repoId) ?? false;
 }
 
-export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
+function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
   if (!preview || !["push", "sync"].includes(preview.operation)) return new Set<string>();
   const ids = new Set<string>();
   const items = preview.operation === "push" ? [...preview.eligible, ...preview.blocked] : preview.eligible;
@@ -512,20 +537,20 @@ export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPrev
   return ids;
 }
 
-export function bulkSyncRunningRepoIds() {
+function bulkSyncRunningRepoIds() {
   const ids = new Set(state.syncingRepoIds);
   if (!state.bulkRunning) return ids;
   for (const repoId of bulkSyncRepoIds()) ids.add(repoId);
   return ids;
 }
 
-export function syncErrorByRepoId() {
+function syncErrorByRepoId() {
   return new Map(
     [...syncErrorDetailsByRepoId()].map(([repoId, error]) => [repoId, error.message]),
   );
 }
 
-export function syncErrorDetailsByRepoId() {
+function syncErrorDetailsByRepoId() {
   const recentErrors = recentSyncErrorsByRepoId();
   if (recentErrors.size) return recentErrors;
   if (!state.bulkPreview || !["push", "sync"].includes(state.bulkPreview.operation)) {
@@ -552,7 +577,7 @@ function createRepoSyncIssue(
   };
 }
 
-export function repoSyncIssuesByRepoId() {
+function repoSyncIssuesByRepoId() {
   const issues = new Map<string, RepoSyncIssueDisplay>();
   const recentErrors = recentSyncErrorsByRepoId();
   if (state.recentSync) {
@@ -581,7 +606,7 @@ export function repoSyncIssuesByRepoId() {
   return issues;
 }
 
-export function recentSyncErrorForRepo(repoId: string) {
+function recentSyncErrorForRepo(repoId: string) {
   const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status !== "success") ?? null;
   if (!result || shouldSuppressConflictResult(repoId, result)) return null;
   return {
@@ -590,19 +615,19 @@ export function recentSyncErrorForRepo(repoId: string) {
   };
 }
 
-export function repoActionErrorForRepo(repoId: string) {
+function repoActionErrorForRepo(repoId: string) {
   return repoActionErrorDetailForRepo(repoId)?.message ?? null;
 }
 
-export function repoActionErrorDetailForRepo(repoId: string) {
+function repoActionErrorDetailForRepo(repoId: string) {
   return state.repoActionErrors[repoId] ?? null;
 }
 
-export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
+function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
   return repoSyncIssuesByRepoId().get(repoId) ?? null;
 }
 
-export function setRepoActionError(repoId: string, message: string, status?: string) {
+function setRepoActionError(repoId: string, message: string, status?: string) {
   state.repoActionErrors = {
     ...state.repoActionErrors,
     [repoId]: {
@@ -613,24 +638,24 @@ export function setRepoActionError(repoId: string, message: string, status?: str
   };
 }
 
-export function clearRepoActionError(repoId: string) {
+function clearRepoActionError(repoId: string) {
   if (!state.repoActionErrors[repoId]) return;
   const next = { ...state.repoActionErrors };
   delete next[repoId];
   state.repoActionErrors = next;
 }
 
-export function beginRepoSync(repoId: string) {
+function beginRepoSync(repoId: string) {
   if (state.syncingRepoIds.includes(repoId)) return;
   state.syncingRepoIds = [...state.syncingRepoIds, repoId];
 }
 
-export function finishRepoSync(repoId: string) {
+function finishRepoSync(repoId: string) {
   if (!state.syncingRepoIds.includes(repoId)) return;
   state.syncingRepoIds = state.syncingRepoIds.filter((id) => id !== repoId);
 }
 
-export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
+function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
   if (!["push", "sync"].includes(preview.operation)) return;
   state.recentSync = {
     preview,
@@ -642,7 +667,7 @@ export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncRe
   };
 }
 
-export function beginRecentSyncRetry(repoId: string) {
+function beginRecentSyncRetry(repoId: string) {
   if (!state.recentSync) return false;
   if (!isRecentSyncIssue(repoId)) return false;
   if (!state.recentSync.retryingRepoIds.includes(repoId)) {
@@ -651,7 +676,7 @@ export function beginRecentSyncRetry(repoId: string) {
   return true;
 }
 
-export function finishRecentSyncRetry(result: BulkSyncResult) {
+function finishRecentSyncRetry(result: BulkSyncResult) {
   if (!state.recentSync) return;
   const existingResult = state.recentSync.results.some((item) => item.repoId === result.repoId);
   const nextResults = existingResult
@@ -669,7 +694,7 @@ export function finishRecentSyncRetry(result: BulkSyncResult) {
   };
 }
 
-export function recordRepoSyncResult(repoId: string, result: RepoSyncOperationResult) {
+function recordRepoSyncResult(repoId: string, result: RepoSyncOperationResult) {
   state.repoSyncResults = {
     ...state.repoSyncResults,
     [repoId]: result,
@@ -716,7 +741,7 @@ function shouldSuppressRepoActionError(repoId: string, error: RepoActionErrorSta
   return error.status === "conflicts" && repoSummaryForState(repoId) != null;
 }
 
-export function resetWorkspaceStateForTests() {
+function resetWorkspaceStateForTests() {
   state.settings = null;
   state.contextRevision = 0;
   state.switchingWorkspace = false;
@@ -735,6 +760,7 @@ export function resetWorkspaceStateForTests() {
   state.launchStatuses = {};
   state.launchLogs = {};
   state.launchHistory = {};
+  state.bootstrapStatus = "idle";
   state.loading = false;
   state.scanning = false;
   state.authLoading = false;
@@ -759,4 +785,58 @@ export function resetWorkspaceStateForTests() {
   state.languageStatsLoadingRepoIds = [];
   state.syncingRepoIds = [];
   deviceFlow.value = null;
+  activeSessionIdentity = null;
 }
+
+return {
+  state,
+  deviceFlow,
+  workspaceRoot,
+  activeWorkspace,
+  workspaceCatalog,
+  switchingWorkspace,
+  contextRevision,
+  hasAvailableWorkspaceRoot,
+  githubBinding,
+  isAuthorized,
+  isReady,
+  isCurrentWorkspaceContext,
+  resetWorkspaceScopedState,
+  applyWorkspaceBootstrap,
+  authRemainingText,
+  authPendingStatusText,
+  authBindingStatusText,
+  applyBindingStatus,
+  upsertRepo,
+  upsertReposBatch,
+  replaceRepos,
+  markRepoListVerified,
+  removeRepo,
+  setRepoDetail,
+  setRepoDetailPatch,
+  setWorkspaceTasks,
+  upsertWorkspaceTask,
+  repoById,
+  repoUsesSystemGit,
+  bulkSyncRepoIds,
+  bulkSyncRunningRepoIds,
+  syncErrorByRepoId,
+  syncErrorDetailsByRepoId,
+  repoSyncIssuesByRepoId,
+  recentSyncErrorForRepo,
+  repoActionErrorForRepo,
+  repoActionErrorDetailForRepo,
+  repoSyncIssueForRepo,
+  setRepoActionError,
+  clearRepoActionError,
+  beginRepoSync,
+  finishRepoSync,
+  rememberRecentSync,
+  beginRecentSyncRetry,
+  finishRecentSyncRetry,
+  recordRepoSyncResult,
+  resetWorkspaceStateForTests,
+};
+}
+
+export type WorkspaceStateFeature = ReturnType<typeof createWorkspaceStateFeature>;

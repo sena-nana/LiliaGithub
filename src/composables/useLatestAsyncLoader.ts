@@ -1,5 +1,5 @@
 import type { ComponentEpoch } from "./useComponentEpoch";
-import { getSessionContextVersion, isSessionContextVersionCurrent } from "./sessionContext";
+import { resolveSessionContext, type SessionContext } from "./sessionContext";
 
 export type AsyncLoaderKey = string | number | null | undefined;
 
@@ -10,13 +10,17 @@ export interface LatestAsyncLoaderRunOptions {
 export interface LatestAsyncLoaderOptions {
   componentEpoch?: Pick<ComponentEpoch, "assertAlive">;
   trackSessionContext?: boolean;
+  sessionContext?: SessionContext;
 }
 
 export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) {
+  const sessionContext = options.trackSessionContext === false
+    ? null
+    : resolveSessionContext(options.sessionContext);
   let currentRunId = 0;
   let pendingKey: AsyncLoaderKey = null;
   let pending: Promise<void> | null = null;
-  let currentRunSessionContextVersion = getSessionContextVersion();
+  let currentRunSessionContextVersion = sessionContext?.capture() ?? 0;
 
   function isLatestRun(runId: number) {
     return runId === currentRunId;
@@ -25,7 +29,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
   function isCurrent(runId: number) {
     return isLatestRun(runId) &&
       (options.componentEpoch?.assertAlive() ?? true) &&
-      (options.trackSessionContext === false || isSessionContextVersionCurrent(currentRunSessionContextVersion));
+      (sessionContext?.isCurrent(currentRunSessionContextVersion) ?? true);
   }
 
   function isPending(key?: AsyncLoaderKey) {
@@ -50,7 +54,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
       return;
     }
     const runId = ++currentRunId;
-    currentRunSessionContextVersion = getSessionContextVersion();
+    currentRunSessionContextVersion = sessionContext?.capture() ?? 0;
     pendingKey = key;
     let taskResult: Promise<void>;
     try {
@@ -72,7 +76,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
     currentRunId += 1;
     pending = null;
     pendingKey = null;
-    currentRunSessionContextVersion = getSessionContextVersion();
+    currentRunSessionContextVersion = sessionContext?.capture() ?? 0;
   }
 
   return {

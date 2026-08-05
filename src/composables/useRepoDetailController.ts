@@ -9,12 +9,7 @@ import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
-import { repoSyncIssueForRepo } from "./workspace/state";
-import {
-  markActiveRepoLocalReady,
-  requestManualRepoRemoteRefresh,
-  setActiveRepoForRefresh,
-} from "./workspace/repoRefreshEvents";
+import { useRepoLaunchController } from "./repo/useRepoLaunchController";
 import type {
   BranchSummary,
   CommitSummary,
@@ -31,17 +26,22 @@ import type {
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { hasRepoTag, resolveRepoContext } from "../utils/repoContext";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
-import { isConfirmedMissingResource } from "../services/workspace/client";
+import { isConfirmedMissingResource } from "../utils/githubErrors";
+import {
+  errorMessage,
+  isWorkspaceCommandCancelled,
+  workspaceErrorCategory,
+} from "../services/workspace/errors";
 import { useWorkspaceRecentContext } from "./useWorkspaceRecentContext";
 import { isLocalRepositoryConfirmedMissing } from "../utils/workspaceTruth";
 import {
-  normalizeRepoProjectTab,
   repoCommitRoute,
   repoRoute,
   repoRouteTabFromRoute,
   type RepoProjectTab,
   type RepoRouteTab,
 } from "../utils/repoRoutes";
+import { firstString, RepoRouteStateCodec } from "../utils/repoRouteState";
 
 type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
@@ -73,26 +73,23 @@ export function useRepoDetailController() {
   const router = useRouter();
   const workspace = useWorkspace();
   const workspaceRecentContext = useWorkspaceRecentContext();
-  const activeTab = computed<RepoRouteTab>(() => repoRouteTabFromRoute(route));
-  const activeProjectTab = computed<RepoProjectTab>(
-    () => normalizeRepoProjectTab(route.query.projectTab) ?? "readme",
-  );
-  const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
-  const activeProjectPullRequest = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.pr));
-  const activeProjectDiscussion = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.discussion));
-  const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
-  const activeProjectJob = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.job));
-  const activeFilePath = computed<string | null>(() => normalizeStringQuery(route.query.file));
-  const activeFileHash = computed<string | null>(() => normalizeStringQuery(route.query.hash));
-  const activeChangePath = computed<string | null>(() => normalizeStringQuery(route.query.change));
-  const activeRemoteRef = computed<string | null>(() => normalizeStringQuery(route.query.ref));
+  const repoRouteState = computed(() => RepoRouteStateCodec.parse(route));
+  const activeTab = computed<RepoRouteTab>(() => repoRouteState.value?.tab ?? repoRouteTabFromRoute(route));
+  const activeProjectTab = computed<RepoProjectTab>(() => repoRouteState.value?.projectTab ?? "readme");
+  const activeProjectIssue = computed<number | null>(() => repoRouteState.value?.issue ?? null);
+  const activeProjectPullRequest = computed<number | null>(() => repoRouteState.value?.pull ?? null);
+  const activeProjectDiscussion = computed<number | null>(() => repoRouteState.value?.discussion ?? null);
+  const activeProjectRun = computed<number | null>(() => repoRouteState.value?.run ?? null);
+  const activeProjectJob = computed<number | null>(() => repoRouteState.value?.job ?? null);
+  const activeFilePath = computed<string | null>(() => firstString(route.query.file));
+  const activeFileHash = computed<string | null>(() => firstString(route.query.hash));
+  const activeChangePath = computed<string | null>(() => firstString(route.query.change));
+  const activeRemoteRef = computed<string | null>(() => firstString(route.query.ref));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
   const relocatingMissingRepo = ref(false);
   const repoDetailLoading = ref(false);
   const repoDetailError = ref<string | null>(null);
-  const launchError = ref<string | null>(null);
-  const launchTerminalVisible = ref(false);
   const pullStrategy = ref<RepoPullStrategy>("merge");
   const openTarget = ref<SystemOpenTarget>("folder");
   const focusedChangePath = ref<string | null>(activeChangePath.value);
@@ -117,14 +114,11 @@ export function useRepoDetailController() {
   const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
   const githubBranchesLoader = createLatestAsyncLoader({ componentEpoch });
   const githubCommitsLoader = createLatestAsyncLoader({ componentEpoch });
-  const launchRefreshLoader = createLatestAsyncLoader({ componentEpoch });
   const actionTracker = createPendingTaskTracker();
   const actionRunning = actionTracker.running;
-  let launchLogTimer: number | null = null;
-  let launchLogRefreshPending = false;
   let actionGeneration = 0;
 
-  const repoId = computed(() => String(route.params.repoId ?? ""));
+  const repoId = computed(() => repoRouteState.value?.repoId ?? firstString(route.params.repoId) ?? "");
   const remoteFullName = computed(() => parseRemoteRepoId(repoId.value));
   const remoteContextRestored = computed(() => !remoteFullName.value || workspace.state.settings !== null);
   const remoteShortcut = computed(() =>
@@ -185,6 +179,13 @@ export function useRepoDetailController() {
     settings: workspace.state.settings,
     githubAuthorized: githubAuthorized.value,
   }));
+  const repoLaunch = useRepoLaunchController(
+    workspace,
+    repoId,
+    computed(() => repoContext.value.capabilities.launch.available),
+  );
+  const launchError = repoLaunch.error;
+  const launchTerminalVisible = repoLaunch.terminalVisible;
   const hasLocalRepo = computed(() => hasRepoTag(repoContext.value, "local"));
   const githubRepoFullName = computed(() => repoContext.value.githubFullName ?? null);
   const canShowChanges = computed(() => repoContext.value.capabilities.changes.available);
@@ -212,11 +213,9 @@ export function useRepoDetailController() {
   );
   const previewChange = computed(() => focusedChange.value);
   const canCommit = computed(() => stagedChangePaths.value.length > 0 && commitMessage.value.trim().length > 0);
-  const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
-  const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
-  const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
-  const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
-  const launchRunning = computed(() => launchStatus.value?.state === "running");
+  const launchConfig = repoLaunch.config;
+  const launchLogs = repoLaunch.logs;
+  const launchRunning = repoLaunch.running;
   const statusCommits = computed<CommitSummary[]>(() =>
     (historyUsesGitHub.value ? githubCommits.value : (detail.value?.commits ?? [])).map((commit) => ({
       ...commit,
@@ -227,7 +226,7 @@ export function useRepoDetailController() {
   const activeFileRepoRef = computed(() =>
     repoContext.value.capabilities.files.provider === "github" ? remoteBrowseBranch.value : null
   );
-  const repoSyncIssue = computed(() => repoSyncIssueForRepo(repoId.value));
+  const repoSyncIssue = computed(() => workspace.stateFeature.repoSyncIssueForRepo(repoId.value));
   const hasConflicts = computed(() =>
     conflicts.value.files.length > 0 || conflicts.value.operation !== "none",
   );
@@ -254,32 +253,8 @@ export function useRepoDetailController() {
       repoContext.value.capabilities.stash.available ? { key: "stash", title: "Stash" } : null,
     ].filter((tab): tab is { key: RepoToolbarTab; title: string } => Boolean(tab)),
   );
-  const launchCommandOptions = computed(() => {
-    const candidates = [...launchCandidates.value];
-    const current = launchConfig.value?.command.trim()
-      ? candidates.find((item) => item.command === launchConfig.value?.command && item.cwd === launchConfig.value?.cwd)
-      : null;
-    const options = current || !launchConfig.value?.command.trim()
-      ? candidates
-      : [{
-          command: launchConfig.value.command,
-          label: "当前指令",
-          hint: launchConfig.value.cwd || null,
-          kind: "current",
-          cwd: launchConfig.value.cwd,
-        } satisfies ProjectLaunchCandidate, ...candidates];
-
-    return options.map((candidate) => ({
-      value: launchOptionValue(candidate.command, candidate.cwd),
-      label: candidate.label || candidate.command,
-      command: candidate.command,
-      hint: [candidate.kind, candidate.hint, candidate.cwd].filter(Boolean).join(" · "),
-      candidate,
-    }));
-  });
-  const activeLaunchValue = computed(() =>
-    launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
-  );
+  const launchCommandOptions = repoLaunch.commandOptions;
+  const activeLaunchValue = repoLaunch.activeValue;
   const pullStrategyOptions = [
     { value: "pull", label: "仅快进拉取" },
     { value: "merge", label: "抓取后合并上游" },
@@ -396,9 +371,6 @@ export function useRepoDetailController() {
   ) as Record<RepoSettingKey, boolean>);
   onMounted(() => {
     void load();
-    window.addEventListener("focus", handleWindowFocus);
-    window.addEventListener("blur", handleWindowBlur);
-    document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   });
 
   async function selectMissingLocalRepo() {
@@ -415,9 +387,8 @@ export function useRepoDetailController() {
         await load();
       }
     } catch (reason) {
-      const message = String(reason).replace(/^Error:\s*/, "");
-      if (!message.includes("已取消")) {
-        actionError.value = message || "选择仓库失败";
+      if (!isWorkspaceCommandCancelled(reason)) {
+        actionError.value = errorMessage(reason) || "选择仓库失败";
       }
     } finally {
       relocatingMissingRepo.value = false;
@@ -425,29 +396,22 @@ export function useRepoDetailController() {
   }
 
   onUnmounted(() => {
-    void setActiveRepoForRefresh(null);
+    void workspace.setActiveRepoForRefresh(null);
     repoDetailLoader.invalidate();
     githubBranchesLoader.invalidate();
     githubCommitsLoader.invalidate();
-    launchRefreshLoader.invalidate();
     invalidateActions();
-    stopLaunchLogPolling();
-    window.removeEventListener("focus", handleWindowFocus);
-    window.removeEventListener("blur", handleWindowBlur);
-    document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   });
 
   watch(repoId, () => {
     commitMessage.value = "";
-    launchTerminalVisible.value = false;
-    stopLaunchLogPolling();
+    repoLaunch.reset();
     focusedChangePath.value = activeChangePath.value;
     selectedCommitHash.value = null;
     openTarget.value = "folder";
     repoDetailLoader.invalidate();
     githubBranchesLoader.invalidate();
     githubCommitsLoader.invalidate();
-    launchRefreshLoader.invalidate();
     invalidateActions();
     githubBranches.value = [];
     githubCommits.value = [];
@@ -485,10 +449,6 @@ export function useRepoDetailController() {
 
   watch(activeRemoteRef, (branch) => {
     if (branch !== activeRemoteBranch.value) activeRemoteBranch.value = branch;
-  });
-
-  watch([launchRunning, launchTerminalVisible], () => {
-    syncLaunchLogPolling();
   });
 
   watch(
@@ -543,21 +503,6 @@ export function useRepoDetailController() {
     }
   });
 
-  function normalizePositiveIntegerQuery(value: unknown): number | null {
-    const next = Array.isArray(value) ? value[0] : value;
-    if (typeof next !== "string") return null;
-    const parsed = Number.parseInt(next, 10);
-    if (!Number.isFinite(parsed) || parsed < 1) return null;
-    return parsed;
-  }
-
-  function normalizeStringQuery(value: unknown): string | null {
-    const next = Array.isArray(value) ? value[0] : value;
-    if (typeof next !== "string") return null;
-    const trimmed = next.trim();
-    return trimmed || null;
-  }
-
   function branchSectionOrder(section: RepoBranchPickerItem["section"]) {
     if (section === "current") return 0;
     if (section === "local") return 1;
@@ -579,7 +524,7 @@ export function useRepoDetailController() {
       actionError.value = null;
       launchError.value = null;
       if (!hasLocalRepo.value) {
-        await setActiveRepoForRefresh(null);
+        await workspace.setActiveRepoForRefresh(null);
         repoDetailLoading.value = false;
         repoDetailError.value = null;
         if (!remoteContextRestored.value) return;
@@ -600,14 +545,14 @@ export function useRepoDetailController() {
       repoDetailLoading.value = true;
       repoDetailError.value = null;
       try {
-        await setActiveRepoForRefresh(targetRepoId);
+        await workspace.setActiveRepoForRefresh(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         await workspace.loadRepoDetail(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         await workspace.recordRecentLocalRepo(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         syncFocusedChange();
-        markActiveRepoLocalReady(targetRepoId);
+        workspace.markActiveRepoLocalReady(targetRepoId);
       } catch (err) {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         const message = String(err);
@@ -736,79 +681,6 @@ export function useRepoDetailController() {
     activeRemoteBranch.value = null;
   }
 
-  async function validateLaunchStatus() {
-    const targetRepoId = repoId.value;
-    if (!targetRepoId || !repoContext.value.capabilities.launch.available) return;
-    await launchRefreshLoader.run(targetRepoId, async (runId) => {
-      try {
-        await workspace.refreshLaunchStatus(targetRepoId);
-        if (!launchRefreshLoader.isCurrent(runId) || repoId.value !== targetRepoId || !repoContext.value.capabilities.launch.available) return;
-      } catch {
-        // The explicit action path surfaces errors; focus validation should stay quiet.
-      }
-    }, { reusePending: true });
-  }
-
-  function launchLogPollingActive() {
-    return (
-      launchRunning.value &&
-      launchTerminalVisible.value &&
-      document.visibilityState === "visible" &&
-      document.hasFocus()
-    );
-  }
-
-  function stopLaunchLogPolling() {
-    if (launchLogTimer !== null) {
-      window.clearTimeout(launchLogTimer);
-      launchLogTimer = null;
-    }
-  }
-
-  function syncLaunchLogPolling() {
-    if (!launchLogPollingActive()) {
-      stopLaunchLogPolling();
-      return;
-    }
-    if (launchLogTimer !== null || launchLogRefreshPending) return;
-    launchLogTimer = window.setTimeout(() => {
-      launchLogTimer = null;
-      void refreshLaunchLogs();
-    }, 1500);
-  }
-
-  async function refreshLaunchLogs() {
-    const targetRepoId = repoId.value;
-    if (!targetRepoId || !launchLogPollingActive()) return;
-    launchLogRefreshPending = true;
-    try {
-      await workspace.refreshLaunchLogs(targetRepoId);
-    } catch {
-      // The explicit action path surfaces errors; log refresh should stay quiet.
-    } finally {
-      launchLogRefreshPending = false;
-      if (repoId.value === targetRepoId) syncLaunchLogPolling();
-    }
-  }
-
-  function handleWindowFocus() {
-    void validateLaunchStatus();
-    syncLaunchLogPolling();
-  }
-
-  function handleWindowBlur() {
-    stopLaunchLogPolling();
-  }
-
-  function handleDocumentVisibilityChange() {
-    if (document.visibilityState !== "visible") {
-      stopLaunchLogPolling();
-      return;
-    }
-    if (document.hasFocus()) void validateLaunchStatus();
-    syncLaunchLogPolling();
-  }
-
   function syncFocusedChange() {
     if (!focusedChangePath.value) return;
     if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
@@ -830,14 +702,8 @@ export function useRepoDetailController() {
   }
 
   function shouldOfferSystemGitPush(error: unknown) {
-    const message = String(error).toLowerCase();
-    return (
-      message.includes("当前 github 绑定无权限") ||
-      message.includes("无法认证 github 仓库") ||
-      message.includes("authentication failed") ||
-      message.includes("could not read username") ||
-      message.includes("permission denied (publickey)")
-    );
+    const category = workspaceErrorCategory(error);
+    return category === "authentication" || category === "authorization";
   }
 
   async function retryPushWithSystemGitIfConfirmed(error: unknown, targetRepoId: string) {
@@ -1064,7 +930,7 @@ export function useRepoDetailController() {
         await loadRemoteGitHubData(repoFullName, true);
         return;
       }
-      await requestManualRepoRemoteRefresh(targetRepoId, {
+      await workspace.requestManualRepoRemoteRefresh(targetRepoId, {
         includeCommits,
         includeBranches: true,
       });
@@ -1455,10 +1321,6 @@ export function useRepoDetailController() {
       commit.parents.length ? `parents: ${commit.parents.join(", ")}` : "root commit",
       commit.refs.length ? `refs: ${commit.refs.join(", ")}` : "",
     ].filter(Boolean).join("\n");
-  }
-
-  function launchOptionValue(command: string, cwd: string | null) {
-    return JSON.stringify([command, cwd ?? null]);
   }
 
     return {

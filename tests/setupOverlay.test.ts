@@ -1,33 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { reactive, ref } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceClient } from "../src/services/workspace/client";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
-const workspaceRoot = ref<string | null>(null);
-const activeWorkspace = ref(null);
-const workspaceCatalog = ref([]);
-const switchingWorkspace = ref(false);
-const contextRevision = ref(0);
-const hasAvailableWorkspaceRoot = ref(false);
-const githubBinding = ref<null>(null);
-const deviceFlow = ref<null>(null);
-const isReady = ref(false);
-const isAuthorized = ref(false);
-const state = reactive({
-  loading: true,
-  authLoading: false,
-  authNotice: null,
-  error: null,
-  githubContributions: {
-    days: [],
-    meta: null,
-    loading: false,
-    error: null,
-  },
-  languageStatsLoadingRepoIds: [],
-  tasks: [],
-});
-const pickWorkspaceRoot = vi.fn(async () => null as string | null);
+const pickWorkspaceRoot = vi.fn<WorkspaceClient["pickWorkspaceRoot"]>();
+const workspace = createWorkspaceStoreFixture({ pickWorkspaceRoot });
+const initialize = vi.spyOn(workspace, "initialize");
+const { state } = workspace.stateFeature;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -47,33 +30,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
-vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => ({
-    state,
-    deviceFlow,
-    workspaceRoot,
-    activeWorkspace,
-    workspaceCatalog,
-    switchingWorkspace,
-    contextRevision,
-    hasAvailableWorkspaceRoot,
-    githubBinding,
-    isAuthorized,
-    isReady,
-    initialize: vi.fn(async () => undefined),
-    pickWorkspaceRoot,
-    createWorkspace: vi.fn(async () => undefined),
-    addWorkspaceRoot: vi.fn(async () => undefined),
-    addLocalRepo: vi.fn(async () => null),
-    discoverRepos: vi.fn(async () => []),
-    refreshRepos: vi.fn(async () => undefined),
-    refreshRepoContributions: vi.fn(async () => undefined),
-    startAuthFlow: vi.fn(async () => undefined),
-    pollAuthFlow: vi.fn(async () => null),
-  }),
-}));
-
-const { setLiliaUiConfig } = await import("../src/ui");
+const { setLiliaUiConfig } = await import("@lilia/ui/shell");
 const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
 const { default: AppShell } = await import("../src/layouts/AppShell.vue");
 const { default: Home } = await import("../src/pages/Home.vue");
@@ -95,15 +52,21 @@ async function renderSetupHome() {
   return render(AppShell, {
     global: {
       plugins: [router],
+      provide: provideWorkspaceStoreFixture(workspace),
     },
   });
 }
 
 describe("初始化覆盖界面", () => {
   beforeEach(() => {
-    workspaceRoot.value = null;
+    workspace.stateFeature.resetWorkspaceStateForTests();
     pickWorkspaceRoot.mockReset();
     pickWorkspaceRoot.mockResolvedValue(null);
+    initialize.mockReset();
+    initialize.mockResolvedValue(undefined);
+    state.bootstrapStatus = "loading";
+    state.loading = true;
+    state.error = null;
   });
 
   it("初始化加载期间覆盖标题栏下方整窗并隐藏侧栏", async () => {
@@ -112,12 +75,14 @@ describe("初始化覆盖界面", () => {
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: "展开左侧栏" })).toBeDisabled();
 
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "命名工作区" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "GitHub 授权" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "正在打开 LiliaGithub" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建工作区" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "绑定 GitHub" })).toBeNull();
   });
 
   it("工作区选择期间禁用入口并保持图标占位", async () => {
+    state.bootstrapStatus = "ready";
+    state.loading = false;
     const picker = deferred<string | null>();
     pickWorkspaceRoot.mockImplementation(() => picker.promise);
     await renderSetupHome();
@@ -132,5 +97,20 @@ describe("初始化覆盖界面", () => {
 
     await waitFor(() => expect(button).toBeEnabled());
     expect(button.querySelector(".sb-spin")).not.toBeInTheDocument();
+  });
+
+  it("初始化失败只提供重试，不提前暴露 setup 写操作", async () => {
+    state.bootstrapStatus = "error";
+    state.loading = false;
+    state.error = "工作区配置读取失败";
+    await renderSetupHome();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "无法打开工作区" })).toBeInTheDocument();
+    expect(screen.getByText("工作区配置读取失败")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建工作区" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "绑定 GitHub" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(initialize).toHaveBeenCalledTimes(1);
   });
 });

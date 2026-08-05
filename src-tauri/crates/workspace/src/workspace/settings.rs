@@ -2,13 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::OnceLock;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{DispatchLane, ResourceAccessMode};
+use crate::runtime::{StoreError, StoreErrorKind, WorkspaceStore};
 use crate::workspace::github::{
-    forget_remote_repo_shortcut, invalidate_token, normalize_github_repo_input,
-    remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
+    forget_remote_repo_shortcut, normalize_github_repo_input, remember_remote_repo_shortcut,
+    GITHUB_CONTRIBUTION_DAYS,
 };
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::path_relocation::{
@@ -16,7 +18,7 @@ use crate::workspace::path_relocation::{
     recover_directory_relocation, remap_repo_id_in_settings, target_path_for_group,
 };
 use crate::workspace::repo_guard::{
-    canonical_repo_guard_key, repo_resource_id, with_repo_guard, with_repo_guards, RepoAccess,
+    canonical_repo_guard_key, with_repo_guard, with_repo_guards, RepoAccess,
 };
 #[cfg(test)]
 use crate::workspace::repos::managed_repo_paths;
@@ -45,6 +47,7 @@ use lilia_github_contracts::workspace::{
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
+const SETTINGS_STAGING_KEY: &str = "workspace.settings.staging";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v2";
 const LEGACY_STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
 const REPO_RELOCATION_INTENT_KEY: &str = "workspace.repoRelocationIntent";
@@ -134,14 +137,22 @@ enum RepoRelocationSettingsState {
     Equivalent,
 }
 
-fn startup_cache_write_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+pub(crate) struct SettingsRuntimeState {
+    pub(crate) settings_write: Mutex<()>,
+    startup_cache_write: Mutex<()>,
+    active_workspace_id: Mutex<Option<String>>,
+    context_revision: AtomicU64,
 }
 
-pub(super) fn settings_write_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+impl Default for SettingsRuntimeState {
+    fn default() -> Self {
+        Self {
+            settings_write: Mutex::new(()),
+            startup_cache_write: Mutex::new(()),
+            active_workspace_id: Mutex::new(None),
+            context_revision: AtomicU64::new(1),
+        }
+    }
 }
 
 fn normalized_login(login: &str) -> Option<String> {
@@ -279,17 +290,18 @@ fn profile_from_legacy(mut legacy: WorkspaceSettings) -> WorkspaceProfile {
     }
 }
 
-fn legacy_settings_from_value(value: serde_json::Value) -> WorkspaceSettings {
+fn legacy_settings_from_value(value: serde_json::Value) -> Result<WorkspaceSettings, String> {
     let fallback_root = value
         .get("accountPreferences")
         .and_then(|preferences| preferences.get("defaultWorkspaceRoot"))
         .and_then(|root| root.as_str())
         .map(str::to_string);
-    let mut settings = serde_json::from_value::<WorkspaceSettings>(value).unwrap_or_default();
+    let mut settings = serde_json::from_value::<WorkspaceSettings>(value)
+        .map_err(|error| format!("配置内容损坏：{error}"))?;
     if settings.workspace_root.is_none() {
         settings.workspace_root = fallback_root;
     }
-    settings
+    Ok(settings)
 }
 
 fn migrate_legacy_settings(legacy: WorkspaceSettings) -> WorkspaceSettingsDocument {
@@ -310,48 +322,98 @@ fn migrate_legacy_settings(legacy: WorkspaceSettings) -> WorkspaceSettingsDocume
     document
 }
 
-fn migrate_v2_document(legacy: LegacyWorkspaceSettingsDocument) -> WorkspaceSettingsDocument {
-    WorkspaceSettingsDocument {
+fn migrate_v2_document(
+    legacy: LegacyWorkspaceSettingsDocument,
+) -> Result<WorkspaceSettingsDocument, String> {
+    Ok(WorkspaceSettingsDocument {
         version: SETTINGS_VERSION,
         binding: legacy.binding,
-        anonymous: profile_from_legacy(legacy_settings_from_value(legacy.anonymous)),
+        anonymous: profile_from_legacy(legacy_settings_from_value(legacy.anonymous)?),
         profiles: legacy
             .profiles
             .into_iter()
             .map(|(login, settings)| {
-                (
+                Ok((
                     login,
-                    profile_from_legacy(legacy_settings_from_value(settings)),
-                )
+                    profile_from_legacy(legacy_settings_from_value(settings)?),
+                ))
             })
-            .collect(),
+            .collect::<Result<HashMap<_, _>, String>>()?,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StoreReadError {
+    Missing,
+    Corrupt(String),
+    Permission(String),
+    Io(String),
+}
+
+impl StoreReadError {
+    fn from_store(error: StoreError) -> Self {
+        match error.kind() {
+            StoreErrorKind::Corrupt => Self::Corrupt(error.to_string()),
+            StoreErrorKind::Permission => Self::Permission(error.to_string()),
+            StoreErrorKind::Io => Self::Io(error.to_string()),
+        }
+    }
+
+    fn into_legacy(self) -> String {
+        match self {
+            Self::Missing => "workspace_store_missing：工作区配置不存在".to_string(),
+            Self::Corrupt(error) => format!("workspace_store_corrupt：配置内容损坏：{error}"),
+            Self::Permission(error) => {
+                format!("workspace_store_permission：无权读取工作区配置：{error}")
+            }
+            Self::Io(error) => format!("workspace_store_io：读取工作区配置失败：{error}"),
+        }
     }
 }
 
-fn read_settings_document(app: &AppHandle) -> (WorkspaceSettingsDocument, bool) {
-    let Some(value) = app
+impl From<StoreReadError> for String {
+    fn from(error: StoreReadError) -> Self {
+        error.into_legacy()
+    }
+}
+
+fn read_settings_document(
+    app: &AppHandle,
+) -> Result<(WorkspaceSettingsDocument, bool), StoreReadError> {
+    let store = app
         .store(STORE_FILE)
-        .ok()
-        .and_then(|store| store.get(SETTINGS_KEY))
+        .map_err(|error| StoreReadError::Io(error.to_string()))?;
+    let Some(value) = store
+        .get(SETTINGS_KEY)
+        .map_err(StoreReadError::from_store)?
     else {
-        return (WorkspaceSettingsDocument::default(), false);
+        return Err(StoreReadError::Missing);
     };
     if value.get("version").and_then(|version| version.as_u64()) == Some(SETTINGS_VERSION as u64) {
-        if let Ok(mut document) = serde_json::from_value::<WorkspaceSettingsDocument>(value.clone())
-        {
-            document.version = SETTINGS_VERSION;
-            return (document, false);
-        }
+        let mut document = serde_json::from_value::<WorkspaceSettingsDocument>(value)
+            .map_err(|error| StoreReadError::Corrupt(error.to_string()))?;
+        document.version = SETTINGS_VERSION;
+        return Ok((document, false));
     }
     if value.get("version").is_some() {
-        if let Ok(document) =
-            serde_json::from_value::<LegacyWorkspaceSettingsDocument>(value.clone())
-        {
-            return (migrate_v2_document(document), true);
-        }
+        let document = serde_json::from_value::<LegacyWorkspaceSettingsDocument>(value)
+            .map_err(|error| StoreReadError::Corrupt(error.to_string()))?;
+        return Ok((
+            migrate_v2_document(document).map_err(StoreReadError::Corrupt)?,
+            true,
+        ));
     }
-    let legacy = legacy_settings_from_value(value);
-    (migrate_legacy_settings(legacy), true)
+    let legacy = legacy_settings_from_value(value).map_err(StoreReadError::Corrupt)?;
+    Ok((migrate_legacy_settings(legacy), true))
+}
+
+fn read_settings_document_or_default(
+    app: &AppHandle,
+) -> Result<(WorkspaceSettingsDocument, bool), StoreReadError> {
+    match read_settings_document(app) {
+        Err(StoreReadError::Missing) => Ok((WorkspaceSettingsDocument::default(), false)),
+        result => result,
+    }
 }
 
 fn write_settings_document(
@@ -360,19 +422,88 @@ fn write_settings_document(
 ) -> Result<(), String> {
     let store = app
         .store(STORE_FILE)
-        .map_err(|e| format!("打开配置存储失败：{e}"))?;
-    store.set(
-        SETTINGS_KEY,
-        serde_json::to_value(document).map_err(|e| e.to_string())?,
-    );
-    store.save().map_err(|e| format!("保存配置失败：{e}"))
+        .map_err(|error| format!("workspace_store_write_failed：打开配置存储失败：{error}"))?;
+    let value = serde_json::to_value(document)
+        .map_err(|error| format!("workspace_store_write_failed：序列化配置失败：{error}"))?;
+    let previous = store
+        .get(SETTINGS_KEY)
+        .map_err(|error| settings_write_error("读取旧配置", error))?;
+
+    if let Err(error) = store.set(SETTINGS_STAGING_KEY, value.clone()) {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err(settings_write_error("写入临时配置", error));
+    }
+    if let Err(error) = store.save() {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err(settings_write_error("保存临时配置", error));
+    }
+    let staged = match store.get(SETTINGS_STAGING_KEY) {
+        Ok(staged) => staged,
+        Err(error) => {
+            rollback_settings_write(&store, previous.as_ref());
+            return Err(settings_write_error("校验临时配置", error));
+        }
+    };
+    if staged.as_ref() != Some(&value) {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err("workspace_store_write_failed：临时配置校验失败".to_string());
+    }
+
+    if let Err(error) = store.set(SETTINGS_KEY, value.clone()) {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err(settings_write_error("替换正式配置", error));
+    }
+    if let Err(error) = store.delete(SETTINGS_STAGING_KEY) {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err(settings_write_error("清理临时配置", error));
+    }
+    if let Err(error) = store.save() {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err(settings_write_error("保存正式配置", error));
+    }
+    let committed = match store.get(SETTINGS_KEY) {
+        Ok(committed) => committed,
+        Err(error) => {
+            rollback_settings_write(&store, previous.as_ref());
+            return Err(settings_write_error("校验正式配置", error));
+        }
+    };
+    if committed.as_ref() != Some(&value) {
+        rollback_settings_write(&store, previous.as_ref());
+        return Err("workspace_store_write_failed：正式配置校验失败".to_string());
+    }
+    *app.settings_runtime()
+        .active_workspace_id
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) =
+        settings_from_document(document).active_workspace_id;
+    Ok(())
+}
+
+fn settings_write_error(action: &str, error: StoreError) -> String {
+    let code = match error.kind() {
+        StoreErrorKind::Permission => "workspace_store_permission",
+        StoreErrorKind::Corrupt => "workspace_store_corrupt",
+        StoreErrorKind::Io => "workspace_store_write_failed",
+    };
+    format!("{code}：{action}失败：{error}")
+}
+
+fn rollback_settings_write(store: &WorkspaceStore, previous: Option<&serde_json::Value>) {
+    if let Some(previous) = previous {
+        let _ = store.set(SETTINGS_KEY, previous.clone());
+    } else {
+        let _ = store.delete(SETTINGS_KEY);
+    }
+    let _ = store.delete(SETTINGS_STAGING_KEY);
+    let _ = store.save();
 }
 
 fn read_repo_relocation_intent(app: &AppHandle) -> Result<Option<RepoRelocationIntent>, String> {
     let store = app
         .store(STORE_FILE)
         .map_err(|error| format!("打开迁移恢复记录失败：{error}"))?;
-    let Some(value) = store.get(REPO_RELOCATION_INTENT_KEY) else {
+    let Some(value) = store.get(REPO_RELOCATION_INTENT_KEY)? else {
         return Ok(None);
     };
     let intent = serde_json::from_value::<RepoRelocationIntent>(value)
@@ -393,7 +524,7 @@ fn write_repo_relocation_intent(
     store.set(
         REPO_RELOCATION_INTENT_KEY,
         serde_json::to_value(intent).map_err(|error| error.to_string())?,
-    );
+    )?;
     store
         .save()
         .map_err(|error| format!("保存迁移恢复记录失败：{error}"))
@@ -406,9 +537,8 @@ fn clear_repo_relocation_intent_and_cache(
     let store = app
         .store(STORE_FILE)
         .map_err(|error| format!("打开迁移恢复记录失败：{error}"))?;
-    if let Some(mut cache) = store
-        .get(STARTUP_CACHE_KEY)
-        .and_then(|value| serde_json::from_value::<WorkspaceStartupCacheDocument>(value).ok())
+    if let Some(mut cache) =
+        read_store_json::<WorkspaceStartupCacheDocument>(&store, STARTUP_CACHE_KEY, "启动缓存")?
     {
         let slots = match intent.profile_login.as_deref() {
             Some(login) => cache.profiles.entry(login.to_string()).or_default(),
@@ -418,15 +548,15 @@ fn clear_repo_relocation_intent_and_cache(
         store.set(
             STARTUP_CACHE_KEY,
             serde_json::to_value(cache).map_err(|error| error.to_string())?,
-        );
+        )?;
     }
-    store.delete(LEGACY_STARTUP_CACHE_KEY);
-    store.delete(REPO_RELOCATION_INTENT_KEY);
+    store.delete(LEGACY_STARTUP_CACHE_KEY)?;
+    store.delete(REPO_RELOCATION_INTENT_KEY)?;
     if let Err(error) = store.save() {
         store.set(
             REPO_RELOCATION_INTENT_KEY,
             serde_json::to_value(intent).map_err(|serialize_error| serialize_error.to_string())?,
-        );
+        )?;
         return Err(format!("清理迁移恢复记录失败：{error}"));
     }
     Ok(())
@@ -543,7 +673,7 @@ fn reconcile_pending_repo_relocation_locked(app: &AppHandle) -> Result<(), Strin
     };
     let source = PathBuf::from(&intent.source_path);
     let destination = PathBuf::from(&intent.destination_path);
-    let (document, _) = read_settings_document(app);
+    let (document, _) = read_settings_document(app)?;
     let settings_state = relocation_settings_state(&document, &intent).map_err(|error| {
         format!(
             "{error}；旧路径：{}；新路径：{}",
@@ -557,6 +687,7 @@ fn reconcile_pending_repo_relocation_locked(app: &AppHandle) -> Result<(), Strin
         RepoRelocationSettingsState::Equivalent => fs::symlink_metadata(&destination).is_ok(),
     };
     with_repo_guards(
+        app,
         [
             PathBuf::from(&intent.old_common_dir),
             PathBuf::from(&intent.new_common_dir),
@@ -580,7 +711,7 @@ fn reconcile_pending_repo_relocation_locked(app: &AppHandle) -> Result<(), Strin
             })?;
             clear_repo_relocation_intent_and_cache(app, &intent)?;
             reset_workspace_runtime_state(app);
-            crate::workspace::watcher::sync_repo_watchers(app);
+            crate::workspace::watcher::sync_repo_watchers(app)?;
             Ok(())
         },
     )
@@ -679,12 +810,31 @@ fn settings_from_document(document: &WorkspaceSettingsDocument) -> WorkspaceSett
     settings
 }
 
-pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
-    let (document, migrated) = read_settings_document(app);
+pub(super) fn load_settings(app: &AppHandle) -> Result<WorkspaceSettings, String> {
+    let (document, migrated) = match read_settings_document(app) {
+        Ok(document) => document,
+        Err(StoreReadError::Missing) => {
+            *app.settings_runtime()
+                .active_workspace_id
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+            return Ok(WorkspaceSettings::default());
+        }
+        Err(error) => return Err(error.into_legacy()),
+    };
     if migrated {
-        let _ = write_settings_document(app, &document);
+        write_settings_document(app, &document)?;
     }
-    settings_from_document(&document)
+    let settings = settings_from_document(&document);
+    *app.settings_runtime()
+        .active_workspace_id
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = settings.active_workspace_id.clone();
+    Ok(settings)
+}
+
+pub(super) fn try_load_settings(app: &AppHandle) -> Result<WorkspaceSettings, String> {
+    load_settings(app)
 }
 
 fn current_github_account_login(settings: &WorkspaceSettings) -> Option<String> {
@@ -748,7 +898,7 @@ pub(super) fn visible_workspace_settings(mut settings: WorkspaceSettings) -> Wor
 pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Result<(), String> {
     let mut settings = settings.clone();
     migrate_remote_repo_shortcuts(&mut settings);
-    let (mut document, _) = read_settings_document(app);
+    let (mut document, _) = read_settings_document_or_default(app)?;
     let mut profile = profile_from_document(&document);
     profile.account_preferences = settings.account_preferences.clone();
     if profile.active_workspace_id.is_none()
@@ -827,25 +977,38 @@ pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Re
     write_settings_document(app, &document)
 }
 
-fn reset_workspace_runtime_state(_app: &AppHandle) {
-    context_revision().fetch_add(1, Ordering::SeqCst);
-    crate::workspace::refresh::reset_refresh_scheduler();
-    crate::workspace::watcher::clear_repo_watchers();
+fn reset_workspace_runtime_state(app: &AppHandle) {
+    app.settings_runtime()
+        .context_revision
+        .fetch_add(1, Ordering::SeqCst);
+    crate::workspace::refresh::reset_refresh_scheduler(app);
+    crate::workspace::watcher::clear_repo_watchers(app);
 }
 
-fn context_revision() -> &'static AtomicU64 {
-    static REVISION: AtomicU64 = AtomicU64::new(1);
-    &REVISION
+pub(super) fn github_binding_identity(app: &AppHandle) -> Result<(Option<String>, u64), String> {
+    let login = try_load_settings(app)?
+        .github_binding
+        .and_then(|binding| normalized_login(&binding.login));
+    Ok((
+        login,
+        app.github_runtime().binding_revision.load(Ordering::SeqCst),
+    ))
 }
 
-fn current_context_revision() -> u64 {
-    context_revision().load(Ordering::SeqCst)
+fn current_context_revision(app: &AppHandle) -> u64 {
+    app.settings_runtime()
+        .context_revision
+        .load(Ordering::SeqCst)
 }
 
 pub(super) fn workspace_context_identity(app: &AppHandle) -> (Option<String>, u64) {
     (
-        load_settings(app).active_workspace_id,
-        current_context_revision(),
+        app.settings_runtime()
+            .active_workspace_id
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone(),
+        current_context_revision(app),
     )
 }
 
@@ -853,46 +1016,39 @@ pub(super) fn switch_github_binding(
     app: &AppHandle,
     binding: lilia_github_contracts::workspace::GitHubBindingMetadata,
 ) -> Result<WorkspaceSettings, String> {
-    let (mut document, _) = read_settings_document(app);
-    let previous_login = document
-        .binding
-        .as_ref()
-        .map(|existing| existing.login.clone());
+    let (mut document, _) = read_settings_document_or_default(app)?;
     document.binding = Some(binding);
     write_settings_document(app, &document)?;
+    app.github_runtime()
+        .binding_revision
+        .fetch_add(1, Ordering::SeqCst);
     reset_workspace_runtime_state(app);
-    if let Some(login) = previous_login {
-        invalidate_token(&login);
-    }
     Ok(visible_workspace_settings(settings_from_document(
         &document,
     )))
 }
 
 pub(super) fn clear_github_binding(app: &AppHandle) -> Result<WorkspaceSettings, String> {
-    let (mut document, _) = read_settings_document(app);
-    let previous_login = document
-        .binding
-        .as_ref()
-        .map(|binding| binding.login.clone());
+    let (mut document, _) = read_settings_document_or_default(app)?;
     document.binding = None;
     write_settings_document(app, &document)?;
+    app.github_runtime()
+        .binding_revision
+        .fetch_add(1, Ordering::SeqCst);
     reset_workspace_runtime_state(app);
-    if let Some(login) = previous_login {
-        invalidate_token(&login);
-    }
     Ok(visible_workspace_settings(settings_from_document(
         &document,
     )))
 }
 
-pub(super) fn load_startup_cache(app: &AppHandle) -> Option<WorkspaceStartupCache> {
-    let settings = load_settings(app);
-    let workspace_id = settings.active_workspace_id.as_deref()?;
-    let store = app.store(STORE_FILE).ok()?;
-    if let Some(document) = store
-        .get(STARTUP_CACHE_KEY)
-        .and_then(|value| serde_json::from_value::<WorkspaceStartupCacheDocument>(value).ok())
+pub(super) fn load_startup_cache(app: &AppHandle) -> Result<Option<WorkspaceStartupCache>, String> {
+    let settings = load_settings(app)?;
+    let Some(workspace_id) = settings.active_workspace_id.as_deref() else {
+        return Ok(None);
+    };
+    let store = app.store(STORE_FILE)?;
+    if let Some(document) =
+        read_store_json::<WorkspaceStartupCacheDocument>(&store, STARTUP_CACHE_KEY, "启动缓存")?
     {
         let slots = settings
             .github_binding
@@ -900,12 +1056,28 @@ pub(super) fn load_startup_cache(app: &AppHandle) -> Option<WorkspaceStartupCach
             .and_then(|binding| normalized_login(&binding.login))
             .and_then(|login| document.profiles.get(&login))
             .unwrap_or(&document.anonymous);
-        return slots.get(workspace_id).cloned();
+        return Ok(slots.get(workspace_id).cloned());
     }
-    store
-        .get(LEGACY_STARTUP_CACHE_KEY)
-        .and_then(|value| serde_json::from_value::<WorkspaceStartupCache>(value).ok())
-        .map(|cache| migrate_legacy_startup_cache(cache, &settings))
+    Ok(
+        read_store_json::<WorkspaceStartupCache>(&store, LEGACY_STARTUP_CACHE_KEY, "旧版启动缓存")?
+            .map(|cache| migrate_legacy_startup_cache(cache, &settings)),
+    )
+}
+
+fn read_store_json<T: serde::de::DeserializeOwned>(
+    store: &WorkspaceStore,
+    key: &str,
+    label: &str,
+) -> Result<Option<T>, String> {
+    let Some(value) = store
+        .get(key)
+        .map_err(|error| StoreReadError::from_store(error).into_legacy())?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|error| format!("workspace_store_corrupt：{label}内容损坏：{error}"))
 }
 
 fn migrate_legacy_startup_cache(
@@ -949,18 +1121,17 @@ pub(super) fn save_startup_cache(
     let store = app
         .store(STORE_FILE)
         .map_err(|e| format!("打开启动缓存失败：{e}"))?;
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     let workspace_id = settings
         .active_workspace_id
         .as_deref()
         .ok_or_else(|| "当前没有工作区".to_string())?;
-    let mut document = store
-        .get(STARTUP_CACHE_KEY)
-        .and_then(|value| serde_json::from_value::<WorkspaceStartupCacheDocument>(value).ok())
-        .unwrap_or_else(|| WorkspaceStartupCacheDocument {
-            version: 2,
-            ..WorkspaceStartupCacheDocument::default()
-        });
+    let mut document =
+        read_store_json::<WorkspaceStartupCacheDocument>(&store, STARTUP_CACHE_KEY, "启动缓存")?
+            .unwrap_or_else(|| WorkspaceStartupCacheDocument {
+                version: 2,
+                ..WorkspaceStartupCacheDocument::default()
+            });
     let slots = settings
         .github_binding
         .as_ref()
@@ -971,13 +1142,15 @@ pub(super) fn save_startup_cache(
     store.set(
         STARTUP_CACHE_KEY,
         serde_json::to_value(document).map_err(|e| e.to_string())?,
-    );
-    store.delete(LEGACY_STARTUP_CACHE_KEY);
+    )?;
+    store.delete(LEGACY_STARTUP_CACHE_KEY)?;
     store.save().map_err(|e| format!("保存启动缓存失败：{e}"))
 }
 
 pub(super) fn clear_startup_cache(app: &AppHandle) -> Result<(), String> {
-    let _guard = startup_cache_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .startup_cache_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     clear_startup_cache_unlocked(app)
@@ -987,10 +1160,9 @@ fn clear_startup_cache_unlocked(app: &AppHandle) -> Result<(), String> {
     let store = app
         .store(STORE_FILE)
         .map_err(|e| format!("打开启动缓存失败：{e}"))?;
-    let settings = load_settings(app);
-    if let Some(mut document) = store
-        .get(STARTUP_CACHE_KEY)
-        .and_then(|value| serde_json::from_value::<WorkspaceStartupCacheDocument>(value).ok())
+    let settings = load_settings(app)?;
+    if let Some(mut document) =
+        read_store_json::<WorkspaceStartupCacheDocument>(&store, STARTUP_CACHE_KEY, "启动缓存")?
     {
         if let Some(workspace_id) = settings.active_workspace_id.as_deref() {
             let slots = settings
@@ -1004,9 +1176,9 @@ fn clear_startup_cache_unlocked(app: &AppHandle) -> Result<(), String> {
         store.set(
             STARTUP_CACHE_KEY,
             serde_json::to_value(document).map_err(|e| e.to_string())?,
-        );
+        )?;
     }
-    store.delete(LEGACY_STARTUP_CACHE_KEY);
+    store.delete(LEGACY_STARTUP_CACHE_KEY)?;
     store.save().map_err(|e| format!("清理启动缓存失败：{e}"))
 }
 
@@ -1055,10 +1227,10 @@ fn startup_cache_shell(settings: &WorkspaceSettings) -> WorkspaceStartupCache {
 pub(super) fn matching_startup_cache(
     app: &AppHandle,
     settings: &WorkspaceSettings,
-) -> WorkspaceStartupCache {
-    load_startup_cache(app)
+) -> Result<WorkspaceStartupCache, String> {
+    Ok(load_startup_cache(app)?
         .filter(|cache| startup_cache_matches_settings(cache, settings))
-        .unwrap_or_else(|| startup_cache_shell(settings))
+        .unwrap_or_else(|| startup_cache_shell(settings)))
 }
 
 pub(super) fn cached_repo_summary(
@@ -1082,10 +1254,12 @@ pub(super) fn write_startup_repo_summary(
     settings: &WorkspaceSettings,
     summary: &RepoSummary,
 ) -> Result<(), String> {
-    let _guard = startup_cache_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .startup_cache_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut cache = matching_startup_cache(app, settings);
+    let mut cache = matching_startup_cache(app, settings)?;
     let remote_checked_at = cache
         .repos_by_id
         .get(&summary.id)
@@ -1107,10 +1281,12 @@ pub(super) fn write_startup_repo_summary_after_fetch(
     summary: &RepoSummary,
     remote_checked_at: i64,
 ) -> Result<(), String> {
-    let _guard = startup_cache_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .startup_cache_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut cache = matching_startup_cache(app, settings);
+    let mut cache = matching_startup_cache(app, settings)?;
     cache.repos_by_id.insert(
         summary.id.clone(),
         CachedRepoSummary {
@@ -1127,10 +1303,12 @@ pub(super) fn write_startup_contributions(
     settings: &WorkspaceSettings,
     contributions: WorkspaceStartupContributions,
 ) -> Result<WorkspaceStartupCache, String> {
-    let _guard = startup_cache_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .startup_cache_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut cache = matching_startup_cache(app, settings);
+    let mut cache = matching_startup_cache(app, settings)?;
     cache.contributions = Some(CachedContributionResult {
         days: contributions.days,
         meta: contributions.meta,
@@ -1141,10 +1319,12 @@ pub(super) fn write_startup_contributions(
 }
 
 pub(super) fn remove_startup_cache_repo(app: &AppHandle, repo_id: &str) -> Result<(), String> {
-    let _guard = startup_cache_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .startup_cache_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let Some(mut cache) = load_startup_cache(app) else {
+    let Some(mut cache) = load_startup_cache(app)? else {
         return Ok(());
     };
     cache.repos_by_id.remove(repo_id);
@@ -1494,7 +1674,7 @@ pub(super) fn remove_system_git_repo_id(
 }
 
 pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     let Some(workspace) = settings.active_workspace else {
         return Err("请先选择工作区文件夹".to_string());
     };
@@ -1513,7 +1693,7 @@ pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(super) fn workspace_roots(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     let workspace = settings
         .active_workspace
         .ok_or_else(|| "请先选择工作区文件夹".to_string())?;
@@ -1533,7 +1713,7 @@ pub(super) fn workspace_roots(app: &AppHandle) -> Result<Vec<(String, PathBuf)>,
 }
 
 pub(super) fn workspace_root_by_id(app: &AppHandle, root_id: &str) -> Result<PathBuf, String> {
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     let workspace = settings
         .active_workspace
         .ok_or_else(|| "当前没有工作区".to_string())?;
@@ -1755,39 +1935,43 @@ fn prune_workspace_root_settings(workspace: &mut NamedWorkspace, root_id: &str) 
     workspace.local_contribution_cache.retain(|id, _| keep(id));
 }
 
-fn workspace_get_settings_unlocked(app: &AppHandle) -> WorkspaceSettings {
-    let mut settings = load_settings(&app);
+fn workspace_get_settings_unlocked(app: &AppHandle) -> Result<WorkspaceSettings, String> {
+    let mut settings = try_load_settings(app)?;
     if migrate_remote_repo_shortcuts(&mut settings) {
-        let _ = save_settings(&app, &settings);
+        save_settings(app, &settings)?;
     }
-    visible_workspace_settings(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_get_settings(app: AppHandle) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     reconcile_pending_repo_relocation_locked(&app)?;
-    Ok(workspace_get_settings_unlocked(&app))
+    workspace_get_settings_unlocked(&app)
 }
 
-fn workspace_get_bootstrap_unlocked(app: &AppHandle) -> WorkspaceBootstrap {
-    let settings = workspace_get_settings_unlocked(app);
+fn workspace_get_bootstrap_unlocked(app: &AppHandle) -> Result<WorkspaceBootstrap, String> {
+    let settings = workspace_get_settings_unlocked(app)?;
     let startup_cache =
-        load_startup_cache(app).filter(|cache| startup_cache_matches_settings(cache, &settings));
-    WorkspaceBootstrap {
+        load_startup_cache(app)?.filter(|cache| startup_cache_matches_settings(cache, &settings));
+    Ok(WorkspaceBootstrap {
         settings,
         startup_cache,
-        context_revision: current_context_revision(),
-    }
+        context_revision: current_context_revision(app),
+    })
 }
 
 pub fn workspace_get_bootstrap(app: AppHandle) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     reconcile_pending_repo_relocation_locked(&app)?;
-    Ok(workspace_get_bootstrap_unlocked(&app))
+    workspace_get_bootstrap_unlocked(&app)
 }
 
 fn validate_workspace_name(
@@ -1859,7 +2043,7 @@ fn write_workspace_document(
     if reset_runtime {
         reset_workspace_runtime_state(app);
     }
-    Ok(workspace_get_bootstrap_unlocked(app))
+    workspace_get_bootstrap_unlocked(app)
 }
 
 pub fn workspace_create(
@@ -1867,11 +2051,13 @@ pub fn workspace_create(
     name: String,
     root_path: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let (root_id, root_path, _) = validated_root(&root_path)?;
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let name = validate_workspace_name(profile, &name, None)?;
     let workspace_id = next_stable_id("workspace");
@@ -1896,10 +2082,12 @@ pub fn workspace_rename(
     workspace_id: String,
     name: String,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let name = validate_workspace_name(profile, &name, Some(workspace_id.trim()))?;
     let workspace = profile
@@ -1909,7 +2097,7 @@ pub fn workspace_rename(
         .ok_or_else(|| "未找到工作区".to_string())?;
     workspace.name = name;
     write_settings_document(&app, &document)?;
-    Ok(workspace_get_settings_unlocked(&app))
+    workspace_get_settings_unlocked(&app)
 }
 
 pub fn workspace_update_recent_context(
@@ -1917,10 +2105,12 @@ pub fn workspace_update_recent_context(
     workspace_id: String,
     context: Option<WorkspaceRecentContextV1>,
 ) -> Result<(), String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let workspace = profile_mut_from_document(&mut document)
         .workspaces
         .iter_mut()
@@ -1934,10 +2124,12 @@ pub fn workspace_switch(
     app: AppHandle,
     workspace_id: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let workspace_id = workspace_id.trim();
     if !profile
@@ -1948,10 +2140,10 @@ pub fn workspace_switch(
         return Err("未找到工作区".to_string());
     }
     if profile.active_workspace_id.as_deref() == Some(workspace_id) {
-        return Ok(workspace_get_bootstrap_unlocked(&app));
+        return workspace_get_bootstrap_unlocked(&app);
     }
     if let Some(active_id) = profile.active_workspace_id.as_deref() {
-        if crate::workspace::tasks::has_active_workspace_mutation(active_id) {
+        if crate::workspace::tasks::has_active_workspace_mutation(&app, active_id) {
             return Err("当前工作区有正在执行的写入任务，请等待任务完成后再切换".to_string());
         }
     }
@@ -1963,16 +2155,18 @@ pub fn workspace_delete(
     app: AppHandle,
     workspace_id: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let workspace_id = workspace_id.trim();
-    if crate::workspace::tasks::has_active_workspace_mutation(workspace_id) {
+    if crate::workspace::tasks::has_active_workspace_mutation(&app, workspace_id) {
         return Err("该工作区有正在执行的写入任务，暂时无法删除".to_string());
     }
-    if crate::workspace::launch::has_running_launch_for_workspace(workspace_id) {
+    if crate::workspace::launch::has_running_launch_for_workspace(&app, workspace_id) {
         return Err("该工作区有正在运行的启动任务，请先停止后再删除".to_string());
     }
     let index = profile
@@ -2001,11 +2195,13 @@ pub fn workspace_add_root(
     workspace_id: String,
     root_path: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let (root_id, root_path, canonical) = validated_root(&root_path)?;
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let workspace = profile
         .workspaces
@@ -2031,17 +2227,19 @@ pub fn workspace_remove_root(
     workspace_id: String,
     root_id: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let workspace_id = workspace_id.trim();
     let root_id = root_id.trim();
-    if crate::workspace::tasks::has_active_root_mutation(workspace_id, root_id) {
+    if crate::workspace::tasks::has_active_root_mutation(&app, workspace_id, root_id) {
         return Err("该根目录有正在执行的写入任务，暂时无法移除".to_string());
     }
-    if crate::workspace::launch::has_running_launch_for_root(workspace_id, root_id) {
+    if crate::workspace::launch::has_running_launch_for_root(&app, workspace_id, root_id) {
         return Err("该根目录有正在运行的启动任务，请先停止后再移除".to_string());
     }
     let workspace = profile
@@ -2067,10 +2265,12 @@ pub fn workspace_set_primary_root(
     workspace_id: String,
     root_id: String,
 ) -> Result<WorkspaceBootstrap, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let workspace = profile
         .workspaces
@@ -2089,10 +2289,12 @@ pub fn workspace_update_view_preferences(
     app: AppHandle,
     preferences: WorkspaceViewPreferences,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let (mut document, _) = read_settings_document(&app);
+    let (mut document, _) = read_settings_document_or_default(&app)?;
     let profile = profile_mut_from_document(&mut document);
     let active_id = profile
         .active_workspace_id
@@ -2105,18 +2307,20 @@ pub fn workspace_update_view_preferences(
         .ok_or_else(|| "未找到工作区".to_string())?;
     workspace.view_preferences = preferences;
     write_settings_document(&app, &document)?;
-    Ok(workspace_get_settings_unlocked(&app))
+    workspace_get_settings_unlocked(&app)
 }
 
-pub fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache> {
-    let settings = load_settings(&app);
+pub fn workspace_read_startup_cache(
+    app: AppHandle,
+) -> Result<Option<WorkspaceStartupCache>, String> {
+    let settings = load_settings(&app)?;
     if let Some(root) = settings.workspace_root.as_deref() {
         let path = PathBuf::from(root);
         if ensure_ntfs_path(&path).is_err() {
-            return None;
+            return Ok(None);
         }
     }
-    load_startup_cache(&app).filter(|cache| startup_cache_matches_settings(cache, &settings))
+    Ok(load_startup_cache(&app)?.filter(|cache| startup_cache_matches_settings(cache, &settings)))
 }
 
 pub fn workspace_clear_startup_cache(app: AppHandle) -> Result<(), String> {
@@ -2127,7 +2331,7 @@ pub fn workspace_write_startup_contributions(
     app: AppHandle,
     contributions: WorkspaceStartupContributions,
 ) -> Result<WorkspaceStartupCache, String> {
-    let settings = load_settings(&app);
+    let settings = load_settings(&app)?;
     write_startup_contributions(&app, &settings, contributions)
 }
 
@@ -2157,11 +2361,13 @@ pub fn workspace_update_account_preferences(
     app: AppHandle,
     preferences: AccountPreferences,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     validate_repository_scope(&preferences.repository_scope)?;
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings.account_preferences = preferences;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2171,7 +2377,7 @@ pub fn workspace_set_contribution_identities(
     app: AppHandle,
     identities: Vec<ContributionIdentity>,
 ) -> Result<WorkspaceSettings, String> {
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings.contribution_identities = normalize_contribution_identities(identities);
     save_settings(&app, &settings)?;
     let _ = clear_startup_cache(&app);
@@ -2181,7 +2387,7 @@ pub fn workspace_set_contribution_identities(
 pub async fn workspace_scan_contribution_identities(
     app: AppHandle,
 ) -> Result<ContributionIdentityRecommendationResult, String> {
-    let settings = load_settings(&app);
+    let settings = load_settings(&app)?;
     let entries = settings
         .managed_repo_ids
         .iter()
@@ -2191,22 +2397,21 @@ pub async fn workspace_scan_contribution_identities(
     let mut common_dirs = entries
         .iter()
         .map(|(_, path)| path.clone())
-        .into_iter()
         .map(|path| git_common_dir(&path).unwrap_or(path))
         .collect::<Vec<_>>();
     common_dirs.sort();
     common_dirs.dedup();
-    let mut spec = OperationSpec::new(OperationKind::WorkspaceAnalysis)
-        .lane(DispatchLane::Background)
+    let spec = OperationSpec::new(OperationKind::WorkspaceAnalysis)
         .priority(-50)
         .visible(VisibleOperation::new("contributions", "扫描贡献身份推荐").priority("low"));
-    for common_dir in &common_dirs {
-        spec = spec.resource(repo_resource_id(common_dir), ResourceAccessMode::Read);
-    }
+    let guard_app = app.clone();
     run_operation(app, spec, move || {
-        Ok(with_repo_guards(common_dirs, RepoAccess::Read, || {
-            scan_contribution_identity_recommendations_for_entries(entries, &settings)
-        }))
+        Ok(with_repo_guards(
+            &guard_app,
+            common_dirs,
+            RepoAccess::Read,
+            || scan_contribution_identity_recommendations_for_entries(entries, &settings),
+        ))
     })
     .await
 }
@@ -2584,7 +2789,7 @@ pub fn repo_set_preference(
     if normalized.is_empty() {
         return Err("仓库 ID 不能为空".to_string());
     }
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     set_repo_preference_value(&mut settings, normalized, key.trim(), value)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2599,7 +2804,7 @@ pub fn repo_set_auto_sync(
     if normalized.is_empty() {
         return Err("仓库 ID 不能为空".to_string());
     }
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     set_repo_preference_value(&mut settings, normalized, "autoSync", auto_sync)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2614,7 +2819,7 @@ pub fn repo_get_remote_sync_config(
         return Err("仓库 ID 不能为空".to_string());
     }
     let path = repo_path_by_id(&app, normalized)?;
-    resolve_remote_sync_config(&load_settings(&app), normalized, &path)
+    resolve_remote_sync_config(&load_settings(&app)?, normalized, &path)
 }
 
 pub fn repo_set_remote_sync_policy(
@@ -2627,7 +2832,7 @@ pub fn repo_set_remote_sync_policy(
         return Err("仓库 ID 不能为空".to_string());
     }
     let path = repo_path_by_id(&app, normalized)?;
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings
         .repo_remote_sync_policies
         .insert(normalized.to_string(), policy);
@@ -2714,7 +2919,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
         return Err("仓库 ID 不能为空".to_string());
     }
     repo_path_by_id(&app, normalized)?;
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     if !settings.hidden_repo_ids.iter().any(|id| id == normalized) {
         settings.hidden_repo_ids.push(normalized.to_string());
         settings.hidden_repo_ids.sort();
@@ -2722,7 +2927,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
     remove_local_contribution_cache(&mut settings, normalized);
     save_settings(&app, &settings)?;
     remove_startup_cache_repo(&app, normalized)?;
-    crate::workspace::watcher::sync_repo_watchers(&app);
+    crate::workspace::watcher::sync_repo_watchers(&app)?;
     Ok(visible_workspace_settings(settings))
 }
 
@@ -2736,10 +2941,12 @@ pub fn workspace_record_recent_local_repo(
     }
     repo_path_by_id(&app, repo_id)?;
 
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     record_recent_local_repo_visit(&mut settings.recent_local_repos, repo_id, now_millis());
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2769,10 +2976,12 @@ pub fn workspace_create_repo_group(
     app: AppHandle,
     name: String,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     create_repo_group(&mut settings, &name)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2783,10 +2992,12 @@ pub fn workspace_rename_repo_group(
     group_id: String,
     name: String,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     rename_repo_group(&mut settings, &group_id, &name)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2796,10 +3007,12 @@ pub fn workspace_delete_repo_group(
     app: AppHandle,
     group_id: String,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     delete_repo_group(&mut settings, &group_id)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -2816,7 +3029,9 @@ pub async fn workspace_move_repo_to_group(
         return Err("仓库 ID 不能为空".to_string());
     }
     {
-        let _guard = settings_write_lock()
+        let _guard = app
+            .settings_runtime()
+            .settings_write
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         reconcile_pending_repo_relocation_locked(&app)?;
@@ -2838,15 +3053,18 @@ fn workspace_move_repo_to_group_guarded(
     path_mode: Option<WorkspaceRepoPathMode>,
 ) -> Result<WorkspaceRepoRelocationResult, String> {
     let normalized = repo_id.trim();
-    if crate::workspace::launch::has_running_launch_for_repo(normalized) {
+    if crate::workspace::launch::has_running_launch_for_repo(&app, normalized) {
         return Err("该仓库有正在运行的启动任务，请先停止后再迁移".to_string());
     }
     let path_mode = path_mode.unwrap_or_default();
-    let _guard = settings_write_lock()
+    let settings_state_app = app.clone();
+    let _guard = settings_state_app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let (root, current_path) = repo_root_and_path_by_id(&app, normalized)?;
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     let requested_group_id = group_id
         .as_deref()
         .map(str::trim)
@@ -2915,13 +3133,12 @@ fn workspace_move_repo_to_group_guarded(
     } else {
         active_repo_id.clone()
     };
-    if new_repo_id != active_repo_id {
-        if settings_reference_repo_id(&settings, &new_repo_id)
-            || load_startup_cache(&app)
-                .is_some_and(|cache| cache.repos_by_id.contains_key(&new_repo_id))
-        {
-            return Err(format!("目标仓库 ID 已存在：{new_repo_id}"));
-        }
+    if new_repo_id != active_repo_id
+        && (settings_reference_repo_id(&settings, &new_repo_id)
+            || load_startup_cache(&app)?
+                .is_some_and(|cache| cache.repos_by_id.contains_key(&new_repo_id)))
+    {
+        return Err(format!("目标仓库 ID 已存在：{new_repo_id}"));
     }
     let old_common_dir = git_common_dir(&current_path).unwrap_or_else(|| current_path.clone());
     let new_common_dir = if effective_mode == WorkspaceRepoPathMode::Move {
@@ -2960,9 +3177,10 @@ fn workspace_move_repo_to_group_guarded(
         destination_parent_existed: prepared.destination_parent_existed,
         phase: RepoRelocationPhase::Prepared,
     };
+    let guard_app = app.clone();
     let finish = move || {
         write_repo_relocation_intent(&app, &intent)?;
-        let watcher = crate::workspace::watcher::suspend_repo_watcher(&app, normalized);
+        let watcher = crate::workspace::watcher::suspend_repo_watcher(&app, normalized)?;
         let relocation = match prepared.apply() {
             Ok(relocation) => relocation,
             Err(error) => {
@@ -3028,7 +3246,7 @@ fn workspace_move_repo_to_group_guarded(
     if canonical_repo_guard_key(&old_common_dir) == canonical_repo_guard_key(&new_common_dir) {
         finish()
     } else {
-        with_repo_guard(new_common_dir, RepoAccess::Write, finish)
+        with_repo_guard(&guard_app, new_common_dir, RepoAccess::Write, finish)
     }
 }
 
@@ -3107,16 +3325,18 @@ pub fn workspace_relocate_local_repo(
         .into_iter()
         .find(|(_, root)| {
             new_path.starts_with(root)
-                || canonical_repo_path(&new_path).starts_with(&canonical_repo_path(root))
+                || canonical_repo_path(&new_path).starts_with(canonical_repo_path(root))
         })
         .ok_or_else(|| "仓库必须位于当前工作区的某个根目录内".to_string())?;
     let new_id = crate::workspace::repos::repo_id(&root, &new_path);
     let new_path_text = compatible_path_text(&new_path);
 
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     let path_changed = repo_path_by_id(&app, normalized)
         .map(|previous| canonical_repo_path(&previous) != canonical_repo_path(&new_path))
         .unwrap_or(true);
@@ -3125,7 +3345,7 @@ pub fn workspace_relocate_local_repo(
     add_managed_repo_id(&mut settings, new_id.clone());
     settings.hidden_repo_ids.retain(|id| id != &new_id);
     save_settings(&app, &settings)?;
-    crate::workspace::watcher::sync_repo_watchers(&app);
+    crate::workspace::watcher::sync_repo_watchers(&app)?;
     Ok(WorkspaceRepoRelocationResult {
         settings: visible_workspace_settings(settings),
         previous_repo_id: normalized.to_string(),
@@ -3139,10 +3359,12 @@ pub fn workspace_reconcile_organization_repo_groups(
     app: AppHandle,
     organization_logins: Vec<String>,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     reconcile_organization_repo_groups(&mut settings, &organization_logins)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
@@ -3160,10 +3382,12 @@ pub fn workspace_set_local_repo_favorite(
     if favorite {
         repo_path_by_id(&app, normalized)?;
     }
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings.favorite_repo_ids.retain(|id| id != normalized);
     if favorite {
         settings.favorite_repo_ids.push(normalized.to_string());
@@ -3192,14 +3416,16 @@ pub async fn workspace_delete_local_repo(
             let (root, path) = repo_root_and_path_by_id(&app, normalized)?;
             let worktree = resolve_repo_worktree(&root, &path);
             remove_managed_repo_path(&root, &path, &worktree)?;
-            let _guard = settings_write_lock()
+            let _guard = app
+                .settings_runtime()
+                .settings_write
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let mut settings = load_settings(&app);
+            let mut settings = load_settings(&app)?;
             prune_deleted_repo_settings(&mut settings, normalized);
             save_settings(&app, &settings)?;
             remove_startup_cache_repo(&app, normalized)?;
-            crate::workspace::watcher::sync_repo_watchers(&app);
+            crate::workspace::watcher::sync_repo_watchers(&app)?;
             Ok(visible_workspace_settings(settings))
         },
     )
@@ -3210,10 +3436,12 @@ pub fn workspace_remember_remote_repo(
     app: AppHandle,
     mut repo: RemoteRepoShortcut,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     migrate_remote_repo_shortcuts(&mut settings);
     let account_login = current_github_account_login(&settings)
         .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
@@ -3228,10 +3456,12 @@ pub fn workspace_set_remote_repo_favorite(
     mut repo: RemoteRepoShortcut,
     favorite: bool,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     migrate_remote_repo_shortcuts(&mut settings);
     let account_login = current_github_account_login(&settings)
         .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
@@ -3262,10 +3492,12 @@ pub fn workspace_forget_remote_repo(
     app: AppHandle,
     full_name: String,
 ) -> Result<WorkspaceSettings, String> {
-    let _guard = settings_write_lock()
+    let _guard = app
+        .settings_runtime()
+        .settings_write
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     migrate_remote_repo_shortcuts(&mut settings);
     let account_login = current_github_account_login(&settings)
         .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
@@ -3280,10 +3512,10 @@ pub fn workspace_forget_remote_repo(
 
 pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String> {
     let normalized = repo_id.trim();
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings.hidden_repo_ids.retain(|id| id != normalized);
     save_settings(&app, &settings)?;
-    crate::workspace::watcher::sync_repo_watchers(&app);
+    crate::workspace::watcher::sync_repo_watchers(&app)?;
     Ok(visible_workspace_settings(settings))
 }
 
@@ -3291,15 +3523,15 @@ pub fn repo_use_default_token_auth(
     app: AppHandle,
     repo_id: String,
 ) -> Result<WorkspaceSettings, String> {
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     remove_system_git_repo_id(&mut settings, &repo_id)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
 }
 
-pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
-    let settings = load_settings(&app);
-    settings
+pub fn workspace_list_hidden_repos(app: AppHandle) -> Result<Vec<HiddenRepo>, String> {
+    let settings = load_settings(&app)?;
+    Ok(settings
         .hidden_repo_ids
         .into_iter()
         .map(|id| {
@@ -3315,16 +3547,16 @@ pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
                 .unwrap_or_else(|| id.clone());
             HiddenRepo { id, name }
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
 mod account_profile_storage_tests {
     use super::*;
-    use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
+    use crate::runtime::{StoreError, StoreErrorKind, WorkspaceContext, WorkspaceRuntime};
     use lilia_github_contracts::workspace::{
-        GitHubBindingMetadata, GitHubRepositoryScope, ProjectLaunchStatus, PullRequestListSortKey,
-        SortDirection,
+        GitHubBindingMetadata, GitHubRepositoryScope, ProjectLaunchState, ProjectLaunchStatus,
+        PullRequestListSortKey, SortDirection,
     };
     use serde_json::Value;
     use std::collections::VecDeque;
@@ -3335,6 +3567,7 @@ mod account_profile_storage_tests {
         values: Mutex<HashMap<(String, String), Value>>,
         persisted: Mutex<HashMap<(String, String), Value>>,
         save_failures: Mutex<VecDeque<bool>>,
+        read_failure: Mutex<Option<StoreError>>,
     }
 
     impl MemoryRuntime {
@@ -3365,22 +3598,40 @@ mod account_profile_storage_tests {
             *failures = (1..=last).map(|save| saves.contains(&save)).collect();
         }
 
+        fn fail_reads_with(&self, kind: StoreErrorKind) {
+            *self.read_failure.lock().unwrap() =
+                Some(StoreError::new(kind, "injected settings read failure"));
+        }
+
         fn restarted(&self) -> Arc<Self> {
             let persisted = self.persisted.lock().unwrap().clone();
             Arc::new(Self {
                 values: Mutex::new(persisted.clone()),
                 persisted: Mutex::new(persisted),
                 save_failures: Mutex::new(VecDeque::new()),
+                read_failure: Mutex::new(None),
             })
         }
     }
 
     impl WorkspaceRuntime for MemoryRuntime {
-        fn store_get(&self, file: &str, key: &str) -> Result<Option<Value>, String> {
+        fn store_get(
+            &self,
+            file: &str,
+            key: &str,
+        ) -> Result<Option<Value>, crate::runtime::StoreError> {
+            if let Some(error) = self.read_failure.lock().unwrap().clone() {
+                return Err(error);
+            }
             Ok(self.value(file, key))
         }
 
-        fn store_set(&self, file: &str, key: &str, value: Value) -> Result<(), String> {
+        fn store_set(
+            &self,
+            file: &str,
+            key: &str,
+            value: Value,
+        ) -> Result<(), crate::runtime::StoreError> {
             self.values
                 .lock()
                 .unwrap()
@@ -3388,7 +3639,7 @@ mod account_profile_storage_tests {
             Ok(())
         }
 
-        fn store_delete(&self, file: &str, key: &str) -> Result<(), String> {
+        fn store_delete(&self, file: &str, key: &str) -> Result<(), crate::runtime::StoreError> {
             self.values
                 .lock()
                 .unwrap()
@@ -3396,7 +3647,7 @@ mod account_profile_storage_tests {
             Ok(())
         }
 
-        fn store_save(&self, file: &str) -> Result<(), String> {
+        fn store_save(&self, file: &str) -> Result<(), crate::runtime::StoreError> {
             if self
                 .save_failures
                 .lock()
@@ -3404,7 +3655,10 @@ mod account_profile_storage_tests {
                 .pop_front()
                 .unwrap_or(false)
             {
-                return Err("injected settings save failure".to_string());
+                return Err(crate::runtime::StoreError::new(
+                    crate::runtime::StoreErrorKind::Io,
+                    "injected settings save failure",
+                ));
             }
             let current = self.values.lock().unwrap();
             let mut persisted = self.persisted.lock().unwrap();
@@ -3485,7 +3739,7 @@ mod account_profile_storage_tests {
         .unwrap();
         let repo_id = crate::workspace::repos::repo_id(&root, &source);
         let group_id = "relocation-group".to_string();
-        let mut settings = load_settings(&app);
+        let mut settings = load_settings(&app).unwrap();
         settings.managed_repo_ids.push(repo_id.clone());
         settings.repo_groups.push(WorkspaceRepoGroup {
             id: group_id.clone(),
@@ -3512,7 +3766,7 @@ mod account_profile_storage_tests {
         group_id: &str,
         path_mode: WorkspaceRepoPathMode,
     ) -> (RepoRelocationIntent, PathBuf, String) {
-        let settings = load_settings(app);
+        let settings = load_settings(app).unwrap();
         let group = settings
             .repo_groups
             .iter()
@@ -3564,7 +3818,7 @@ mod account_profile_storage_tests {
         group_id: &str,
         path_mode: WorkspaceRepoPathMode,
     ) {
-        let mut settings = load_settings(app);
+        let mut settings = load_settings(app).unwrap();
         move_repo_to_group(&mut settings, old_repo_id, Some(group_id)).unwrap();
         if path_mode == WorkspaceRepoPathMode::Move {
             remap_repo_id_in_settings(
@@ -3637,7 +3891,7 @@ mod account_profile_storage_tests {
             "old"
         );
         assert!(!destination.exists());
-        let settings = load_settings(&restarted);
+        let settings = load_settings(&restarted).unwrap();
         assert!(settings.managed_repo_ids.contains(&repo_id));
         assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
         fs::remove_dir_all(root).unwrap();
@@ -3680,7 +3934,7 @@ mod account_profile_storage_tests {
                 )
                 .unwrap();
             }
-            crate::workspace::watcher::clear_repo_watchers();
+            crate::workspace::watcher::clear_repo_watchers(&restarted);
             fs::remove_dir_all(root).unwrap();
         }
     }
@@ -3798,7 +4052,7 @@ mod account_profile_storage_tests {
             );
             write_repo_relocation_intent(&app, &intent).unwrap();
             if conflict_ids {
-                let mut settings = load_settings(&app);
+                let mut settings = load_settings(&app).unwrap();
                 settings.managed_repo_ids.push(new_repo_id);
                 save_settings(&app, &settings).unwrap();
             } else {
@@ -3826,7 +4080,7 @@ mod account_profile_storage_tests {
         let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("data-integrity");
         let destination = root.join("group").join("repo");
         let new_repo_id = crate::workspace::repos::repo_id(&root, &destination);
-        let mut settings = load_settings(&app);
+        let mut settings = load_settings(&app).unwrap();
         settings.hidden_repo_ids.push(repo_id.clone());
         settings.system_git_repo_ids.push(repo_id.clone());
         settings.favorite_repo_ids.push(repo_id.clone());
@@ -3888,7 +4142,7 @@ mod account_profile_storage_tests {
         .unwrap();
 
         assert_eq!(result.repo.id, new_repo_id);
-        let settings = load_settings(&app);
+        let settings = load_settings(&app).unwrap();
         assert!(!settings_reference_repo_id(&settings, &repo_id));
         assert!(settings_reference_repo_id(&settings, &new_repo_id));
         for values in [
@@ -3927,8 +4181,8 @@ mod account_profile_storage_tests {
             canonical_repo_path(Path::new(&settings.repo_bindings[&new_repo_id].local_path)),
             canonical_repo_path(&destination)
         );
-        assert!(load_startup_cache(&app).is_none());
-        crate::workspace::watcher::clear_repo_watchers();
+        assert!(load_startup_cache(&app).unwrap().is_none());
+        crate::workspace::watcher::clear_repo_watchers(&app);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3939,7 +4193,7 @@ mod account_profile_storage_tests {
             relocation_fixture("new-id-conflict");
         let destination = root.join("group").join("repo");
         let new_repo_id = crate::workspace::repos::repo_id(&root, &destination);
-        let mut settings = load_settings(&app);
+        let mut settings = load_settings(&app).unwrap();
         settings.favorite_repo_ids.push(new_repo_id.clone());
         save_settings(&app, &settings).unwrap();
 
@@ -3963,7 +4217,7 @@ mod account_profile_storage_tests {
         let (runtime, app, root, source, repo_id, group_id) =
             relocation_fixture("cleanup-save-failure");
         let destination = root.join("group").join("repo");
-        runtime.fail_save_after(4);
+        runtime.fail_save_after(5);
 
         let error = workspace_move_repo_to_group_guarded(
             app,
@@ -3984,7 +4238,7 @@ mod account_profile_storage_tests {
         assert!(!source.exists());
         assert!(destination.exists());
         assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
-        crate::workspace::watcher::clear_repo_watchers();
+        crate::workspace::watcher::clear_repo_watchers(&restarted);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3993,7 +4247,7 @@ mod account_profile_storage_tests {
         let _test_guard = relocation_test_guard();
         let (runtime, app, root, source, repo_id, group_id) =
             relocation_fixture("retained-journal");
-        runtime.fail_saves_after(&[3, 4]);
+        runtime.fail_saves_after(&[3, 5]);
 
         let error = workspace_move_repo_to_group_guarded(
             app,
@@ -4009,10 +4263,11 @@ mod account_profile_storage_tests {
         let restarted = restarted_app(&runtime);
         workspace_get_bootstrap(restarted.clone()).unwrap();
         assert!(load_settings(&restarted)
+            .unwrap()
             .managed_repo_ids
             .contains(&repo_id));
         assert!(read_repo_relocation_intent(&restarted).unwrap().is_none());
-        crate::workspace::watcher::clear_repo_watchers();
+        crate::workspace::watcher::clear_repo_watchers(&restarted);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4022,8 +4277,8 @@ mod account_profile_storage_tests {
         let (runtime, app, root, source, repo_id, group_id) =
             relocation_fixture("move-save-failure");
         fs::write(source.join("marker.txt"), "old").unwrap();
-        crate::workspace::watcher::clear_repo_watchers();
-        crate::workspace::watcher::sync_repo_watchers(&app);
+        crate::workspace::watcher::clear_repo_watchers(&app);
+        crate::workspace::watcher::sync_repo_watchers(&app).unwrap();
         runtime.fail_save_after(3);
 
         let error = workspace_move_repo_to_group_guarded(
@@ -4043,7 +4298,7 @@ mod account_profile_storage_tests {
         );
         assert!(!destination.exists());
         assert!(!root.join("group").exists());
-        let restored = load_settings(&app);
+        let restored = load_settings(&app).unwrap();
         assert!(restored.managed_repo_ids.contains(&repo_id));
         assert!(restored
             .repo_groups
@@ -4052,11 +4307,11 @@ mod account_profile_storage_tests {
             .unwrap()
             .repo_ids
             .is_empty());
-        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests();
+        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests(&app);
         assert!(snapshot
             .iter()
             .any(|(id, path)| id == &repo_id && path == &canonical_repo_path(&source)));
-        crate::workspace::watcher::clear_repo_watchers();
+        crate::workspace::watcher::clear_repo_watchers(&app);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4070,7 +4325,7 @@ mod account_profile_storage_tests {
 
         let error = workspace_move_repo_to_group_guarded(
             app.clone(),
-            repo_id,
+            repo_id.clone(),
             Some(group_id),
             Some(WorkspaceRepoPathMode::Link),
         )
@@ -4091,30 +4346,24 @@ mod account_profile_storage_tests {
     fn active_launch_rejects_move_before_filesystem_changes() {
         let _test_guard = relocation_test_guard();
         let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("active-launch");
-        let launch_key = format!("relocation-{repo_id}");
-        crate::workspace::launch::launch_runtime()
-            .lock()
-            .unwrap()
-            .insert(
-                launch_key.clone(),
-                crate::workspace::launch::LaunchEntry {
-                    status: ProjectLaunchStatus {
-                        workspace_id: None,
-                        context_revision: current_context_revision(),
-                        repo_id: repo_id.clone(),
-                        state: "running".to_string(),
-                        pid: None,
-                        command: None,
-                        started_at: None,
-                        exit_code: None,
-                        error: None,
-                    },
-                },
-            );
+        crate::workspace::launch::set_launch_status_for_tests(
+            &app,
+            ProjectLaunchStatus {
+                workspace_id: None,
+                context_revision: current_context_revision(&app),
+                repo_id: repo_id.clone(),
+                state: ProjectLaunchState::Running,
+                pid: None,
+                command: None,
+                started_at: None,
+                exit_code: None,
+                error: None,
+            },
+        );
 
         let error = workspace_move_repo_to_group_guarded(
-            app,
-            repo_id,
+            app.clone(),
+            repo_id.clone(),
             Some(group_id),
             Some(WorkspaceRepoPathMode::Move),
         )
@@ -4123,10 +4372,7 @@ mod account_profile_storage_tests {
         assert!(error.contains("启动任务"));
         assert!(source.exists());
         assert!(!root.join("group").exists());
-        crate::workspace::launch::launch_runtime()
-            .lock()
-            .unwrap()
-            .remove(&launch_key);
+        crate::workspace::launch::remove_launch_status_for_tests(&app, &repo_id);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4134,7 +4380,7 @@ mod account_profile_storage_tests {
     fn move_success_rebinds_watcher_to_new_repo_id_and_path() {
         let _test_guard = relocation_test_guard();
         let (_runtime, app, root, source, repo_id, group_id) = relocation_fixture("watcher-rebind");
-        let mut cache = startup_cache_shell(&load_settings(&app));
+        let mut cache = startup_cache_shell(&load_settings(&app).unwrap());
         cache.repos_by_id.insert(
             repo_id.clone(),
             CachedRepoSummary {
@@ -4144,11 +4390,13 @@ mod account_profile_storage_tests {
             },
         );
         save_startup_cache(&app, &cache).unwrap();
-        crate::workspace::watcher::clear_repo_watchers();
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        assert!(crate::workspace::watcher::repo_watch_snapshot_for_tests()
-            .iter()
-            .any(|(id, path)| id == &repo_id && path == &canonical_repo_path(&source)));
+        crate::workspace::watcher::clear_repo_watchers(&app);
+        crate::workspace::watcher::sync_repo_watchers(&app).unwrap();
+        assert!(
+            crate::workspace::watcher::repo_watch_snapshot_for_tests(&app)
+                .iter()
+                .any(|(id, path)| id == &repo_id && path == &canonical_repo_path(&source))
+        );
 
         let result = workspace_move_repo_to_group_guarded(
             app.clone(),
@@ -4159,15 +4407,15 @@ mod account_profile_storage_tests {
         .unwrap();
 
         let destination = canonical_repo_path(&root.join("group").join("repo"));
-        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests();
+        let snapshot = crate::workspace::watcher::repo_watch_snapshot_for_tests(&app);
         assert!(snapshot
             .iter()
             .any(|(id, path)| id == &result.repo.id && path == &destination));
         assert!(!snapshot
             .iter()
             .any(|(id, path)| id == &repo_id || path == &canonical_repo_path(&source)));
-        assert!(load_startup_cache(&app).is_none());
-        crate::workspace::watcher::clear_repo_watchers();
+        assert!(load_startup_cache(&app).unwrap().is_none());
+        crate::workspace::watcher::clear_repo_watchers(&app);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4188,7 +4436,7 @@ mod account_profile_storage_tests {
         runtime.seed(STORE_FILE, SETTINGS_KEY, legacy_value);
         let app = WorkspaceContext::new(runtime.clone());
 
-        let alice = load_settings(&app);
+        let alice = load_settings(&app).unwrap();
         assert_eq!(alice.workspace_root.as_deref(), Some("/legacy-root"));
         let root_id = root_id_for_path(Path::new("/legacy-root"));
         assert_eq!(
@@ -4236,7 +4484,7 @@ mod account_profile_storage_tests {
         runtime.seed(STORE_FILE, SETTINGS_KEY, legacy_value);
         let app = WorkspaceContext::new(runtime.clone());
 
-        let migrated = load_settings(&app);
+        let migrated = load_settings(&app).unwrap();
 
         assert_eq!(migrated.workspace_root.as_deref(), Some("/anonymous-root"));
         let root_id = root_id_for_path(Path::new("/anonymous-root"));
@@ -4272,10 +4520,10 @@ mod account_profile_storage_tests {
             }),
         );
         let app = WorkspaceContext::new(runtime.clone());
-        let first = load_settings(&app);
+        let first = load_settings(&app).unwrap();
         let workspace_id = first.active_workspace_id.clone().unwrap();
         let repo_id = first.hidden_repo_ids[0].clone();
-        let second = load_settings(&app);
+        let second = load_settings(&app).unwrap();
         assert_eq!(
             second.active_workspace_id.as_deref(),
             Some(workspace_id.as_str())
@@ -4310,7 +4558,7 @@ mod account_profile_storage_tests {
         );
         let app = WorkspaceContext::new(runtime);
 
-        let (document, migrated) = read_settings_document(&app);
+        let (document, migrated) = read_settings_document(&app).unwrap();
         let workspace = &document.anonymous.workspaces[0];
 
         assert!(!migrated);
@@ -4344,6 +4592,7 @@ mod account_profile_storage_tests {
         .active_workspace_id
         .unwrap();
         assert!(load_settings(&app)
+            .unwrap()
             .active_workspace
             .unwrap()
             .recent_context
@@ -4367,6 +4616,7 @@ mod account_profile_storage_tests {
         .active_workspace_id
         .unwrap();
         assert!(load_settings(&app)
+            .unwrap()
             .active_workspace
             .unwrap()
             .recent_context
@@ -4389,7 +4639,11 @@ mod account_profile_storage_tests {
         )
         .unwrap();
         assert_eq!(
-            load_settings(&app).active_workspace.unwrap().recent_context,
+            load_settings(&app)
+                .unwrap()
+                .active_workspace
+                .unwrap()
+                .recent_context,
             Some(first_context)
         );
         assert_eq!(
@@ -4403,6 +4657,7 @@ mod account_profile_storage_tests {
         );
         workspace_update_recent_context(app.clone(), second_id.clone(), None).unwrap();
         assert!(load_settings(&app)
+            .unwrap()
             .active_workspace
             .unwrap()
             .recent_context
@@ -4494,7 +4749,7 @@ mod account_profile_storage_tests {
         let settings = workspace_update_account_preferences(app.clone(), preferences).unwrap();
         assert!(settings.workspace_root.is_none());
         assert_eq!(
-            load_settings(&app).account_preferences,
+            load_settings(&app).unwrap().account_preferences,
             settings.account_preferences
         );
     }
@@ -4524,8 +4779,10 @@ mod account_profile_storage_tests {
         )
         .unwrap_err()
         .contains("不能相同或互相包含"));
-        let mut preferences = WorkspaceViewPreferences::default();
-        preferences.sidebar_repository_sort = "name".to_string();
+        let preferences = WorkspaceViewPreferences {
+            sidebar_repository_sort: "name".to_string(),
+            ..WorkspaceViewPreferences::default()
+        };
         workspace_update_view_preferences(app.clone(), preferences).unwrap();
 
         let second_bootstrap = workspace_create(
@@ -4573,7 +4830,7 @@ mod account_profile_storage_tests {
         .settings
         .active_workspace_id
         .unwrap();
-        let first_settings = load_settings(&app);
+        let first_settings = load_settings(&app).unwrap();
         let first_cache = startup_cache_shell(&first_settings);
         save_startup_cache(&app, &first_cache).unwrap();
         let second_id = workspace_create(
@@ -4585,11 +4842,11 @@ mod account_profile_storage_tests {
         .settings
         .active_workspace_id
         .unwrap();
-        assert!(load_startup_cache(&app).is_none());
+        assert!(load_startup_cache(&app).unwrap().is_none());
         workspace_switch(app.clone(), first_id).unwrap();
-        assert!(load_startup_cache(&app).is_some());
+        assert!(load_startup_cache(&app).unwrap().is_some());
         workspace_switch(app.clone(), second_id).unwrap();
-        assert!(load_startup_cache(&app).is_none());
+        assert!(load_startup_cache(&app).unwrap().is_none());
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -4636,35 +4893,27 @@ mod account_profile_storage_tests {
             .contains("写入任务"));
         crate::workspace::tasks::finish_workspace_task(&app, &task.id, "success", None);
 
-        let launch_key = format!("guard-{first_id}");
-        crate::workspace::launch::launch_runtime()
-            .lock()
-            .unwrap()
-            .insert(
-                launch_key.clone(),
-                crate::workspace::launch::LaunchEntry {
-                    status: ProjectLaunchStatus {
-                        workspace_id: Some(first_id.clone()),
-                        context_revision: current_context_revision(),
-                        repo_id: format!("local:{root_id}/repo"),
-                        state: "running".to_string(),
-                        pid: None,
-                        command: None,
-                        started_at: None,
-                        exit_code: None,
-                        error: None,
-                    },
-                },
-            );
+        let launch_repo_id = format!("local:{root_id}/repo");
+        crate::workspace::launch::set_launch_status_for_tests(
+            &app,
+            ProjectLaunchStatus {
+                workspace_id: Some(first_id.clone()),
+                context_revision: current_context_revision(&app),
+                repo_id: launch_repo_id.clone(),
+                state: ProjectLaunchState::Running,
+                pid: None,
+                command: None,
+                started_at: None,
+                exit_code: None,
+                error: None,
+            },
+        );
         assert!(
             workspace_remove_root(app.clone(), first_id.clone(), root_id.clone())
                 .unwrap_err()
                 .contains("启动任务")
         );
-        crate::workspace::launch::launch_runtime()
-            .lock()
-            .unwrap()
-            .remove(&launch_key);
+        crate::workspace::launch::remove_launch_status_for_tests(&app, &launch_repo_id);
         workspace_remove_root(app.clone(), first_id, root_id).unwrap();
         fs::remove_dir_all(base).unwrap();
     }
@@ -4711,5 +4960,80 @@ mod account_profile_storage_tests {
         assert!(visits
             .windows(2)
             .all(|pair| pair[0].opened_at >= pair[1].opened_at));
+    }
+
+    #[test]
+    fn corrupt_settings_are_not_replaced_by_defaults() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime.clone());
+        let corrupt = serde_json::json!({
+            "version": SETTINGS_VERSION,
+            "binding": "invalid"
+        });
+        runtime.seed(STORE_FILE, SETTINGS_KEY, corrupt.clone());
+
+        let read_error = workspace_get_settings(app.clone()).unwrap_err();
+        let error = save_settings(&app, &WorkspaceSettings::default()).unwrap_err();
+
+        assert!(read_error.contains("配置内容损坏"));
+        assert!(error.contains("配置内容损坏"));
+        assert_eq!(runtime.value(STORE_FILE, SETTINGS_KEY), Some(corrupt));
+    }
+
+    #[test]
+    fn missing_settings_are_the_only_read_failure_that_uses_defaults() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime.clone());
+
+        let settings = load_settings(&app).unwrap();
+        assert!(settings.active_workspace_id.is_none());
+        assert!(settings.github_binding.is_none());
+        assert!(settings.workspace_root.is_none());
+        assert!(runtime.value(STORE_FILE, SETTINGS_KEY).is_none());
+    }
+
+    #[test]
+    fn permission_and_io_settings_failures_are_propagated() {
+        for (kind, expected_code) in [
+            (StoreErrorKind::Permission, "workspace_store_permission"),
+            (StoreErrorKind::Io, "workspace_store_io"),
+        ] {
+            let runtime = Arc::new(MemoryRuntime::default());
+            runtime.fail_reads_with(kind);
+            let app = WorkspaceContext::new(runtime);
+
+            let error = load_settings(&app).unwrap_err();
+            assert!(
+                error.starts_with(expected_code),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn migration_write_failure_restores_formal_value_and_cleans_staging() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let legacy = serde_json::json!({
+            "workspaceRoot": "/legacy-root",
+            "hiddenRepoIds": ["owner/repo"]
+        });
+        runtime.seed(STORE_FILE, SETTINGS_KEY, legacy.clone());
+        runtime.fail_save_after(1);
+        let app = WorkspaceContext::new(runtime.clone());
+
+        let error = load_settings(&app).unwrap_err();
+
+        assert!(error.starts_with("workspace_store_write_failed"));
+        assert_eq!(runtime.value(STORE_FILE, SETTINGS_KEY), Some(legacy));
+        assert!(runtime.value(STORE_FILE, SETTINGS_STAGING_KEY).is_none());
+        let restarted = restarted_app(&runtime);
+        assert_eq!(
+            runtime.restarted().value(STORE_FILE, SETTINGS_KEY),
+            runtime.value(STORE_FILE, SETTINGS_KEY)
+        );
+        assert_eq!(
+            load_settings(&restarted).unwrap().workspace_root.as_deref(),
+            Some("/legacy-root")
+        );
     }
 }

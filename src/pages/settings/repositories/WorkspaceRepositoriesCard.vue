@@ -6,7 +6,12 @@ import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoad
 import { useWorkspace } from "../../../composables/useWorkspace";
 import { useWorkspaceRecentContext } from "../../../composables/useWorkspaceRecentContext";
 import type { HiddenRepo, WorkspaceRoot } from "../../../services/workspace";
-import { Dropdown, SettingsRow, UiButton, UiCard, UiDialog } from "../../../ui";
+import {
+  errorMessage,
+  isWorkspaceCommandCancelled,
+} from "../../../services/workspace/errors";
+import { Dropdown } from "@lilia/ui/search";
+import { SettingsRow, UiButton, UiCard, UiDialog } from "@lilia/ui";
 import { repoRoute } from "../../../utils/repoRoutes";
 
 const workspace = useWorkspace();
@@ -55,7 +60,7 @@ const selectedWorkspaceId = computed({
 });
 
 function cleanError(nextError: unknown) {
-  return String(nextError).replace(/^Error:\s*/, "");
+  return errorMessage(nextError);
 }
 
 function workspaceNameFromPath(path: string) {
@@ -231,8 +236,7 @@ async function relocateLocalRepoLocation() {
       await router.push(repoRoute(result.repo.id));
     }
   } catch (nextError) {
-    const message = cleanError(nextError);
-    if (!message.includes("已取消")) error.value = message;
+    if (!isWorkspaceCommandCancelled(nextError)) error.value = cleanError(nextError);
   } finally {
     relocatingRepo.value = false;
   }

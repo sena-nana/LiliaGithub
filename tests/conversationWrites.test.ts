@@ -1,20 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { ref } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import RepoIssueConversation from "../src/components/repo/RepoIssueConversation.vue";
 import type { GitHubDiscussionTimelineItem } from "../src/services/workspace/types";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
-const api = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn(), react: vi.fn() }));
-vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => ({ githubBinding: ref({ login: "viewer" }) }),
-}));
-vi.mock("../src/services/workspace/client", () => ({
-  createGitHubIssueComment: api.create,
-  updateGitHubIssueComment: api.update,
-  deleteGitHubIssueComment: api.remove,
-  addGitHubIssueCommentReaction: api.react,
-  openUrl: vi.fn(),
-}));
+const api = { create: vi.fn(), update: vi.fn(), remove: vi.fn(), react: vi.fn() };
 
 const baseItem: GitHubDiscussionTimelineItem = {
   id: "IC_1", databaseId: 1, kind: "comment", actor: "viewer", body: "existing",
@@ -31,10 +24,20 @@ describe("Issue 与 Pull Request 评论写入状态", () => {
   it("pending 时阻止重复提交，失败保留草稿，成功局部追加并清空草稿", async () => {
     api.create.mockReset();
     api.create.mockRejectedValueOnce(new Error("network unavailable"));
+    const workspace = createWorkspaceStoreFixture({
+      createGitHubIssueComment: api.create,
+      updateGitHubIssueComment: api.update,
+      deleteGitHubIssueComment: api.remove,
+      addGitHubIssueCommentReaction: api.react,
+    });
+    workspace.stateFeature.state.bindingStatus = {
+      state: "bound",
+      binding: { login: "viewer", avatarUrl: null, scopes: ["repo"], boundAt: "2026-07-15T00:00:00Z" },
+    };
     const view = render(RepoIssueConversation, { props: {
       repoFullName: "acme/repo", issueNumber: 26, items: [baseItem], loading: false, error: null,
       linkBaseUrl: "https://github.com/acme/repo", emptyText: "empty",
-    } });
+    }, global: { provide: provideWorkspaceStoreFixture(workspace) } });
     const editor = screen.getByPlaceholderText("发表评论") as HTMLTextAreaElement;
     await fireEvent.update(editor, "draft survives");
     await fireEvent.click(screen.getByRole("button", { name: "发表评论" }));

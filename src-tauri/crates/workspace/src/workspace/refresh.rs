@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{
-    DispatchLane, ExecutionClass, OrderingRequirement, ResourceAccessMode, ResourceRequirement,
-    TaskHandle, TaskSpec,
-};
-use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
-use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler, repo_common_dir_by_id};
+use crate::task_runtime::{ExecutionClass, TaskHandle, TaskSpec};
+use crate::workspace::repo_guard::{with_repo_guard, RepoAccess};
+use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler};
 use crate::workspace::settings::{
     load_settings, load_startup_cache, repo_path_by_id, workspace_context_identity,
     write_startup_repo_summary, write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
-use lilia_github_contracts::workspace::{RepoRefreshRequest, RepoRefreshedEvent};
+use lilia_github_contracts::workspace::{
+    RepoRefreshDetailScope, RepoRefreshMode, RepoRefreshPriority, RepoRefreshRequest,
+    RepoRefreshTrigger, RepoRefreshedEvent,
+};
 use serde::{Deserialize, Serialize};
 
 const REPO_REFRESHED_EVENT: &str = "workspace://repo-refreshed";
@@ -61,13 +61,30 @@ struct SchedulerState {
 }
 
 #[derive(Default)]
-struct RefreshScheduler {
+pub(crate) struct RefreshRuntimeState {
     state: Mutex<SchedulerState>,
 }
 
-fn scheduler() -> &'static RefreshScheduler {
-    static SCHEDULER: OnceLock<RefreshScheduler> = OnceLock::new();
-    SCHEDULER.get_or_init(RefreshScheduler::default)
+impl RefreshRuntimeState {
+    fn reset(&self, message: &str) {
+        let cancelled = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.generation = state.generation.wrapping_add(1);
+            state.active_repo = None;
+            state.local_paused = false;
+            state.remote_backoff.clear();
+            state.entries.drain().map(|(_, entry)| entry).collect()
+        };
+        cancel_entries(cancelled, message);
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.reset("应用已退出");
+    }
+}
+
+fn scheduler(app: &AppHandle) -> &RefreshRuntimeState {
+    app.refresh_runtime()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,8 +94,13 @@ struct RefreshPayload {
     run_id: String,
 }
 
-fn execute_runtime_task(lane: RefreshLane, payload: RefreshPayload) -> Result<(), String> {
-    let Some((app, request, logical_task_id, include_detail)) = begin_run(lane, &payload) else {
+fn execute_runtime_task(
+    app: AppHandle,
+    lane: RefreshLane,
+    payload: RefreshPayload,
+) -> Result<(), String> {
+    let Some((app, request, logical_task_id, include_detail)) = begin_run(&app, lane, &payload)
+    else {
         return Ok(());
     };
 
@@ -107,10 +129,11 @@ fn execute_runtime_task(lane: RefreshLane, payload: RefreshPayload) -> Result<()
 }
 
 fn begin_run(
+    app: &AppHandle,
     lane: RefreshLane,
     payload: &RefreshPayload,
 ) -> Option<(AppHandle, RepoRefreshRequest, String, bool)> {
-    let mut state = scheduler()
+    let mut state = scheduler(app)
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -123,10 +146,12 @@ fn begin_run(
         return None;
     }
     entry.state = EntryState::Running;
-    let include_detail = match entry.request.detail_scope.as_str() {
-        "detail" => true,
-        "summary" => false,
-        _ => active_repo.as_deref() == Some(entry.request.repo_id.as_str()),
+    let include_detail = match entry.request.detail_scope {
+        RepoRefreshDetailScope::Detail => true,
+        RepoRefreshDetailScope::Summary => false,
+        RepoRefreshDetailScope::Auto => {
+            active_repo.as_deref() == Some(entry.request.repo_id.as_str())
+        }
     };
     Some((
         entry.app.clone(),
@@ -150,7 +175,7 @@ fn with_common_dir_guard<T>(
         RefreshLane::Local => RepoAccess::Read,
         RefreshLane::Remote => RepoAccess::Write,
     };
-    with_repo_guard(key, access, run)
+    with_repo_guard(app, key, access, run)
 }
 
 type RefreshResult = Result<
@@ -171,7 +196,7 @@ fn commit_refresh_result(
         Option<i64>,
     ),
 ) -> Result<(), String> {
-    let state = scheduler()
+    let state = scheduler(app)
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -183,7 +208,7 @@ fn commit_refresh_result(
     if !owns {
         return Err("工作区已切换，已丢弃刷新结果".to_string());
     }
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     if let Some(checked_at) = refresh.2 {
         write_startup_repo_summary_after_fetch(app, &settings, &refresh.0, checked_at)
     } else {
@@ -206,14 +231,14 @@ fn finish_run(
                 workspace_id: workspace_id.clone(),
                 context_revision,
                 repo_id: request.repo_id.clone(),
-                mode: request.mode.clone(),
+                mode: request.mode,
                 summary: summary.clone(),
                 detail_patch: detail_patch.clone(),
                 remote_checked_at: *remote_checked_at,
             },
         );
     let rerun = {
-        let mut state = scheduler()
+        let mut state = scheduler(&app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -279,7 +304,7 @@ fn schedule_rerun(
     task_id: &str,
 ) -> Result<(), String> {
     let (generation, run_id) = {
-        let mut state = scheduler()
+        let mut state = scheduler(&app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -289,7 +314,7 @@ fn schedule_rerun(
         state.entries.insert(
             key.to_string(),
             ScheduledRefresh {
-                app,
+                app: app.clone(),
                 request,
                 task_id: task_id.to_string(),
                 state: EntryState::Pending,
@@ -300,17 +325,22 @@ fn schedule_rerun(
         );
         (generation, run_id)
     };
-    if let Err(error) = submit_runtime_task(key, generation, run_id.clone()) {
-        if discard_failed_submission(key, generation, &run_id) {
+    if let Err(error) = submit_runtime_task(&app, key, generation, run_id.clone()) {
+        if discard_failed_submission(&app, key, generation, &run_id) {
             return Err(error);
         }
     }
     Ok(())
 }
 
-fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(), String> {
-    let (app, task_spec, repo_id, lane, payload) = {
-        let state = scheduler()
+fn submit_runtime_task(
+    scheduler_app: &AppHandle,
+    key: &str,
+    generation: u64,
+    run_id: String,
+) -> Result<(), String> {
+    let (app, task_spec, lane, payload) = {
+        let state = scheduler(scheduler_app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -329,27 +359,20 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
         };
         let task_spec = TaskSpec::new(
             run_id.clone(),
-            refresh_dispatch_lane(&entry.request.priority, &entry.request.trigger),
-            refresh_priority(&entry.request.priority),
+            refresh_priority(entry.request.priority),
             execution_class,
-        )
-        .correlation_id(entry.task_id.clone());
+        );
         (
             entry.app.clone(),
             task_spec,
-            entry.request.repo_id.clone(),
             request_lane(&entry.request),
             payload,
         )
     };
-    let common_dir = repo_common_dir_by_id(&app, &repo_id)?;
-    let (resource_requirements, ordering) = refresh_resource_requirements(lane, common_dir);
-    let task_spec = task_spec
-        .resources(resource_requirements)
-        .ordering(ordering);
-    let job = Box::new(move |_| execute_runtime_task(lane, payload));
+    let task_app = app.clone();
+    let job = Box::new(move |_| execute_runtime_task(task_app, lane, payload));
     let handle = app.submit_task(task_spec, job)?;
-    let mut state = scheduler()
+    let mut state = scheduler(scheduler_app)
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -362,28 +385,8 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
     Ok(())
 }
 
-fn refresh_resource_requirements(
-    lane: RefreshLane,
-    common_dir: PathBuf,
-) -> (Vec<ResourceRequirement>, OrderingRequirement) {
-    let resource_id = repo_resource_id(common_dir);
-    (
-        vec![ResourceRequirement {
-            ref_id: resource_id.clone(),
-            mode: match lane {
-                RefreshLane::Local => ResourceAccessMode::Read,
-                RefreshLane::Remote => ResourceAccessMode::ExclusiveWrite,
-            },
-            expected_version: None,
-        }],
-        OrderingRequirement::SameResourceOrder {
-            ref_id: resource_id,
-        },
-    )
-}
-
-fn discard_failed_submission(key: &str, generation: u64, run_id: &str) -> bool {
-    let mut state = scheduler()
+fn discard_failed_submission(app: &AppHandle, key: &str, generation: u64, run_id: &str) -> bool {
+    let mut state = scheduler(app)
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -398,27 +401,19 @@ fn discard_failed_submission(key: &str, generation: u64, run_id: &str) -> bool {
     owns
 }
 
-fn refresh_priority(priority: &str) -> i64 {
+fn refresh_priority(priority: RepoRefreshPriority) -> i64 {
     match priority {
-        "high" => 100,
-        "normal" => 0,
-        _ => -100,
+        RepoRefreshPriority::High => 100,
+        RepoRefreshPriority::Normal => 0,
+        RepoRefreshPriority::Low => -100,
     }
 }
 
-fn refresh_dispatch_lane(priority: &str, trigger: &str) -> DispatchLane {
-    match (priority, trigger) {
-        ("high", _) => DispatchLane::Interactive,
-        ("low", _) | (_, "autoSync") => DispatchLane::Background,
-        _ => DispatchLane::Normal,
-    }
-}
-
-fn priority_rank(priority: &str) -> usize {
+fn priority_rank(priority: RepoRefreshPriority) -> usize {
     match priority {
-        "high" => 0,
-        "normal" => 1,
-        _ => 2,
+        RepoRefreshPriority::High => 0,
+        RepoRefreshPriority::Normal => 1,
+        RepoRefreshPriority::Low => 2,
     }
 }
 
@@ -428,10 +423,9 @@ fn next_sequence(state: &mut SchedulerState) -> u64 {
 }
 
 fn request_lane(request: &RepoRefreshRequest) -> RefreshLane {
-    if request.mode == "remote" {
-        RefreshLane::Remote
-    } else {
-        RefreshLane::Local
+    match request.mode {
+        RepoRefreshMode::Local => RefreshLane::Local,
+        RepoRefreshMode::Remote => RefreshLane::Remote,
     }
 }
 
@@ -458,34 +452,21 @@ fn normalize_request(mut request: RepoRefreshRequest) -> Result<RepoRefreshReque
     if request.repo_id.is_empty() {
         return Err("仓库 ID 不能为空".to_string());
     }
-    if !matches!(request.mode.as_str(), "local" | "remote") {
-        return Err("刷新模式必须是 local 或 remote".to_string());
-    }
-    if !matches!(request.priority.as_str(), "high" | "normal" | "low") {
-        return Err("刷新优先级无效".to_string());
-    }
-    if !matches!(request.detail_scope.as_str(), "auto" | "summary" | "detail") {
-        return Err("刷新详情范围无效".to_string());
-    }
-    request.trigger = request.trigger.trim().to_string();
-    if request.trigger.is_empty() {
-        return Err("刷新触发原因不能为空".to_string());
-    }
     Ok(request)
 }
 
 fn merge_request(target: &mut RepoRefreshRequest, incoming: &RepoRefreshRequest) {
-    if priority_rank(&incoming.priority) < priority_rank(&target.priority) {
-        target.priority = incoming.priority.clone();
+    if priority_rank(incoming.priority) < priority_rank(target.priority) {
+        target.priority = incoming.priority;
     }
     target.force |= incoming.force;
     target.include_commits |= incoming.include_commits;
     target.include_branches |= incoming.include_branches;
-    if detail_scope_rank(&incoming.detail_scope) > detail_scope_rank(&target.detail_scope) {
-        target.detail_scope = incoming.detail_scope.clone();
+    if detail_scope_rank(incoming.detail_scope) > detail_scope_rank(target.detail_scope) {
+        target.detail_scope = incoming.detail_scope;
     }
-    if incoming.force || incoming.trigger == "manual" {
-        target.trigger = incoming.trigger.clone();
+    if incoming.force || incoming.trigger == RepoRefreshTrigger::Manual {
+        target.trigger = incoming.trigger;
     }
 }
 
@@ -524,7 +505,7 @@ fn merge_existing_refresh(
 ) -> Option<ExistingMerge> {
     let promoted = state.entries.get(key).is_some_and(|entry| {
         entry.state == EntryState::Pending
-            && priority_rank(&incoming.priority) < priority_rank(&entry.request.priority)
+            && priority_rank(incoming.priority) < priority_rank(entry.request.priority)
     });
     let sequence = promoted.then(|| next_sequence(state));
     let generation = state.generation;
@@ -559,8 +540,8 @@ fn finish_existing_merge(merged: ExistingMerge) -> Result<String, String> {
             if let Some(handle) = previous_handle {
                 let _ = app.cancel_task(&handle);
             }
-            if let Err(error) = submit_runtime_task(&key, generation, run_id.clone()) {
-                if discard_failed_submission(&key, generation, &run_id) {
+            if let Err(error) = submit_runtime_task(&app, &key, generation, run_id.clone()) {
+                if discard_failed_submission(&app, &key, generation, &run_id) {
                     update_workspace_task_and_emit(
                         &app,
                         &task_id,
@@ -576,29 +557,29 @@ fn finish_existing_merge(merged: ExistingMerge) -> Result<String, String> {
     }
 }
 
-fn detail_scope_rank(scope: &str) -> usize {
+fn detail_scope_rank(scope: RepoRefreshDetailScope) -> usize {
     match scope {
-        "detail" => 2,
-        "auto" => 1,
-        _ => 0,
+        RepoRefreshDetailScope::Detail => 2,
+        RepoRefreshDetailScope::Auto => 1,
+        RepoRefreshDetailScope::Summary => 0,
     }
 }
 
-fn remote_cache_is_fresh(app: &AppHandle, request: &RepoRefreshRequest) -> bool {
+fn remote_cache_is_fresh(app: &AppHandle, request: &RepoRefreshRequest) -> Result<bool, String> {
     let now = now_millis();
-    let ttl = if request.trigger == "activeRepo" {
+    let ttl = if request.trigger == RepoRefreshTrigger::ActiveRepo {
         ACTIVE_REMOTE_CACHE_TTL_MS
     } else {
         REMOTE_CACHE_TTL_MS
     };
-    load_startup_cache(app)
+    Ok(load_startup_cache(app)?
         .and_then(|cache| {
             cache
                 .repos_by_id
                 .get(&request.repo_id)
                 .and_then(|entry| entry.remote_checked_at)
         })
-        .is_some_and(|checked_at| now.saturating_sub(checked_at) < ttl)
+        .is_some_and(|checked_at| now.saturating_sub(checked_at) < ttl))
 }
 
 fn update_remote_backoff(state: &mut SchedulerState, repo_id: &str, success: bool) {
@@ -620,7 +601,7 @@ fn record_skipped_remote_task(
     record_workspace_task_and_emit(
         app,
         "repoRemote",
-        &request.priority,
+        request.priority.as_str(),
         Some(request.repo_id.clone()),
         "success",
         Some(message.to_string()),
@@ -638,7 +619,7 @@ pub fn workspace_enqueue_repo_refresh(
     let key = refresh_key(&request);
     let lane = request_lane(&request);
     let existing = {
-        let mut state = scheduler()
+        let mut state = scheduler(&app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -646,9 +627,10 @@ pub fn workspace_enqueue_repo_refresh(
         if existing.is_none()
             && lane == RefreshLane::Remote
             && !request.force
-            && request.trigger != "autoSync"
+            && request.trigger != RepoRefreshTrigger::AutoSync
         {
-            let manual = request.priority == "high" || request.trigger == "manual";
+            let manual = request.priority == RepoRefreshPriority::High
+                || request.trigger == RepoRefreshTrigger::Manual;
             if !manual && state.active_repo.as_deref() != Some(request.repo_id.as_str()) {
                 drop(state);
                 return Ok(record_skipped_remote_task(
@@ -678,7 +660,7 @@ pub fn workspace_enqueue_repo_refresh(
     if let Some(existing) = existing {
         return finish_existing_merge(existing);
     }
-    if lane == RefreshLane::Remote && !request.force && remote_cache_is_fresh(&app, &request) {
+    if lane == RefreshLane::Remote && !request.force && remote_cache_is_fresh(&app, &request)? {
         return Ok(record_skipped_remote_task(
             &app,
             &request,
@@ -691,7 +673,7 @@ pub fn workspace_enqueue_repo_refresh(
         "repoStatus"
     };
     let (task, generation, run_id) = {
-        let mut state = scheduler()
+        let mut state = scheduler(&app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -702,7 +684,7 @@ pub fn workspace_enqueue_repo_refresh(
         let task = record_workspace_task_and_emit(
             &app,
             kind,
-            &request.priority,
+            request.priority.as_str(),
             Some(request.repo_id.clone()),
             "pending",
             Some("等待后台刷新".to_string()),
@@ -725,8 +707,8 @@ pub fn workspace_enqueue_repo_refresh(
         );
         (task, generation, run_id)
     };
-    if let Err(error) = submit_runtime_task(&key, generation, run_id.clone()) {
-        if discard_failed_submission(&key, generation, &run_id) {
+    if let Err(error) = submit_runtime_task(&app, &key, generation, run_id.clone()) {
+        if discard_failed_submission(&app, &key, generation, &run_id) {
             update_workspace_task_and_emit(&app, &task.id, "error", Some(error.clone()), false);
             return Err(error);
         }
@@ -742,7 +724,7 @@ pub fn workspace_set_active_repo(app: AppHandle, repo_id: Option<String>) -> Res
         repo_path_by_id(&app, repo_id)?;
     }
     let cancelled = {
-        let mut state = scheduler()
+        let mut state = scheduler(&app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -753,7 +735,7 @@ pub fn workspace_set_active_repo(app: AppHandle, repo_id: Option<String>) -> Res
             .filter(|(_, entry)| {
                 entry.state == EntryState::Pending
                     && request_lane(&entry.request) == RefreshLane::Remote
-                    && entry.request.trigger != "autoSync"
+                    && entry.request.trigger != RepoRefreshTrigger::AutoSync
                     && Some(entry.request.repo_id.as_str()) != repo_id.as_deref()
             })
             .map(|(key, _)| key.clone())
@@ -766,8 +748,8 @@ pub fn workspace_set_active_repo(app: AppHandle, repo_id: Option<String>) -> Res
     Ok(())
 }
 
-pub fn workspace_set_refresh_paused(paused: bool) -> Result<(), String> {
-    scheduler()
+pub fn workspace_set_refresh_paused(app: AppHandle, paused: bool) -> Result<(), String> {
+    scheduler(&app)
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -784,13 +766,13 @@ pub(crate) fn enqueue_watcher_repo_refresh(
         app,
         RepoRefreshRequest {
             repo_id,
-            mode: "local".into(),
-            priority: "low".into(),
+            mode: RepoRefreshMode::Local,
+            priority: RepoRefreshPriority::Low,
             force: false,
-            detail_scope: "auto".into(),
+            detail_scope: RepoRefreshDetailScope::Auto,
             include_commits: git_metadata_changed,
             include_branches: git_metadata_changed,
-            trigger: "watch".into(),
+            trigger: RepoRefreshTrigger::Watch,
         },
     )
     .unwrap_or_default()
@@ -805,13 +787,13 @@ pub(crate) fn enqueue_uncertain_repo_refreshes<I: IntoIterator<Item = String>>(
             app.clone(),
             RepoRefreshRequest {
                 repo_id,
-                mode: "local".into(),
-                priority: "low".into(),
+                mode: RepoRefreshMode::Local,
+                priority: RepoRefreshPriority::Low,
                 force: false,
-                detail_scope: "auto".into(),
+                detail_scope: RepoRefreshDetailScope::Auto,
                 include_commits: true,
                 include_branches: true,
-                trigger: "reconcile".into(),
+                trigger: RepoRefreshTrigger::Reconcile,
             },
         );
     }
@@ -824,25 +806,8 @@ pub(crate) fn enqueue_baseline_repo_refreshes<I: IntoIterator<Item = String>>(
     enqueue_uncertain_repo_refreshes(app, repo_ids);
 }
 
-pub(crate) fn reset_refresh_scheduler() {
-    let cancelled = {
-        let mut state = scheduler()
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        state.generation = state.generation.wrapping_add(1);
-        state.active_repo = None;
-        state.local_paused = false;
-        state.remote_backoff.clear();
-        state
-            .entries
-            .drain()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|(_, entry)| entry)
-            .collect()
-    };
-    cancel_entries(cancelled, "工作区已切换");
+pub(crate) fn reset_refresh_scheduler(app: &AppHandle) {
+    scheduler(app).reset("工作区已切换");
 }
 
 fn cancel_entries(entries: Vec<ScheduledRefresh>, message: &str) {
@@ -862,9 +827,9 @@ fn cancel_entries(entries: Vec<ScheduledRefresh>, message: &str) {
     }
 }
 
-pub(super) fn cancel_pending_refresh(task_id: &str) -> bool {
+pub(super) fn cancel_pending_refresh(app: &AppHandle, task_id: &str) -> bool {
     let entry = {
-        let mut state = scheduler()
+        let mut state = scheduler(app)
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -892,13 +857,20 @@ mod tests {
     fn request(repo_id: &str, mode: &str, priority: &str) -> RepoRefreshRequest {
         RepoRefreshRequest {
             repo_id: repo_id.into(),
-            mode: mode.into(),
-            priority: priority.into(),
+            mode: match mode {
+                "remote" => RepoRefreshMode::Remote,
+                _ => RepoRefreshMode::Local,
+            },
+            priority: match priority {
+                "high" => RepoRefreshPriority::High,
+                "normal" => RepoRefreshPriority::Normal,
+                _ => RepoRefreshPriority::Low,
+            },
             force: false,
-            detail_scope: "summary".into(),
+            detail_scope: RepoRefreshDetailScope::Summary,
             include_commits: false,
             include_branches: false,
-            trigger: "watch".into(),
+            trigger: RepoRefreshTrigger::Watch,
         }
     }
 
@@ -926,55 +898,22 @@ mod tests {
             },
             ExecutionClass::Io
         );
-        assert_eq!(refresh_priority("high"), 100);
-        assert_eq!(refresh_priority("normal"), 0);
-        assert_eq!(refresh_priority("low"), -100);
-        assert_eq!(
-            refresh_dispatch_lane("high", "watch"),
-            DispatchLane::Interactive
-        );
-        assert_eq!(
-            refresh_dispatch_lane("low", "autoSync"),
-            DispatchLane::Background
-        );
+        assert_eq!(refresh_priority(RepoRefreshPriority::High), 100);
+        assert_eq!(refresh_priority(RepoRefreshPriority::Normal), 0);
+        assert_eq!(refresh_priority(RepoRefreshPriority::Low), -100);
         assert_eq!(crate::task_runtime::TASK_QUEUE_CAPACITY, 64);
-    }
-
-    #[test]
-    fn remote_refresh_exclusively_orders_the_common_dir_resource() {
-        let common_dir = PathBuf::from("shared-repo");
-        let (local_resources, local_ordering) =
-            refresh_resource_requirements(RefreshLane::Local, common_dir.clone());
-        let (remote_resources, remote_ordering) =
-            refresh_resource_requirements(RefreshLane::Remote, common_dir);
-
-        assert_eq!(local_resources[0].mode, ResourceAccessMode::Read);
-        assert_eq!(remote_resources[0].mode, ResourceAccessMode::ExclusiveWrite);
-        assert_eq!(local_resources[0].ref_id, remote_resources[0].ref_id);
-        assert_eq!(
-            local_ordering,
-            OrderingRequirement::SameResourceOrder {
-                ref_id: local_resources[0].ref_id.clone()
-            }
-        );
-        assert_eq!(
-            remote_ordering,
-            OrderingRequirement::SameResourceOrder {
-                ref_id: remote_resources[0].ref_id.clone()
-            }
-        );
     }
 
     #[test]
     fn coalescing_promotes_priority_and_preserves_expensive_flags() {
         let mut target = request("repo", "local", "low");
         let mut incoming = request("repo", "local", "high");
-        incoming.detail_scope = "detail".into();
+        incoming.detail_scope = RepoRefreshDetailScope::Detail;
         incoming.include_commits = true;
         incoming.include_branches = true;
         merge_request(&mut target, &incoming);
-        assert_eq!(target.priority, "high");
-        assert_eq!(target.detail_scope, "detail");
+        assert_eq!(target.priority, RepoRefreshPriority::High);
+        assert_eq!(target.detail_scope, RepoRefreshDetailScope::Detail);
         assert!(target.include_commits && target.include_branches);
     }
 

@@ -2,6 +2,10 @@ import { render, screen, within } from "@testing-library/vue";
 import { describe, expect, it } from "vitest";
 import RepoDiscussionTimeline from "../src/components/repo/RepoDiscussionTimeline.vue";
 import type { GitHubDiscussionTimelineItem } from "../src/services/workspace/types";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
 function item(overrides: Partial<GitHubDiscussionTimelineItem>): GitHubDiscussionTimelineItem {
   return {
@@ -14,6 +18,7 @@ function item(overrides: Partial<GitHubDiscussionTimelineItem>): GitHubDiscussio
 }
 
 function renderTimeline(items: GitHubDiscussionTimelineItem[]) {
+  const workspace = createWorkspaceStoreFixture();
   return render(RepoDiscussionTimeline, {
     props: {
       items,
@@ -21,6 +26,7 @@ function renderTimeline(items: GitHubDiscussionTimelineItem[]) {
       error: null,
       linkBaseUrl: "https://github.com/sena-nana/remote-repo",
     },
+    global: { provide: provideWorkspaceStoreFixture(workspace) },
   });
 }
 
@@ -81,20 +87,25 @@ describe("RepoDiscussionTimeline", () => {
   });
 
   it("keeps loading, error and empty states", () => {
+    const workspace = createWorkspaceStoreFixture();
+    const global = { provide: provideWorkspaceStoreFixture(workspace) };
     const loadingView = render(RepoDiscussionTimeline, {
       props: { items: [], loading: true, error: null },
+      global,
     });
     expect(screen.getByText("正在读取讨论。")).toBeInTheDocument();
     loadingView.unmount();
 
     const errorView = render(RepoDiscussionTimeline, {
       props: { items: [], loading: false, error: "读取失败" },
+      global,
     });
     expect(screen.getByText("读取失败")).toBeInTheDocument();
     errorView.unmount();
 
     render(RepoDiscussionTimeline, {
       props: { items: [], loading: false, error: null, emptyText: "没有讨论" },
+      global,
     });
     expect(screen.getByText("没有讨论")).toBeInTheDocument();
   });

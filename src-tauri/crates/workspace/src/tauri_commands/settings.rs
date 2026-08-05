@@ -11,7 +11,7 @@ delegate_command!(settings; fn workspace_add_root(app: AppHandle, workspace_id: 
 delegate_command!(settings; fn workspace_remove_root(app: AppHandle, workspace_id: String, root_id: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_set_primary_root(app: AppHandle, workspace_id: String, root_id: String,) -> Result<WorkspaceBootstrap, String>);
 delegate_command!(settings; fn workspace_update_view_preferences(app: AppHandle, preferences: WorkspaceViewPreferences,) -> Result<WorkspaceSettings, String>);
-delegate_command!(settings; fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache>);
+delegate_command!(settings; fn workspace_read_startup_cache(app: AppHandle) -> Result<Option<WorkspaceStartupCache>, String>);
 delegate_command!(settings; fn workspace_clear_startup_cache(app: AppHandle) -> Result<(), String>);
 delegate_command!(settings; fn workspace_write_startup_contributions(app: AppHandle, contributions: WorkspaceStartupContributions,) -> Result<WorkspaceStartupCache, String>);
 delegate_command!(settings; fn workspace_update_account_preferences(app: AppHandle, preferences: AccountPreferences,) -> Result<WorkspaceSettings, String>);
@@ -38,5 +38,5 @@ delegate_command!(settings; fn workspace_set_remote_repo_favorite(app: AppHandle
 delegate_command!(settings; fn workspace_forget_remote_repo(app: AppHandle, full_name: String,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn repo_use_default_token_auth(app: AppHandle, repo_id: String,) -> Result<WorkspaceSettings, String>);
-delegate_command!(settings; fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo>);
+delegate_command!(settings; fn workspace_list_hidden_repos(app: AppHandle) -> Result<Vec<HiddenRepo>, String>);
 delegate_command!(settings; fn workspace_record_recent_local_repo(app: AppHandle, repo_id: String,) -> Result<WorkspaceSettings, String>);

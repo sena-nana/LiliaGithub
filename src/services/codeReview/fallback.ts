@@ -135,13 +135,29 @@ export async function createPullRequestLineCommentFallback(
   return { ...next };
 }
 
-export async function replyPullRequestReviewThreadFallback(
+export function replyPullRequestReviewThreadFallback(
+  repoFullName: string,
+  request: ReplyPullRequestReviewThreadRequest,
+): Promise<PullRequestReviewComment>;
+export function replyPullRequestReviewThreadFallback(
   repoFullName: string,
   pullNumber: number,
   request: ReplyPullRequestReviewThreadRequest,
+): Promise<PullRequestReviewComment>;
+export async function replyPullRequestReviewThreadFallback(
+  repoFullName: string,
+  pullNumberOrRequest: number | ReplyPullRequestReviewThreadRequest,
+  maybeRequest?: ReplyPullRequestReviewThreadRequest,
 ) {
-  const detail = fallbackDetail(repoFullName, pullNumber);
-  const thread = detail.threads.find((item) => item.id === request.threadId);
+  const request = typeof pullNumberOrRequest === "number" ? maybeRequest! : pullNumberOrRequest;
+  const candidateDetails = typeof pullNumberOrRequest === "number"
+    ? [fallbackDetail(repoFullName, pullNumberOrRequest)]
+    : [...details.entries()]
+        .filter(([detailKey]) => detailKey.startsWith(`${repoFullName.toLocaleLowerCase()}#`))
+        .map(([, detail]) => detail);
+  const thread = candidateDetails
+    .flatMap((detail) => detail.threads)
+    .find((item) => item.id === request.threadId);
   if (!thread) throw new Error("Review Thread 不存在，请刷新后重试");
   const next = comment(
     request.body,

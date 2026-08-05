@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { PencilLine } from "@lucide/vue";
 import { computed } from "vue";
-import { openUrl } from "../../services/workspace/client";
+import { useWorkspace } from "../../composables/useWorkspace";
 import type { GitHubDiscussionTimelineItem } from "../../services/workspace/types";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import MarkdownReadme from "./MarkdownReadme.vue";
@@ -14,6 +14,7 @@ const props = defineProps<{
   emptyText?: string;
   timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
+const workspace = useWorkspace();
 
 const sortedItems = computed(() => [...props.items].sort((left, right) => {
   const leftTime = Date.parse(left.createdAt);
@@ -56,11 +57,11 @@ function openItem(item: GitHubDiscussionTimelineItem) {
     props.timelineItemOpener(item);
     return;
   }
-  if (item.url) void openUrl(item.url);
+  if (item.url) void workspace.openUrl(item.url);
 }
 
 function openMarkdownTarget(target: ReadmeLinkTarget) {
-  if (target.kind === "external") void openUrl(target.href);
+  if (target.kind === "external") void workspace.openUrl(target.href);
 }
 </script>
 

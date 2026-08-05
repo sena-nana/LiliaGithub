@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::settings::workspace_context_identity;
@@ -13,22 +13,32 @@ const MAX_WORKSPACE_TASKS: usize = 200;
 pub(crate) type PendingTaskCancellation = Box<dyn FnOnce() -> Result<(), String> + Send>;
 
 #[derive(Default)]
+pub(crate) struct WorkspaceTaskRuntimeState {
+    state: Mutex<WorkspaceTaskState>,
+    next_index: AtomicU64,
+}
+
+impl WorkspaceTaskRuntimeState {
+    pub(crate) fn shutdown(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending_cancellations.clear();
+        state.tasks.clear();
+    }
+}
+
+#[derive(Default)]
 struct WorkspaceTaskState {
     tasks: Vec<WorkspaceTask>,
     pending_cancellations: HashMap<String, PendingTaskCancellation>,
 }
 
-fn workspace_task_state() -> &'static Mutex<WorkspaceTaskState> {
-    static STATE: OnceLock<Mutex<WorkspaceTaskState>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(WorkspaceTaskState::default()))
-}
-
-pub(super) fn next_workspace_task_id() -> String {
-    static INDEX: AtomicU64 = AtomicU64::new(1);
+pub(super) fn next_workspace_task_id(app: &AppHandle) -> String {
     format!(
         "workspace-task-{}-{}",
         now_millis(),
-        INDEX.fetch_add(1, Ordering::Relaxed)
+        app.workspace_tasks()
+            .next_index
+            .fetch_add(1, Ordering::Relaxed)
     )
 }
 
@@ -85,33 +95,36 @@ fn normalize_workspace_tasks(tasks: &mut Vec<WorkspaceTask>) {
     });
 }
 
-fn record_workspace_task_with_cancellable(
-    workspace_id: Option<String>,
-    context_revision: u64,
-    kind: &str,
-    title: &str,
-    priority: &str,
+struct WorkspaceTaskDraft<'a> {
+    kind: &'a str,
+    title: &'a str,
+    priority: &'a str,
     repo_id: Option<String>,
-    status: &str,
+    status: &'a str,
     message: Option<String>,
     cancellable: bool,
-) -> WorkspaceTask {
+}
+
+fn record_workspace_task(app: &AppHandle, draft: WorkspaceTaskDraft<'_>) -> WorkspaceTask {
+    let (workspace_id, context_revision) = workspace_context_identity(app);
     let timestamp = now_millis();
     let task = WorkspaceTask {
         workspace_id,
         context_revision,
-        id: next_workspace_task_id(),
-        kind: kind.to_string(),
-        title: title.to_string(),
-        priority: priority.to_string(),
-        repo_id,
-        status: status.to_string(),
-        message,
-        cancellable,
+        id: next_workspace_task_id(app),
+        kind: draft.kind.to_string(),
+        title: draft.title.to_string(),
+        priority: draft.priority.to_string(),
+        repo_id: draft.repo_id,
+        status: draft.status.to_string(),
+        message: draft.message,
+        cancellable: draft.cancellable,
         created_at: timestamp,
         updated_at: timestamp,
     };
-    let mut state = workspace_task_state()
+    let runtime = app.workspace_tasks();
+    let mut state = runtime
+        .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     state.tasks.push(task.clone());
@@ -128,17 +141,17 @@ pub(super) fn record_workspace_task_and_emit(
     message: Option<String>,
     cancellable: bool,
 ) -> WorkspaceTask {
-    let (workspace_id, context_revision) = workspace_context_identity(app);
-    let task = record_workspace_task_with_cancellable(
-        workspace_id,
-        context_revision,
-        kind,
-        workspace_task_title(kind),
-        priority,
-        repo_id,
-        status,
-        message,
-        cancellable,
+    let task = record_workspace_task(
+        app,
+        WorkspaceTaskDraft {
+            kind,
+            title: workspace_task_title(kind),
+            priority,
+            repo_id,
+            status,
+            message,
+            cancellable,
+        },
     );
     let _ = app.emit(TASK_CHANGED_EVENT, &task);
     task
@@ -152,29 +165,32 @@ pub(crate) fn record_pending_operation_task(
     repo_id: Option<String>,
     message: Option<String>,
 ) -> WorkspaceTask {
-    let (workspace_id, context_revision) = workspace_context_identity(app);
-    let task = record_workspace_task_with_cancellable(
-        workspace_id,
-        context_revision,
-        kind,
-        title,
-        priority,
-        repo_id,
-        "pending",
-        message,
-        false,
+    let task = record_workspace_task(
+        app,
+        WorkspaceTaskDraft {
+            kind,
+            title,
+            priority,
+            repo_id,
+            status: "pending",
+            message,
+            cancellable: false,
+        },
     );
     let _ = app.emit(TASK_CHANGED_EVENT, &task);
     task
 }
 
 fn update_workspace_task_value(
+    app: &AppHandle,
     task_id: &str,
     status: &str,
     message: Option<String>,
     cancellable: bool,
 ) -> Option<WorkspaceTask> {
-    let mut state = workspace_task_state()
+    let runtime = app.workspace_tasks();
+    let mut state = runtime
+        .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let updated =
@@ -212,7 +228,7 @@ pub(super) fn update_workspace_task_and_emit(
     message: Option<String>,
     cancellable: bool,
 ) -> Option<WorkspaceTask> {
-    let updated = update_workspace_task_value(task_id, status, message, cancellable)?;
+    let updated = update_workspace_task_value(app, task_id, status, message, cancellable)?;
     let _ = app.emit(TASK_CHANGED_EVENT, &updated);
     Some(updated)
 }
@@ -223,7 +239,9 @@ pub(crate) fn register_pending_task_cancellation(
     cancellation: PendingTaskCancellation,
 ) -> bool {
     let updated = {
-        let mut state = workspace_task_state()
+        let runtime = app.workspace_tasks();
+        let mut state = runtime
+            .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let Some(task) = state.tasks.iter().find(|task| task.id == task_id) else {
@@ -264,16 +282,18 @@ pub(crate) fn finish_workspace_task(
     update_workspace_task_and_emit(app, task_id, status, message, false).is_some()
 }
 
-pub fn workspace_list_tasks() -> Vec<WorkspaceTask> {
-    workspace_task_state()
+pub fn workspace_list_tasks(app: AppHandle) -> Vec<WorkspaceTask> {
+    app.workspace_tasks()
+        .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .tasks
         .clone()
 }
 
-pub(super) fn has_active_workspace_mutation(workspace_id: &str) -> bool {
-    workspace_task_state()
+pub(super) fn has_active_workspace_mutation(app: &AppHandle, workspace_id: &str) -> bool {
+    app.workspace_tasks()
+        .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .tasks
@@ -285,9 +305,10 @@ pub(super) fn has_active_workspace_mutation(workspace_id: &str) -> bool {
         })
 }
 
-pub(super) fn has_active_root_mutation(workspace_id: &str, root_id: &str) -> bool {
+pub(super) fn has_active_root_mutation(app: &AppHandle, workspace_id: &str, root_id: &str) -> bool {
     let prefix = format!("local:{root_id}/");
-    workspace_task_state()
+    app.workspace_tasks()
+        .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .tasks
@@ -317,7 +338,9 @@ fn reject_pending_cancellation_in(
 
 fn reject_pending_cancellation(app: &AppHandle, task_id: &str, message: Option<String>) {
     let updated = {
-        let mut state = workspace_task_state()
+        let runtime = app.workspace_tasks();
+        let mut state = runtime
+            .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         reject_pending_cancellation_in(&mut state.tasks, task_id, message)
@@ -346,7 +369,9 @@ fn cancel_pending_operation_in(
 
 pub fn workspace_cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
     let operation_cancelled = {
-        let mut state = workspace_task_state()
+        let runtime = app.workspace_tasks();
+        let mut state = runtime
+            .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         cancel_pending_operation_in(&mut state, &task_id)?
@@ -361,7 +386,7 @@ pub fn workspace_cancel_task(app: AppHandle, task_id: String) -> Result<(), Stri
         return Ok(());
     }
 
-    if !crate::workspace::refresh::cancel_pending_refresh(&task_id) {
+    if !crate::workspace::refresh::cancel_pending_refresh(&app, &task_id) {
         return Err("任务已开始或不支持取消".to_string());
     }
     finish_workspace_task(&app, &task_id, "cancelled", Some("已取消".to_string()));

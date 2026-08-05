@@ -1,22 +1,6 @@
-import {
-  beginRecentSyncRetry,
-  beginRepoSync,
-  clearRepoActionError,
-  finishRecentSyncRetry,
-  finishRepoSync,
-  rememberRecentSync,
-  recordRepoSyncResult,
-  state,
-  markRepoListVerified,
-  replaceRepos,
-  removeRepo,
-  setRepoDetail,
-  setWorkspaceTasks,
-  setRepoActionError,
-  upsertRepo,
-  upsertReposBatch,
-} from "./state";
-import { loadWorkspaceService } from "./serviceLoader";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceTaskWaitersFeature } from "./taskWaiters";
+import type { WorkspaceServiceLoader } from "./system";
 import {
   repoAutoSyncEnabled,
   repoIncludedInHomeContributionStats,
@@ -52,7 +36,30 @@ import type {
   GitHubCommitListOptions,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
-import { waitForWorkspaceTask } from "./taskWaiters";
+export function createWorkspaceRepositoriesFeature(
+  stateFeature: WorkspaceStateFeature,
+  taskWaiters: WorkspaceTaskWaitersFeature,
+  loadWorkspaceService: WorkspaceServiceLoader,
+) {
+const {
+  beginRecentSyncRetry,
+  beginRepoSync,
+  clearRepoActionError,
+  finishRecentSyncRetry,
+  finishRepoSync,
+  rememberRecentSync,
+  recordRepoSyncResult,
+  state,
+  markRepoListVerified,
+  replaceRepos,
+  removeRepo,
+  setRepoDetail,
+  setWorkspaceTasks,
+  setRepoActionError,
+  upsertRepo,
+  upsertReposBatch,
+} = stateFeature;
+const { waitForWorkspaceTask } = taskWaiters;
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const LOCAL_REPO_CONTRIBUTION_SCOPE = "local:";
@@ -240,7 +247,7 @@ async function applyRepoOperation(
   return result;
 }
 
-export async function requestRepoStatusRefresh(
+async function requestRepoStatusRefresh(
   repoId: string,
   scope: RepoDetailPatchRequest = {},
   options: RepoStatusRefreshOptions = {},
@@ -339,7 +346,7 @@ function applyAutoSyncResult(result: BulkSyncResult) {
   }
 }
 
-export async function autoSyncRepoIfNeeded(
+async function autoSyncRepoIfNeeded(
   repoId: string,
   options: { summary?: RepoSummary; refreshDetail?: boolean; throwOnError?: boolean } = {},
 ) {
@@ -400,11 +407,11 @@ export async function autoSyncRepoIfNeeded(
   }
 }
 
-export async function refreshRepos() {
+async function refreshRepos() {
   return loadManagedRepoList();
 }
 
-export async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
+async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
   const repos = state.repos.length ? state.repos : await loadManagedRepoList();
   if (!repos) return null;
   if (!repos.length) return repos;
@@ -455,7 +462,7 @@ async function loadManagedRepoList() {
   }
 }
 
-export async function discoverRepos() {
+async function discoverRepos() {
   const service = await loadWorkspaceService();
   state.scanning = true;
   try {
@@ -467,7 +474,7 @@ export async function discoverRepos() {
   }
 }
 
-export function addLocalRepo() {
+function addLocalRepo() {
   if (addLocalRepoPromise) return addLocalRepoPromise;
 
   const pending = (async () => {
@@ -511,7 +518,7 @@ function repoContributionScopes() {
   return [...scopes.values()];
 }
 
-export async function refreshRepoContributions() {
+async function refreshRepoContributions() {
   startRepoContributionRefresh(repoContributionScopes());
 }
 
@@ -734,7 +741,7 @@ function contributionRepositoryLabel(repo: GitHubContributionRepository) {
   return repo.repoFullName || repo.repoName || repo.repoId;
 }
 
-export async function refreshWorkspaceTasks() {
+async function refreshWorkspaceTasks() {
   const generation = ++workspaceTaskRefreshGeneration;
   const service = await loadWorkspaceService();
   const tasks = await service.listWorkspaceTasks();
@@ -742,12 +749,12 @@ export async function refreshWorkspaceTasks() {
   setWorkspaceTasks(tasks);
 }
 
-export async function cancelWorkspaceTask(taskId: string) {
+async function cancelWorkspaceTask(taskId: string) {
   const service = await loadWorkspaceService();
   await service.cancelWorkspaceTask(taskId);
 }
 
-export async function refreshLanguageStatsForRepos(
+async function refreshLanguageStatsForRepos(
   repoIds: string[],
   options: { silent?: boolean; background?: boolean } = { silent: true },
 ) {
@@ -780,7 +787,7 @@ export async function refreshLanguageStatsForRepos(
   }
 }
 
-export async function refreshRepoLanguageStats(
+async function refreshRepoLanguageStats(
   repoId: string,
   options: { silent?: boolean } = {},
 ) {
@@ -825,7 +832,7 @@ async function loadRepoLanguageStatsSummary(
   }
 }
 
-export function resetRepositoryRuntime() {
+function resetRepositoryRuntime() {
   repositoryRuntimeGeneration += 1;
   contributionRefreshGeneration += 1;
   languageStatsLoadingGenerations = new Map();
@@ -843,11 +850,11 @@ export function resetRepositoryRuntime() {
   workspaceSettingsMutationQueue = Promise.resolve();
 }
 
-export function resetRepositoryRuntimeForTests() {
+function resetRepositoryRuntimeForTests() {
   resetRepositoryRuntime();
 }
 
-export async function cloneRepo(request: WorkspaceCloneRepoRequest) {
+async function cloneRepo(request: WorkspaceCloneRepoRequest) {
   state.error = null;
   const service = await loadWorkspaceService();
   const result = await service.cloneRepo(request);
@@ -856,7 +863,7 @@ export async function cloneRepo(request: WorkspaceCloneRepoRequest) {
   return result.repo;
 }
 
-export async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) {
+async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) {
   state.error = null;
   const service = await loadWorkspaceService();
   const summary = await service.createLocalRepo(request);
@@ -864,29 +871,29 @@ export async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) 
   return summary;
 }
 
-export async function hideRepo(repoId: string) {
+async function hideRepo(repoId: string) {
   repositoryRuntimeGeneration += 1;
   const service = await loadWorkspaceService();
   state.settings = await service.hideRepo(repoId);
   removeLocalRepoState(repoId);
 }
 
-export async function createRepoGroup(name: string) {
+async function createRepoGroup(name: string) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.createRepoGroup(name));
 }
 
-export async function renameRepoGroup(groupId: string, name: string) {
+async function renameRepoGroup(groupId: string, name: string) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.renameRepoGroup(groupId, name));
 }
 
-export async function deleteRepoGroup(groupId: string) {
+async function deleteRepoGroup(groupId: string) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.deleteRepoGroup(groupId));
 }
 
-export async function moveRepoToGroup(
+async function moveRepoToGroup(
   repoId: string,
   groupId: string | null,
   pathMode: WorkspaceRepoPathMode | null = "keep",
@@ -895,7 +902,7 @@ export async function moveRepoToGroup(
   return applyRelocationResult(await service.moveRepoToGroup(repoId, groupId, pathMode));
 }
 
-export async function relocateLocalRepo(repoId: string, targetPath: string | null = null) {
+async function relocateLocalRepo(repoId: string, targetPath: string | null = null) {
   const service = await loadWorkspaceService();
   return applyRelocationResult(await service.relocateLocalRepo(repoId, targetPath));
 }
@@ -909,17 +916,17 @@ function applyRelocationResult(result: WorkspaceRepoRelocationResult) {
   return result;
 }
 
-export async function reconcileOrganizationRepoGroups(organizationLogins: string[]) {
+async function reconcileOrganizationRepoGroups(organizationLogins: string[]) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.reconcileOrganizationRepoGroups(organizationLogins));
 }
 
-export async function setLocalRepoFavorite(repoId: string, favorite: boolean) {
+async function setLocalRepoFavorite(repoId: string, favorite: boolean) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.setLocalRepoFavorite(repoId, favorite));
 }
 
-export async function deleteLocalRepo(repoId: string) {
+async function deleteLocalRepo(repoId: string) {
   repositoryRuntimeGeneration += 1;
   const service = await loadWorkspaceService();
   state.settings = await service.deleteLocalRepo(repoId);
@@ -937,33 +944,33 @@ function removeLocalRepoState(repoId: string) {
   delete state.repoSyncResults[repoId];
 }
 
-export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
+async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.rememberRemoteRepo(repo));
 }
 
-export async function recordRecentLocalRepo(repoId: string) {
+async function recordRecentLocalRepo(repoId: string) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.recordRecentLocalRepo(repoId));
 }
 
-export async function setRemoteRepoFavorite(repo: RemoteRepoShortcut, favorite: boolean) {
+async function setRemoteRepoFavorite(repo: RemoteRepoShortcut, favorite: boolean) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.setRemoteRepoFavorite(repo, favorite));
 }
 
-export async function setRepoSetting(repoId: string, key: RepoSettingKey, value: boolean) {
+async function setRepoSetting(repoId: string, key: RepoSettingKey, value: boolean) {
   const service = await loadWorkspaceService();
   state.settings = await service.setRepoSetting(repoId, key, value);
   clearRepoActionError(repoId);
   return state.settings;
 }
 
-export async function setRepoAutoSync(repoId: string, autoSync: boolean) {
+async function setRepoAutoSync(repoId: string, autoSync: boolean) {
   return setRepoSetting(repoId, "autoSync", autoSync);
 }
 
-export async function setContributionIdentities(
+async function setContributionIdentities(
   identities: import("../../services/workspace").ContributionIdentity[],
 ) {
   const service = await loadWorkspaceService();
@@ -977,28 +984,28 @@ export async function setContributionIdentities(
   return state.settings;
 }
 
-export async function scanContributionIdentities() {
+async function scanContributionIdentities() {
   const service = await loadWorkspaceService();
   return service.scanContributionIdentities();
 }
 
-export async function forgetRemoteRepo(fullName: string) {
+async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.forgetRemoteRepo(fullName));
 }
 
-export async function unhideRepo(repoId: string) {
+async function unhideRepo(repoId: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.unhideRepo(repoId);
   upsertRepo(await service.getRepoSummary(repoId));
 }
 
-export async function listHiddenRepos() {
+async function listHiddenRepos() {
   const service = await loadWorkspaceService();
   return service.listHiddenRepos();
 }
 
-export async function loadRepoDetail(repoId: string) {
+async function loadRepoDetail(repoId: string) {
   state.error = null;
   const service = await loadWorkspaceService();
   const detail = await service.getRepoDetail(repoId);
@@ -1006,7 +1013,7 @@ export async function loadRepoDetail(repoId: string) {
   return detail;
 }
 
-export async function stage(repoId: string, files: string[]) {
+async function stage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   applyOptimisticStageState(repoId, files, true);
   try {
@@ -1019,7 +1026,7 @@ export async function stage(repoId: string, files: string[]) {
   }
 }
 
-export async function unstage(repoId: string, files: string[]) {
+async function unstage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   applyOptimisticStageState(repoId, files, false);
   try {
@@ -1032,7 +1039,7 @@ export async function unstage(repoId: string, files: string[]) {
   }
 }
 
-export async function discardChanges(repoId: string, files: string[]) {
+async function discardChanges(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   const optimistic = applyOptimisticDiscardState(repoId, files);
   try {
@@ -1043,17 +1050,17 @@ export async function discardChanges(repoId: string, files: string[]) {
   }
 }
 
-export async function deleteRepoFile(repoId: string, path: string) {
+async function deleteRepoFile(repoId: string, path: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.deleteRepoFile(repoId, path));
 }
 
-export async function addFilesToGitignore(repoId: string, files: string[]) {
+async function addFilesToGitignore(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.addFilesToGitignore(repoId, files));
 }
 
-export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
+async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
   applyOptimisticCommit(repoId, files, message, pushAfter);
   try {
@@ -1079,12 +1086,12 @@ export async function commit(repoId: string, files: string[], message: string, p
   }
 }
 
-export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
+async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
   return applyRepoSyncOperation(repoId, () => service.pullRepo(repoId, localChangesMode), { includeCommits: true });
 }
 
-export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
+async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
   clearRepoActionError(repoId);
   try {
@@ -1099,7 +1106,7 @@ export async function mergePull(repoId: string, localChangesMode: RepoPullLocalC
   }
 }
 
-export async function mergeBranch(repoId: string, branch: string) {
+async function mergeBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   clearRepoActionError(repoId);
   try {
@@ -1113,7 +1120,7 @@ export async function mergeBranch(repoId: string, branch: string) {
   }
 }
 
-export async function startRebase(
+async function startRebase(
   repoId: string,
   ontoRef?: string | null,
   localChangesMode: RepoPullLocalChangesMode = "reject",
@@ -1174,29 +1181,29 @@ async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSyncO
   }
 }
 
-export async function push(repoId: string, remoteNames?: string[] | null) {
+async function push(repoId: string, remoteNames?: string[] | null) {
   const service = await loadWorkspaceService();
   return runPushMutation(repoId, () => service.pushRepo(repoId, remoteNames));
 }
 
-export async function pushNewBranch(repoId: string, remoteNames?: string[] | null, branchName?: string | null) {
+async function pushNewBranch(repoId: string, remoteNames?: string[] | null, branchName?: string | null) {
   const service = await loadWorkspaceService();
   return runPushMutation(repoId, () => service.pushNewBranchRepo(repoId, remoteNames, branchName));
 }
 
-export async function pushWithSystemGit(repoId: string, remoteNames?: string[] | null) {
+async function pushWithSystemGit(repoId: string, remoteNames?: string[] | null) {
   const service = await loadWorkspaceService();
   const result = await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId, remoteNames));
   state.settings = await service.getWorkspaceSettings();
   return result;
 }
 
-export async function getRemoteSyncConfig(repoId: string) {
+async function getRemoteSyncConfig(repoId: string) {
   const service = await loadWorkspaceService();
   return service.getRepoRemoteSyncConfig(repoId);
 }
 
-export async function setRemoteSyncPolicy(repoId: string, policy: RepoRemoteSyncPolicy) {
+async function setRemoteSyncPolicy(repoId: string, policy: RepoRemoteSyncPolicy) {
   const service = await loadWorkspaceService();
   const config = await service.setRepoRemoteSyncPolicy(repoId, policy);
   state.settings = await service.getWorkspaceSettings();
@@ -1204,12 +1211,12 @@ export async function setRemoteSyncPolicy(repoId: string, policy: RepoRemoteSync
   return config;
 }
 
-export async function useDefaultTokenAuthForRepo(repoId: string) {
+async function useDefaultTokenAuthForRepo(repoId: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.useDefaultTokenAuthForRepo(repoId);
 }
 
-export async function checkout(repoId: string, branch: string) {
+async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1218,7 +1225,7 @@ export async function checkout(repoId: string, branch: string) {
   );
 }
 
-export async function createBranch(repoId: string, name: string, fromRef: string, checkoutAfter: boolean) {
+async function createBranch(repoId: string, name: string, fromRef: string, checkoutAfter: boolean) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1227,7 +1234,7 @@ export async function createBranch(repoId: string, name: string, fromRef: string
   );
 }
 
-export async function renameBranch(repoId: string, oldName: string, newName: string) {
+async function renameBranch(repoId: string, oldName: string, newName: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1236,7 +1243,7 @@ export async function renameBranch(repoId: string, oldName: string, newName: str
   );
 }
 
-export async function deleteBranch(repoId: string, branch: string) {
+async function deleteBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1245,7 +1252,7 @@ export async function deleteBranch(repoId: string, branch: string) {
   );
 }
 
-export async function setUpstream(repoId: string, branch: string, upstream: string) {
+async function setUpstream(repoId: string, branch: string, upstream: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1254,37 +1261,37 @@ export async function setUpstream(repoId: string, branch: string, upstream: stri
   );
 }
 
-export async function listStashes(repoId: string) {
+async function listStashes(repoId: string) {
   const service = await loadWorkspaceService();
   return service.listRepoStashes(repoId);
 }
 
-export async function saveStash(repoId: string, message?: string | null) {
+async function saveStash(repoId: string, message?: string | null) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.saveRepoStash(repoId, message));
 }
 
-export async function applyStash(repoId: string, stashId: string) {
+async function applyStash(repoId: string, stashId: string) {
   const service = await loadWorkspaceService();
   return applyRepoOperation(repoId, () => service.applyRepoStash(repoId, stashId));
 }
 
-export async function popStash(repoId: string, stashId: string) {
+async function popStash(repoId: string, stashId: string) {
   const service = await loadWorkspaceService();
   return applyRepoOperation(repoId, () => service.popRepoStash(repoId, stashId));
 }
 
-export async function dropStash(repoId: string, stashId: string) {
+async function dropStash(repoId: string, stashId: string) {
   const service = await loadWorkspaceService();
   return service.dropRepoStash(repoId, stashId);
 }
 
-export async function listRemotes(repoId: string) {
+async function listRemotes(repoId: string) {
   const service = await loadWorkspaceService();
   return service.listRepoRemotes(repoId);
 }
 
-export async function cherryPickCommit(repoId: string, hash: string) {
+async function cherryPickCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
   return applyRepoOperation(
     repoId,
@@ -1293,7 +1300,7 @@ export async function cherryPickCommit(repoId: string, hash: string) {
   );
 }
 
-export async function revertCommit(repoId: string, hash: string) {
+async function revertCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
   return applyRepoOperation(
     repoId,
@@ -1302,7 +1309,7 @@ export async function revertCommit(repoId: string, hash: string) {
   );
 }
 
-export async function resetToCommit(
+async function resetToCommit(
   repoId: string,
   hash: string,
   mode: import("../../services/workspace").RepoResetMode = "mixed",
@@ -1315,7 +1322,7 @@ export async function resetToCommit(
   );
 }
 
-export async function acceptConflictFile(
+async function acceptConflictFile(
   repoId: string,
   path: string,
   side: "ours" | "theirs",
@@ -1325,7 +1332,7 @@ export async function acceptConflictFile(
   await applyRepoMutation(repoId, () => service.acceptConflictFile(repoId, path, side, stage));
 }
 
-export async function resolveConflictFile(
+async function resolveConflictFile(
   repoId: string,
   path: string,
   choices: RepoConflictChoice[],
@@ -1335,17 +1342,17 @@ export async function resolveConflictFile(
   await applyRepoMutation(repoId, () => service.resolveConflictFile(repoId, path, choices, stage));
 }
 
-export async function markConflictFileResolved(repoId: string, path: string) {
+async function markConflictFileResolved(repoId: string, path: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.markFileResolved(repoId, path));
 }
 
-export async function abortConflictOperation(repoId: string) {
+async function abortConflictOperation(repoId: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.abortConflictOperation(repoId));
 }
 
-export async function continueConflictOperation(repoId: string) {
+async function continueConflictOperation(repoId: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(
     repoId,
@@ -1354,7 +1361,7 @@ export async function continueConflictOperation(repoId: string) {
   );
 }
 
-export async function getRepoCommitDetail(
+async function getRepoCommitDetail(
   repoId: string,
   hash: string,
   options: GitHubProjectFetchOptions = {},
@@ -1363,12 +1370,12 @@ export async function getRepoCommitDetail(
   return service.getRepoCommitDetail(repoId, hash, options);
 }
 
-export async function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
+async function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
   const service = await loadWorkspaceService();
   return service.getRepoStashDetail(repoId, stashId);
 }
 
-export async function getGitHubRepoManagement(
+async function getGitHubRepoManagement(
   repoFullName: string,
   options: GitHubProjectFetchOptions = {},
 ): Promise<GitHubRepoManagement> {
@@ -1376,12 +1383,12 @@ export async function getGitHubRepoManagement(
   return service.getGitHubRepoManagement(repoFullName, options);
 }
 
-export async function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
+async function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubBranches(repoFullName);
 }
 
-export async function listGitHubRepoCommits(
+async function listGitHubRepoCommits(
   repoFullName: string,
   options: GitHubCommitListOptions = {},
   fetchOptions: GitHubProjectFetchOptions = {},
@@ -1390,7 +1397,31 @@ export async function listGitHubRepoCommits(
   return service.listGitHubRepoCommits(repoFullName, options, fetchOptions);
 }
 
-export async function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
+async function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
   const service = await loadWorkspaceService();
   return service.deleteGitHubBranch(repoFullName, branchName);
 }
+
+return {
+  requestRepoStatusRefresh, autoSyncRepoIfNeeded, refreshRepos, refreshRepoSummaries,
+  discoverRepos, addLocalRepo, refreshRepoContributions, refreshWorkspaceTasks,
+  cancelWorkspaceTask, refreshLanguageStatsForRepos, refreshRepoLanguageStats,
+  resetRepositoryRuntime, resetRepositoryRuntimeForTests, cloneRepo, createLocalRepo,
+  hideRepo, createRepoGroup, renameRepoGroup, deleteRepoGroup, moveRepoToGroup,
+  relocateLocalRepo, reconcileOrganizationRepoGroups, setLocalRepoFavorite,
+  deleteLocalRepo, rememberRemoteRepo, recordRecentLocalRepo, setRemoteRepoFavorite,
+  setRepoSetting, setRepoAutoSync, setContributionIdentities, scanContributionIdentities,
+  forgetRemoteRepo, unhideRepo, listHiddenRepos, loadRepoDetail, stage, unstage,
+  discardChanges, deleteRepoFile, addFilesToGitignore, commit, pull, mergePull,
+  mergeBranch, startRebase, push, pushNewBranch, pushWithSystemGit,
+  getRemoteSyncConfig, setRemoteSyncPolicy, useDefaultTokenAuthForRepo, checkout,
+  createBranch, renameBranch, deleteBranch, setUpstream, listStashes, saveStash,
+  applyStash, popStash, dropStash, listRemotes, cherryPickCommit, revertCommit,
+  resetToCommit, acceptConflictFile, resolveConflictFile, markConflictFileResolved,
+  abortConflictOperation, continueConflictOperation, getRepoCommitDetail,
+  getRepoStashDetail, getGitHubRepoManagement, listGitHubBranches,
+  listGitHubRepoCommits, deleteGitHubBranch,
+};
+}
+
+export type WorkspaceRepositoriesFeature = ReturnType<typeof createWorkspaceRepositoriesFeature>;

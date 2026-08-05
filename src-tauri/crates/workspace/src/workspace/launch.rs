@@ -7,11 +7,10 @@ use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::thread;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::task_runtime::{DispatchLane, ResourceAccessMode};
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::settings::{
     load_settings, repo_path_by_id, save_settings, workspace_context_identity, STORE_FILE,
@@ -21,7 +20,7 @@ use crate::workspace::shared::configure_background_command;
 use crate::workspace::shared::now_millis;
 use lilia_github_contracts::workspace::{
     ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
-    ProjectLaunchStatus,
+    ProjectLaunchState, ProjectLaunchStatus,
 };
 
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
@@ -35,55 +34,100 @@ pub(super) struct LaunchEntry {
     pub(super) status: ProjectLaunchStatus,
 }
 
-pub(super) fn launch_runtime() -> &'static Mutex<HashMap<String, LaunchEntry>> {
-    static RUNTIME: OnceLock<Mutex<HashMap<String, LaunchEntry>>> = OnceLock::new();
-    RUNTIME.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+pub(crate) struct LaunchRuntimeState {
+    entries: Mutex<HashMap<String, LaunchEntry>>,
+    logs: Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>>,
+    next_log_index: AtomicU64,
 }
 
-pub(super) fn has_running_launch_for_workspace(workspace_id: &str) -> bool {
-    launch_runtime()
+impl LaunchRuntimeState {
+    pub(crate) fn shutdown(&self) {
+        let pids = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .values()
+            .filter(|entry| entry.status.state == ProjectLaunchState::Running)
+            .filter_map(|entry| entry.status.pid)
+            .collect::<Vec<_>>();
+        for pid in pids {
+            let _ = stop_launch_process_tree(pid);
+        }
+        self.entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+        self.logs
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_launch_status_for_tests(app: &AppHandle, status: ProjectLaunchStatus) {
+    app.launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(status.repo_id.clone(), LaunchEntry { status });
+}
+
+#[cfg(test)]
+pub(super) fn remove_launch_status_for_tests(app: &AppHandle, repo_id: &str) {
+    app.launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(repo_id);
+}
+
+pub(super) fn has_running_launch_for_workspace(app: &AppHandle, workspace_id: &str) -> bool {
+    app.launch_runtime()
+        .entries
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .values()
         .any(|entry| {
             entry.status.workspace_id.as_deref() == Some(workspace_id)
-                && entry.status.state == "running"
+                && entry.status.state == ProjectLaunchState::Running
         })
 }
 
-pub(super) fn has_running_launch_for_root(workspace_id: &str, root_id: &str) -> bool {
+pub(super) fn has_running_launch_for_root(
+    app: &AppHandle,
+    workspace_id: &str,
+    root_id: &str,
+) -> bool {
     let prefix = format!("local:{root_id}/");
-    launch_runtime()
+    app.launch_runtime()
+        .entries
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .values()
         .any(|entry| {
             entry.status.workspace_id.as_deref() == Some(workspace_id)
-                && entry.status.state == "running"
+                && entry.status.state == ProjectLaunchState::Running
                 && entry.status.repo_id.starts_with(&prefix)
         })
 }
 
-pub(super) fn has_running_launch_for_repo(repo_id: &str) -> bool {
-    launch_runtime()
+pub(super) fn has_running_launch_for_repo(app: &AppHandle, repo_id: &str) -> bool {
+    app.launch_runtime()
+        .entries
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .values()
-        .any(|entry| entry.status.repo_id == repo_id && entry.status.state == "running")
+        .any(|entry| {
+            entry.status.repo_id == repo_id && entry.status.state == ProjectLaunchState::Running
+        })
 }
 
-pub(super) fn launch_resource_id(repo_id: &str) -> String {
-    format!("launch:{repo_id}")
-}
-
-pub(super) fn launch_logs() -> &'static Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>> {
-    static LOGS: OnceLock<Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>>> = OnceLock::new();
-    LOGS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-pub(super) fn next_launch_log_index() -> u64 {
-    static INDEX: AtomicU64 = AtomicU64::new(1);
-    INDEX.fetch_add(1, Ordering::Relaxed)
+pub(super) fn next_launch_log_index(app: &AppHandle) -> u64 {
+    app.launch_runtime()
+        .next_log_index
+        .fetch_add(1, Ordering::Relaxed)
 }
 
 pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
@@ -91,7 +135,7 @@ pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
         workspace_id: None,
         context_revision: 0,
         repo_id: repo_id.to_string(),
-        state: "idle".to_string(),
+        state: ProjectLaunchState::Idle,
         pid: None,
         command: None,
         started_at: None,
@@ -100,20 +144,30 @@ pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
     }
 }
 
-pub(super) fn push_launch_log(repo_id: &str, stream: &str, line: impl Into<String>) {
-    push_launch_log_with_mode(repo_id, stream, "append", line);
+pub(super) fn push_launch_log(
+    app: &AppHandle,
+    repo_id: &str,
+    stream: &str,
+    line: impl Into<String>,
+) {
+    push_launch_log_with_mode(app, repo_id, stream, "append", line);
 }
 
 pub(super) fn push_launch_log_with_mode(
+    app: &AppHandle,
     repo_id: &str,
     stream: &str,
     write_mode: &str,
     line: impl Into<String>,
 ) {
-    let mut logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
+    let mut logs = app
+        .launch_runtime()
+        .logs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let repo_logs = logs.entry(repo_id.to_string()).or_default();
     repo_logs.push_back(ProjectLaunchLog {
-        index: next_launch_log_index(),
+        index: next_launch_log_index(app),
         repo_id: repo_id.to_string(),
         stream: stream.to_string(),
         line: line.into(),
@@ -125,8 +179,9 @@ pub(super) fn push_launch_log_with_mode(
     }
 }
 
-pub(super) fn clear_launch_logs(repo_id: &str) {
-    launch_logs()
+pub(super) fn clear_launch_logs(app: &AppHandle, repo_id: &str) {
+    app.launch_runtime()
+        .logs
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(repo_id);
@@ -137,7 +192,7 @@ pub(super) fn load_launch_history(
 ) -> HashMap<String, Vec<ProjectLaunchHistoryEntry>> {
     app.store(STORE_FILE)
         .ok()
-        .and_then(|store| store.get(LAUNCH_HISTORY_KEY))
+        .and_then(|store| store.get(LAUNCH_HISTORY_KEY).ok().flatten())
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default()
 }
@@ -152,12 +207,13 @@ pub(super) fn save_launch_history(
     store.set(
         LAUNCH_HISTORY_KEY,
         serde_json::to_value(history).map_err(|e| e.to_string())?,
-    );
+    )?;
     store.save().map_err(|e| format!("保存启动历史失败：{e}"))
 }
 
-pub(super) fn last_launch_output(repo_id: &str) -> Option<String> {
-    launch_logs()
+pub(super) fn last_launch_output(app: &AppHandle, repo_id: &str) -> Option<String> {
+    app.launch_runtime()
+        .logs
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(repo_id)
@@ -174,13 +230,13 @@ pub(super) fn remember_launch_start(
     let mut history = load_launch_history(app);
     let now = now_millis();
     let entry = ProjectLaunchHistoryEntry {
-        id: format!("{repo_id}:{now}:{}", next_launch_log_index()),
+        id: format!("{repo_id}:{now}:{}", next_launch_log_index(app)),
         repo_id: repo_id.to_string(),
         command: command.to_string(),
         cwd: Some(cwd.display().to_string()),
         started_at: now,
         finished_at: None,
-        state: "running".to_string(),
+        state: ProjectLaunchState::Running,
         exit_code: None,
         error: None,
         last_output: None,
@@ -195,7 +251,7 @@ pub(super) fn remember_launch_start(
 pub(super) fn finish_launch_history(
     app: &AppHandle,
     repo_id: &str,
-    state: &str,
+    state: ProjectLaunchState,
     exit_code: Option<i32>,
     error: Option<String>,
 ) -> Result<(), String> {
@@ -203,14 +259,17 @@ pub(super) fn finish_launch_history(
     let Some(entries) = history.get_mut(repo_id) else {
         return Ok(());
     };
-    let Some(entry) = entries.iter_mut().find(|entry| entry.state == "running") else {
+    let Some(entry) = entries
+        .iter_mut()
+        .find(|entry| entry.state == ProjectLaunchState::Running)
+    else {
         return Ok(());
     };
-    entry.state = state.to_string();
+    entry.state = state;
     entry.finished_at = Some(now_millis());
     entry.exit_code = exit_code;
     entry.error = error;
-    entry.last_output = last_launch_output(repo_id);
+    entry.last_output = last_launch_output(app, repo_id);
     save_launch_history(app, &history)
 }
 
@@ -222,25 +281,29 @@ pub(super) fn complete_launch_status(
     app: &AppHandle,
     repo_id: &str,
     pid: u32,
-    state: &str,
+    state: ProjectLaunchState,
     exit_code: Option<i32>,
     error: Option<String>,
     log_line: String,
 ) -> Option<ProjectLaunchStatus> {
     let status = {
-        let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+        let mut runtime = app
+            .launch_runtime()
+            .entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let entry = runtime.get_mut(repo_id)?;
-        if entry.status.state != "running" || entry.status.pid != Some(pid) {
+        if entry.status.state != ProjectLaunchState::Running || entry.status.pid != Some(pid) {
             return None;
         }
-        entry.status.state = state.to_string();
+        entry.status.state = state;
         entry.status.pid = None;
         entry.status.exit_code = exit_code;
         entry.status.error = error.clone();
         entry.status.clone()
     };
 
-    push_launch_log(repo_id, "system", log_line);
+    push_launch_log(app, repo_id, "system", log_line);
     let _ = finish_launch_history(app, repo_id, state, exit_code, error);
     emit_launch_status(app, &status);
     Some(status)
@@ -255,7 +318,7 @@ pub(super) fn watch_launch_child(app: AppHandle, repo_id: String, pid: u32, mut 
                 &app,
                 &repo_id,
                 pid,
-                "exited",
+                ProjectLaunchState::Exited,
                 exit_code,
                 None,
                 format!("进程已退出：exit {code_text}"),
@@ -267,7 +330,7 @@ pub(super) fn watch_launch_child(app: AppHandle, repo_id: String, pid: u32, mut 
                 &app,
                 &repo_id,
                 pid,
-                "error",
+                ProjectLaunchState::Error,
                 None,
                 Some(error.clone()),
                 format!("读取进程状态失败：{error}"),
@@ -502,7 +565,7 @@ pub(super) fn launch_candidates_for_repo(
     app: &AppHandle,
     repo_id: &str,
 ) -> Result<Vec<ProjectLaunchCandidate>, String> {
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     let path = repo_path_by_id(app, repo_id)?;
     let mut candidates = infer_launch_candidates(&path);
     let current_config = settings
@@ -525,7 +588,7 @@ pub(super) fn launch_config_for_repo(
     app: &AppHandle,
     repo_id: &str,
 ) -> Result<Option<ProjectLaunchConfig>, String> {
-    let settings = load_settings(app);
+    let settings = load_settings(app)?;
     if let Some(config) = settings
         .project_launch_configs
         .get(repo_id)
@@ -756,6 +819,7 @@ impl LaunchOutputParser {
 }
 
 pub(super) fn pipe_launch_output(
+    app: AppHandle,
     repo_id: String,
     stream: &'static str,
     mut reader: impl std::io::Read + Send + 'static,
@@ -767,17 +831,34 @@ pub(super) fn pipe_launch_output(
             match std::io::Read::read(&mut reader, &mut buffer) {
                 Ok(0) => {
                     for event in parser.finish() {
-                        push_launch_log_with_mode(&repo_id, stream, event.write_mode, event.line);
+                        push_launch_log_with_mode(
+                            &app,
+                            &repo_id,
+                            stream,
+                            event.write_mode,
+                            event.line,
+                        );
                     }
                     break;
                 }
                 Ok(read_count) => {
                     for event in parser.push(&buffer[..read_count]) {
-                        push_launch_log_with_mode(&repo_id, stream, event.write_mode, event.line);
+                        push_launch_log_with_mode(
+                            &app,
+                            &repo_id,
+                            stream,
+                            event.write_mode,
+                            event.line,
+                        );
                     }
                 }
                 Err(err) => {
-                    push_launch_log(&repo_id, "system", format!("读取 {stream} 失败：{err}"));
+                    push_launch_log(
+                        &app,
+                        &repo_id,
+                        "system",
+                        format!("读取 {stream} 失败：{err}"),
+                    );
                     break;
                 }
             }
@@ -819,7 +900,7 @@ pub fn repo_save_launch_config(
         source: "manual".to_string(),
         updated_at: Some(now_millis()),
     };
-    let mut settings = load_settings(&app);
+    let mut settings = load_settings(&app)?;
     settings
         .project_launch_configs
         .insert(repo_id, config.clone());
@@ -828,10 +909,14 @@ pub fn repo_save_launch_config(
 }
 
 pub fn repo_get_launch_status(
-    _app: AppHandle,
+    app: AppHandle,
     repo_id: String,
 ) -> Result<ProjectLaunchStatus, String> {
-    let runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let runtime = app
+        .launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let Some(entry) = runtime.get(&repo_id) else {
         return Ok(idle_launch_status(&repo_id));
     };
@@ -839,10 +924,15 @@ pub fn repo_get_launch_status(
 }
 
 pub fn repo_get_launch_logs(
+    app: AppHandle,
     repo_id: String,
     since: Option<u64>,
 ) -> Result<Vec<ProjectLaunchLog>, String> {
-    let logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
+    let logs = app
+        .launch_runtime()
+        .logs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let since = since.unwrap_or(0);
     Ok(logs
         .get(&repo_id)
@@ -876,29 +966,39 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
     }
     let cwd = resolve_launch_cwd(&repo_path, config.cwd.as_deref())?;
 
-    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let mut runtime = app
+        .launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = runtime.get(&repo_id) {
-        if entry.status.state == "running" {
+        if entry.status.state == ProjectLaunchState::Running {
             return Ok(entry.status.clone());
         }
     }
 
-    clear_launch_logs(&repo_id);
+    clear_launch_logs(&app, &repo_id);
     let _ = remember_launch_start(&app, &repo_id, &command, &cwd);
     let mut child = match spawn_launch_command(&command, &cwd) {
         Ok(child) => child,
         Err(err) => {
-            push_launch_log(&repo_id, "system", err.clone());
-            let _ = finish_launch_history(&app, &repo_id, "error", None, Some(err.clone()));
+            push_launch_log(&app, &repo_id, "system", err.clone());
+            let _ = finish_launch_history(
+                &app,
+                &repo_id,
+                ProjectLaunchState::Error,
+                None,
+                Some(err.clone()),
+            );
             return Err(err);
         }
     };
     let pid = child.id();
     if let Some(stdout) = child.stdout.take() {
-        pipe_launch_output(repo_id.clone(), "stdout", stdout);
+        pipe_launch_output(app.clone(), repo_id.clone(), "stdout", stdout);
     }
     if let Some(stderr) = child.stderr.take() {
-        pipe_launch_output(repo_id.clone(), "stderr", stderr);
+        pipe_launch_output(app.clone(), repo_id.clone(), "stderr", stderr);
     }
 
     let (workspace_id, context_revision) = workspace_context_identity(&app);
@@ -906,7 +1006,7 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
         workspace_id,
         context_revision,
         repo_id: repo_id.clone(),
-        state: "running".to_string(),
+        state: ProjectLaunchState::Running,
         pid: Some(pid),
         command: Some(command.clone()),
         started_at: Some(now_millis()),
@@ -920,8 +1020,13 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
         },
     );
     drop(runtime);
-    push_launch_log(&repo_id, "system", format!("启动命令：{command}"));
-    push_launch_log(&repo_id, "system", format!("工作目录：{}", cwd.display()));
+    push_launch_log(&app, &repo_id, "system", format!("启动命令：{command}"));
+    push_launch_log(
+        &app,
+        &repo_id,
+        "system",
+        format!("工作目录：{}", cwd.display()),
+    );
     emit_launch_status(&app, &status);
     watch_launch_child(app, repo_id.clone(), pid, child);
     Ok(status)
@@ -929,13 +1034,17 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
 
 fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
     let current = {
-        let runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+        let runtime = app
+            .launch_runtime()
+            .entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         runtime
             .get(&repo_id)
             .map(|entry| entry.status.clone())
             .unwrap_or_else(|| idle_launch_status(&repo_id))
     };
-    if current.state != "running" {
+    if current.state != ProjectLaunchState::Running {
         return Ok(current);
     }
     let Some(pid) = current.pid else {
@@ -946,7 +1055,7 @@ fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchS
         &app,
         &repo_id,
         pid,
-        "exited",
+        ProjectLaunchState::Exited,
         Some(0),
         None,
         "已停止快速启动进程".to_string(),
@@ -960,16 +1069,12 @@ async fn run_launch_control(
     title: &'static str,
     control: fn(AppHandle, String) -> Result<ProjectLaunchStatus, String>,
 ) -> Result<ProjectLaunchStatus, String> {
-    let resource = launch_resource_id(&repo_id);
     let run_app = app.clone();
     let run_repo_id = repo_id.clone();
     run_operation(
         app,
         OperationSpec::new(OperationKind::LaunchControl)
-            .lane(DispatchLane::Interactive)
             .priority(100)
-            .resource(resource.clone(), ResourceAccessMode::ExclusiveWrite)
-            .same_resource_order(resource)
             .visible(
                 VisibleOperation::new("launch", title)
                     .priority("high")

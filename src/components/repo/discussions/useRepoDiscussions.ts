@@ -1,44 +1,65 @@
 import { computed, onBeforeUnmount, shallowRef, watch } from "vue";
+import { useWorkspace } from "../../../composables/useWorkspace";
+import type { WorkspaceStore } from "../../../composables/workspace/store";
 import { useDiscussionCreate } from "./useDiscussionCreate";
 import { useDiscussionDetail } from "./useDiscussionDetail";
 import { useDiscussionList } from "./useDiscussionList";
 
 export type RepoDiscussionsStore = ReturnType<typeof createRepoDiscussionsStore>;
 
-const stores = new Map<string, RepoDiscussionsStore>();
-const retainCounts = new Map<string, number>();
+interface RepoDiscussionsRuntime {
+  stores: Map<string, RepoDiscussionsStore>;
+  retainCounts: Map<string, number>;
+}
 
-export function repoDiscussionsStore(repoFullName: string) {
-  let store = stores.get(repoFullName);
+const runtimes = new WeakMap<WorkspaceStore, RepoDiscussionsRuntime>();
+const testRuntimes = import.meta.env.MODE === "test" ? new Set<RepoDiscussionsRuntime>() : null;
+
+function runtimeFor(workspace: WorkspaceStore) {
+  let runtime = runtimes.get(workspace);
+  if (!runtime) {
+    runtime = { stores: new Map(), retainCounts: new Map() };
+    runtimes.set(workspace, runtime);
+    testRuntimes?.add(runtime);
+  }
+  return runtime;
+}
+
+export function repoDiscussionsStore(workspace: WorkspaceStore, repoFullName: string) {
+  const runtime = runtimeFor(workspace);
+  let store = runtime.stores.get(repoFullName);
   if (!store) {
-    store = createRepoDiscussionsStore(repoFullName);
-    stores.set(repoFullName, store);
+    store = createRepoDiscussionsStore(repoFullName, workspace.github.client);
+    runtime.stores.set(repoFullName, store);
   }
   return store;
 }
 
-export function disposeRepoDiscussionsStore(repoFullName: string) {
-  const store = stores.get(repoFullName);
+export function disposeRepoDiscussionsStore(workspace: WorkspaceStore, repoFullName: string) {
+  const runtime = runtimeFor(workspace);
+  const store = runtime.stores.get(repoFullName);
   if (!store) return;
   store.dispose();
-  stores.delete(repoFullName);
+  runtime.stores.delete(repoFullName);
 }
 
 export function useRepoDiscussionsStore(repoFullName: () => string) {
+  const workspace = useWorkspace();
+  const runtime = runtimeFor(workspace);
   const initialRepo = repoFullName();
-  const current = shallowRef(repoDiscussionsStore(initialRepo));
+  const current = shallowRef(repoDiscussionsStore(workspace, initialRepo));
   let retainedRepo: string | null = null;
 
   watch(repoFullName, (nextRepo) => {
     if (retainedRepo === nextRepo) return;
-    if (retainedRepo) releaseRepoDiscussionsStore(retainedRepo);
+    if (retainedRepo) releaseRepoDiscussionsStore(workspace, retainedRepo);
     retainedRepo = nextRepo;
-    retainCounts.set(nextRepo, (retainCounts.get(nextRepo) ?? 0) + 1);
-    current.value = repoDiscussionsStore(nextRepo);
+    runtime.retainCounts.set(nextRepo, (runtime.retainCounts.get(nextRepo) ?? 0) + 1);
+    current.value = repoDiscussionsStore(workspace, nextRepo);
   }, { immediate: true });
 
   onBeforeUnmount(() => {
-    if (retainedRepo) releaseRepoDiscussionsStore(retainedRepo);
+    if (retainedRepo) releaseRepoDiscussionsStore(workspace, retainedRepo);
     retainedRepo = null;
   });
 
@@ -46,25 +67,29 @@ export function useRepoDiscussionsStore(repoFullName: () => string) {
 }
 
 export function resetRepoDiscussionsStoresForTests() {
-  stores.forEach((store) => store.dispose());
-  stores.clear();
-  retainCounts.clear();
+  testRuntimes?.forEach((runtime) => {
+    runtime.stores.forEach((store) => store.dispose());
+    runtime.stores.clear();
+    runtime.retainCounts.clear();
+  });
+  testRuntimes?.clear();
 }
 
-function releaseRepoDiscussionsStore(repoFullName: string) {
-  const nextCount = (retainCounts.get(repoFullName) ?? 1) - 1;
+function releaseRepoDiscussionsStore(workspace: WorkspaceStore, repoFullName: string) {
+  const runtime = runtimeFor(workspace);
+  const nextCount = (runtime.retainCounts.get(repoFullName) ?? 1) - 1;
   if (nextCount > 0) {
-    retainCounts.set(repoFullName, nextCount);
+    runtime.retainCounts.set(repoFullName, nextCount);
     return;
   }
-  retainCounts.delete(repoFullName);
-  disposeRepoDiscussionsStore(repoFullName);
+  runtime.retainCounts.delete(repoFullName);
+  disposeRepoDiscussionsStore(workspace, repoFullName);
 }
 
-function createRepoDiscussionsStore(repoFullName: string) {
-  const list = useDiscussionList(repoFullName);
-  const detail = useDiscussionDetail(repoFullName);
-  const create = useDiscussionCreate(repoFullName, list.metadata);
+function createRepoDiscussionsStore(repoFullName: string, github: WorkspaceStore["github"]["client"]) {
+  const list = useDiscussionList(repoFullName, github);
+  const detail = useDiscussionDetail(repoFullName, github);
+  const create = useDiscussionCreate(repoFullName, list.metadata, github);
 
   async function createDiscussion() {
     const created = await create.submit();

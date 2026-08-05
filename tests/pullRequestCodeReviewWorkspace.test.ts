@@ -2,15 +2,22 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { describe, expect, it, vi } from "vitest";
 import PullRequestCodeReviewWorkspace from "../src/components/repo/review/PullRequestCodeReviewWorkspace.vue";
 import PullRequestReviewThreads from "../src/components/repo/review/PullRequestReviewThreads.vue";
-import type { GitHubPullRequest } from "../src/services/workspace/types";
+import type {
+  GitHubBindingMetadata,
+  GitHubPullRequest,
+} from "../src/services/workspace/types";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
+import { workspaceBootstrap, workspaceSettings } from "./fixtures/workspace";
 
 const mocks = vi.hoisted(() => ({
   createHandoff: vi.fn(),
   openHandoffResult: vi.fn(),
 }));
 
-vi.mock("../src/services/codeReview", () => ({
-  getPullRequestCodeReview: vi.fn(async () => ({
+const codeReviewDetail = {
     files: [{
       sha: "file-sha",
       filename: "src/review.ts",
@@ -41,18 +48,7 @@ vi.mock("../src/services/codeReview", () => ({
       requireConversationResolution: false,
       unavailableReason: null,
     },
-  })),
-  createPullRequestLineComment: vi.fn(),
-  replyPullRequestReviewThread: vi.fn(),
-  submitPullRequestCodeReview: vi.fn(),
-}));
-
-vi.mock("../src/services/liliaCodeHandoff", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/services/liliaCodeHandoff")>(),
-  createLiliaCodeTaskHandoff: mocks.createHandoff,
-  openLiliaCodeTaskHandoffResult: mocks.openHandoffResult,
-  waitForLiliaCodeTaskHandoff: vi.fn(),
-}));
+  } as const;
 
 const pull: GitHubPullRequest = {
   number: 26,
@@ -74,6 +70,61 @@ const pull: GitHubPullRequest = {
 };
 
 describe("PullRequestCodeReviewWorkspace", () => {
+  it("rejects account A review data after account B becomes current", async () => {
+    const accountARequest = Promise.withResolvers<typeof codeReviewDetail>();
+    const accountBDetail = {
+      ...codeReviewDetail,
+      files: [{ ...codeReviewDetail.files[0], filename: "src/account-b.ts" }],
+    };
+    const getPullRequestCodeReview = vi.fn()
+      .mockImplementationOnce(() => accountARequest.promise)
+      .mockResolvedValueOnce(accountBDetail);
+    const accountA: GitHubBindingMetadata = {
+      login: "account-a",
+      avatarUrl: null,
+      boundAt: 1,
+      scopes: ["repo"],
+      clientIdSource: "bundled",
+    };
+    const settings = workspaceSettings();
+    settings.githubBinding = accountA;
+    const store = createWorkspaceStoreFixture({ getPullRequestCodeReview });
+    store.stateFeature.applyWorkspaceBootstrap(workspaceBootstrap(settings));
+
+    render(PullRequestCodeReviewWorkspace, {
+      props: {
+        repoFullName: "acme/widget",
+        pull,
+        checks: [],
+        updating: false,
+        mergeMethod: "merge",
+        sourceRoute: "/repos/acme-widget?projectTab=pulls&pr=26",
+      },
+      global: { provide: provideWorkspaceStoreFixture(store) },
+    });
+    await waitFor(() => expect(getPullRequestCodeReview).toHaveBeenCalledTimes(1));
+
+    store.stateFeature.applyBindingStatus({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: { ...accountA, login: "account-b", boundAt: 2 },
+    });
+
+    expect(await screen.findByText("src/account-b.ts")).toBeVisible();
+    expect(store.sessionContext.revision).toBe(1);
+
+    accountARequest.resolve({
+      ...codeReviewDetail,
+      files: [{ ...codeReviewDetail.files[0], filename: "src/account-a.ts" }],
+    });
+    await accountARequest.promise;
+    await Promise.resolve();
+
+    expect(screen.queryByText("src/account-a.ts")).toBeNull();
+    expect(screen.getByText("src/account-b.ts")).toBeVisible();
+  });
+
   it("hands off real worktree context and opens accepted results through the native command", async () => {
     let resolveOpen!: () => void;
     const openPending = new Promise<void>((resolve) => { resolveOpen = resolve; });
@@ -88,6 +139,11 @@ describe("PullRequestCodeReviewWorkspace", () => {
       updatedAt: "2026-07-17T01:00:00Z",
     }));
 
+    const store = createWorkspaceStoreFixture({
+      getPullRequestCodeReview: vi.fn(async () => codeReviewDetail),
+      createLiliaCodeTaskHandoff: mocks.createHandoff,
+      openLiliaCodeTaskHandoffResult: mocks.openHandoffResult,
+    });
     render(PullRequestCodeReviewWorkspace, {
       props: {
         repoFullName: "acme/widget",
@@ -100,6 +156,7 @@ describe("PullRequestCodeReviewWorkspace", () => {
         remoteUrl: "https://github.com/acme/widget.git",
         sourceRoute: "/repos/acme-widget?projectTab=pulls&pr=26",
       },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     await screen.findByText("src/review.ts");

@@ -1,39 +1,9 @@
-import { useRouter, type LocationQueryRaw, type RouteLocationNormalizedLoaded, type Router } from "vue-router";
+import { useRouter, type RouteLocationNormalizedLoaded, type Router } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import type { WorkspaceRecentContextV1 } from "../services/workspace";
-import {
-  normalizeRepoProjectTab,
-  repoCommitRoute,
-  repoRoute,
-  repoRouteTabFromRoute,
-} from "../utils/repoRoutes";
+import { RepoRouteStateCodec } from "../utils/repoRouteState";
 
 const CONTEXT_VERSION = 1 as const;
-
-const PROJECT_FILTER_KEYS = {
-  issues: [
-    "issueState", "issueQ", "issueCreator", "issueAssignee", "issueLabels",
-    "issueMilestone", "issueProject", "issueSort", "issueDirection",
-  ],
-  pulls: [
-    "pullState", "pullQ", "pullCreator", "pullAssignee", "pullLabels",
-    "pullMilestone", "pullProject", "pullSort", "pullDirection", "pullReview",
-  ],
-  discussions: [
-    "discussionState", "discussionCategory", "discussionAnswered",
-    "discussionSort", "discussionDirection",
-  ],
-  actions: [
-    "actionState", "actionQ", "actionWorkflow", "actionBranch", "actionEvent",
-    "actionActor", "actionStatus", "actionSort", "actionDirection",
-  ],
-} as const;
-const PROJECT_TARGET_KEYS = {
-  issues: "issue",
-  pulls: "pr",
-  discussions: "discussion",
-  actions: "run",
-} as const;
 
 type WorkspaceApi = ReturnType<typeof useWorkspace>;
 type PendingWrite = { workspaceId: string; context: WorkspaceRecentContextV1 | null };
@@ -59,40 +29,7 @@ export function normalizeWorkspaceRecentContextRoute(
   router: Router,
   route: Pick<RouteLocationNormalizedLoaded, "meta" | "params" | "path" | "query">,
 ): string | null {
-  const repoId = route.params.repoId;
-  if (typeof repoId !== "string" || !repoId.trim() || !route.path.startsWith("/repos/")) return null;
-
-  const hash = route.params.hash;
-  if (typeof hash === "string" && hash.trim()) {
-    return router.resolve(repoCommitRoute(repoId, hash.trim())).fullPath;
-  }
-
-  const tab = repoRouteTabFromRoute(route);
-  const path = repoRoute(repoId, tab);
-  const query: LocationQueryRaw = {};
-
-  if (tab === "files") {
-    copyString(route, query, "ref");
-    if (copyString(route, query, "file")) copyString(route, query, "hash");
-  } else if (tab === "changes") {
-    copyString(route, query, "change");
-  } else if (tab === "repo") {
-    const projectTab = normalizeRepoProjectTab(route.query.projectTab);
-    if (projectTab && projectTab !== "readme") {
-      query.projectTab = projectTab;
-      if (projectTab in PROJECT_FILTER_KEYS) {
-        const key = projectTab as keyof typeof PROJECT_FILTER_KEYS;
-        const hasTarget = copyPositiveInteger(route, query, PROJECT_TARGET_KEYS[key]);
-        if (key === "actions" && hasTarget) copyPositiveInteger(route, query, "job");
-        copyKeys(route, query, PROJECT_FILTER_KEYS[key]);
-      } else if (projectTab === "release") {
-        copyString(route, query, "releaseTag");
-        copyEnum(route, query, "releaseType", ["all", "stable", "latest", "prerelease", "draft"]);
-      }
-    }
-  }
-
-  return router.resolve({ path, query }).fullPath;
+  return RepoRouteStateCodec.recentContextRoute(router, route);
 }
 
 export function createWorkspaceRecentContextController(router: Router, workspace: WorkspaceApi) {
@@ -245,43 +182,6 @@ export function createWorkspaceRecentContextController(router: Router, workspace
     dispose,
   };
   return controller;
-}
-
-function copyKeys(
-  route: Pick<RouteLocationNormalizedLoaded, "query">,
-  query: LocationQueryRaw,
-  keys: readonly string[],
-) {
-  for (const key of keys) copyString(route, query, key);
-}
-
-function copyString(route: Pick<RouteLocationNormalizedLoaded, "query">, query: LocationQueryRaw, key: string) {
-  const raw = route.query[key];
-  const values = (Array.isArray(raw) ? raw : [raw])
-    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
-    .map((value) => value.trim());
-  if (!values.length) return false;
-  query[key] = values.length === 1 ? values[0] : values;
-  return true;
-}
-
-function copyPositiveInteger(route: Pick<RouteLocationNormalizedLoaded, "query">, query: LocationQueryRaw, key: string) {
-  const raw = Array.isArray(route.query[key]) ? route.query[key][0] : route.query[key];
-  if (typeof raw !== "string" || !/^\d+$/.test(raw) || Number(raw) < 1) return false;
-  query[key] = String(Number(raw));
-  return true;
-}
-
-function copyEnum(
-  route: Pick<RouteLocationNormalizedLoaded, "query">,
-  query: LocationQueryRaw,
-  key: string,
-  allowed: readonly string[],
-) {
-  const raw = Array.isArray(route.query[key]) ? route.query[key][0] : route.query[key];
-  if (typeof raw !== "string" || !allowed.includes(raw)) return false;
-  query[key] = raw;
-  return true;
 }
 
 function sameContext(left: WorkspaceRecentContextV1 | null | undefined, right: WorkspaceRecentContextV1 | null) {

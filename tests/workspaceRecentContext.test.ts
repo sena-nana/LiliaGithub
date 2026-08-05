@@ -7,6 +7,7 @@ import {
 } from "../src/composables/useWorkspaceRecentContext";
 import type { useWorkspace } from "../src/composables/useWorkspace";
 import { createLiliaGithubRouter } from "../src/router";
+import { createSessionContext } from "../src/composables/sessionContext";
 import type { NamedWorkspace, WorkspaceRecentContextV1 } from "../src/services/workspace";
 
 function namedWorkspace(id: string, recentContext: WorkspaceRecentContextV1 | null): NamedWorkspace {
@@ -49,7 +50,7 @@ function workspaceHarness(
 }
 
 async function routerAt(path: string) {
-  const router = createLiliaGithubRouter(createMemoryHistory());
+  const router = createLiliaGithubRouter(createSessionContext(), createMemoryHistory());
   await router.push(path);
   await router.isReady();
   return router;

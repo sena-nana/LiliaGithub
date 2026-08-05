@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { state, deviceFlow, githubBinding } from "../src/composables/workspace/state";
-import { startAuthFlow } from "../src/composables/workspace/auth";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { GitHubBindingStatus } from "../src/services/workspace";
+import { createWorkspaceStoreFixture, resetWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 
 const service = {
   startGitHubDeviceFlow: vi.fn(),
@@ -10,6 +9,9 @@ const service = {
   openUrl: vi.fn(),
 };
 const writeText = vi.fn();
+const workspace = createWorkspaceStoreFixture(service);
+const { state, deviceFlow, githubBinding } = workspace.stateFeature;
+const { startAuthFlow } = workspace;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -18,10 +20,6 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
 
 const boundStatus: GitHubBindingStatus = {
   state: "bound",
@@ -38,6 +36,7 @@ const boundStatus: GitHubBindingStatus = {
 
 describe("GitHub 设备码授权", () => {
   beforeEach(() => {
+    resetWorkspaceStoreFixture(workspace);
     writeText.mockReset();
     writeText.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

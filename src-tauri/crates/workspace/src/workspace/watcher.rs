@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -140,54 +140,100 @@ impl Default for RepoWatcherManager {
     }
 }
 
-fn watcher_manager() -> &'static Mutex<RepoWatcherManager> {
-    static MANAGER: OnceLock<Mutex<RepoWatcherManager>> = OnceLock::new();
-    MANAGER.get_or_init(|| Mutex::new(RepoWatcherManager::default()))
+#[derive(Default)]
+pub(crate) struct WatcherRuntimeState {
+    manager: Mutex<RepoWatcherManager>,
+    sync_gate: Mutex<()>,
+    suspended_repos: Mutex<HashMap<String, usize>>,
 }
 
-fn watcher_sync_gate() -> &'static Mutex<()> {
-    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
-    GATE.get_or_init(|| Mutex::new(()))
+impl WatcherRuntimeState {
+    pub(crate) fn shutdown(&self) {
+        let _gate = self
+            .sync_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        clear_repo_watchers_locked(self);
+        self.suspended_repos
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
 }
 
-pub(super) fn sync_repo_watchers(app: &AppHandle) {
-    let _gate = watcher_sync_gate()
+pub(super) fn sync_repo_watchers(app: &AppHandle) -> Result<(), String> {
+    let state = app.watcher_runtime();
+    let _gate = state
+        .sync_gate
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    sync_repo_watchers_locked(app, None);
+    sync_repo_watchers_locked(app)
 }
 
 pub(super) struct SuspendedRepoWatcher {
     app: AppHandle,
-    _gate: MutexGuard<'static, ()>,
+    repo_id: String,
 }
 
 impl Drop for SuspendedRepoWatcher {
     fn drop(&mut self) {
-        sync_repo_watchers_locked(&self.app, None);
+        let state = self.app.watcher_runtime();
+        let _gate = state
+            .sync_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut suspended = state
+            .suspended_repos
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = suspended.get_mut(&self.repo_id) {
+            *count -= 1;
+            if *count == 0 {
+                suspended.remove(&self.repo_id);
+            }
+        }
+        drop(suspended);
+        let _ = sync_repo_watchers_locked(&self.app);
     }
 }
 
-pub(super) fn suspend_repo_watcher(app: &AppHandle, repo_id: &str) -> SuspendedRepoWatcher {
-    let gate = watcher_sync_gate()
+pub(super) fn suspend_repo_watcher(
+    app: &AppHandle,
+    repo_id: &str,
+) -> Result<SuspendedRepoWatcher, String> {
+    let state = app.watcher_runtime();
+    let _gate = state
+        .sync_gate
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    sync_repo_watchers_locked(app, Some(repo_id));
-    SuspendedRepoWatcher {
+    *state
+        .suspended_repos
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .entry(repo_id.to_string())
+        .or_default() += 1;
+    sync_repo_watchers_locked(app)?;
+    Ok(SuspendedRepoWatcher {
         app: app.clone(),
-        _gate: gate,
-    }
+        repo_id: repo_id.to_string(),
+    })
 }
 
-fn sync_repo_watchers_locked(app: &AppHandle, excluded_repo_id: Option<&str>) {
-    let settings = load_settings(app);
+fn sync_repo_watchers_locked(app: &AppHandle) -> Result<(), String> {
+    let runtime = app.watcher_runtime();
+    let suspended_repos = runtime
+        .suspended_repos
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    let settings = load_settings(app)?;
     let repos = settings
         .managed_repo_ids
         .iter()
         .filter(|id| !settings.hidden_repo_ids.contains(id))
-        .filter(|id| excluded_repo_id != Some(id.as_str()))
+        .filter(|id| !suspended_repos.contains_key(id.as_str()))
         .filter_map(|id| {
-            let path = repo_path_by_id(app, &id).ok()?;
+            let path = repo_path_by_id(app, id).ok()?;
             let root = id
                 .strip_prefix("local:")
                 .and_then(|value| value.split_once('/'))
@@ -197,13 +243,14 @@ fn sync_repo_watchers_locked(app: &AppHandle, excluded_repo_id: Option<&str>) {
         })
         .collect::<Vec<_>>();
     if repos.is_empty() {
-        clear_repo_watchers_locked();
-        return;
+        clear_repo_watchers_locked(runtime);
+        return Ok(());
     }
     let watch_roots = watch_roots(&repos).into_iter().collect::<HashSet<_>>();
 
     let mut failed_repo_ids = HashSet::new();
-    let mut manager = watcher_manager()
+    let mut manager = runtime
+        .manager
         .lock()
         .unwrap_or_else(|error| error.into_inner());
 
@@ -264,17 +311,21 @@ fn sync_repo_watchers_locked(app: &AppHandle, excluded_repo_id: Option<&str>) {
     if !failed_repo_ids.is_empty() {
         enqueue_uncertain_repo_refreshes(app.clone(), failed_repo_ids);
     }
+    Ok(())
 }
 
-pub(super) fn clear_repo_watchers() {
-    let _gate = watcher_sync_gate()
+pub(super) fn clear_repo_watchers(app: &AppHandle) {
+    let state = app.watcher_runtime();
+    let _gate = state
+        .sync_gate
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    clear_repo_watchers_locked();
+    clear_repo_watchers_locked(state);
 }
 
-fn clear_repo_watchers_locked() {
-    let mut manager = watcher_manager()
+fn clear_repo_watchers_locked(state: &WatcherRuntimeState) {
+    let mut manager = state
+        .manager
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     manager.watcher = None;
@@ -286,11 +337,14 @@ fn clear_repo_watchers_locked() {
 }
 
 #[cfg(test)]
-pub(super) fn repo_watch_snapshot_for_tests() -> Vec<(String, PathBuf)> {
-    let _gate = watcher_sync_gate()
+pub(super) fn repo_watch_snapshot_for_tests(app: &AppHandle) -> Vec<(String, PathBuf)> {
+    let state = app.watcher_runtime();
+    let _gate = state
+        .sync_gate
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let manager = watcher_manager()
+    let manager = state
+        .manager
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let index = manager

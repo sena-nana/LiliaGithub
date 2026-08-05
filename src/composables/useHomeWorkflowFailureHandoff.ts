@@ -1,19 +1,16 @@
 import { reactive } from "vue";
 import {
   buildWorkflowFailureHandoff,
-  createLiliaCodeTaskHandoff,
-  openLiliaCodeTaskHandoffResult,
-  waitForLiliaCodeTaskHandoff,
   type LiliaCodeTaskHandoff,
   type LiliaCodeTaskHandoffStatus,
 } from "../services/liliaCodeHandoff";
 import {
-  getGitHubWorkflowJobLog,
-  getGitHubWorkflowRunDetail,
   type GitHubWorkflowRun,
   type GitHubWorkflowRunDetail,
   type RepoSummary,
 } from "../services/workspace";
+import type { WorkspaceClient } from "../services/workspace/client";
+import { useWorkspace } from "./useWorkspace";
 import { githubRepositoryIdentityKey, normalizeRemoteRepoFullName } from "../utils/remoteRepo";
 import { representativeReposByGitHubFullName } from "../utils/repoWorktree";
 import { errorExcerptFromLog, workflowFailureSummary } from "../utils/workflowDiagnostics";
@@ -62,6 +59,7 @@ export function findWorkflowFailureWorktree(
 
 export function useHomeWorkflowFailureHandoff() {
   const sessions = new Map<string, WorkflowFailureHandoffSession>();
+  const github = useWorkspace().github.client;
 
   function getSession(itemId: string): WorkflowFailureHandoffSession {
     const current = sessions.get(itemId);
@@ -83,17 +81,17 @@ export function useHomeWorkflowFailureHandoff() {
     try {
       if (!session.draft) {
         session.busy = "diagnostics";
-        session.draft = await buildHandoffDraft(input);
+        session.draft = await buildHandoffDraft(github, input);
       }
 
       session.busy = "handoff";
       let status = session.status;
       if (status?.status === "pending") {
-        status = await waitForLiliaCodeTaskHandoff(session.draft.id, HANDOFF_POLL_OPTIONS);
+        status = await github.waitForLiliaCodeTaskHandoff(session.draft.id, HANDOFF_POLL_OPTIONS);
       } else {
-        status = await createLiliaCodeTaskHandoff(session.draft);
+        status = await github.createLiliaCodeTaskHandoff(session.draft);
         if (status.status === "pending") {
-          status = await waitForLiliaCodeTaskHandoff(session.draft.id, HANDOFF_POLL_OPTIONS);
+          status = await github.waitForLiliaCodeTaskHandoff(session.draft.id, HANDOFF_POLL_OPTIONS);
         }
       }
       session.status = status;
@@ -112,7 +110,7 @@ export function useHomeWorkflowFailureHandoff() {
     session.busy = "open";
     session.error = null;
     try {
-      await openLiliaCodeTaskHandoffResult(status.handoffId);
+      await github.openLiliaCodeTaskHandoffResult(status.handoffId);
     } catch (reason) {
       session.error = cleanError(reason);
     } finally {
@@ -123,11 +121,11 @@ export function useHomeWorkflowFailureHandoff() {
   return { getSession, handoff, openResult };
 }
 
-async function buildHandoffDraft(input: HomeWorkflowFailureHandoffInput) {
+async function buildHandoffDraft(github: WorkspaceClient, input: HomeWorkflowFailureHandoffInput) {
   assertHandoffInput(input);
-  const detail = await getGitHubWorkflowRunDetail(input.repoFullName, input.run.id);
+  const detail = await github.getGitHubWorkflowRunDetail(input.repoFullName, input.run.id);
   assertCurrentWorkflowDetail(input, detail);
-  const logSummary = await buildLogSummary(input.repoFullName, detail);
+  const logSummary = await buildLogSummary(github, input.repoFullName, detail);
   const workflowPath = detail.workflow?.path.trim();
   return buildWorkflowFailureHandoff({
     repository: {
@@ -175,7 +173,7 @@ function assertHandoffInput(input: HomeWorkflowFailureHandoffInput) {
   }
 }
 
-async function buildLogSummary(repoFullName: string, detail: GitHubWorkflowRunDetail) {
+async function buildLogSummary(github: WorkspaceClient, repoFullName: string, detail: GitHubWorkflowRunDetail) {
   const failure = workflowFailureSummary(detail.jobs);
   const lines = [`Run 结论：${detail.run.conclusion ?? detail.run.status}`];
   if (!failure.failedJobs.length) {
@@ -186,7 +184,7 @@ async function buildLogSummary(repoFullName: string, detail: GitHubWorkflowRunDe
   }
 
   const logResults = await Promise.allSettled(
-    failure.failedJobs.map((job) => getGitHubWorkflowJobLog(repoFullName, job.id)),
+    failure.failedJobs.map((job) => github.getGitHubWorkflowJobLog(repoFullName, job.id)),
   );
   if (logResults.every((result) => result.status === "rejected")) {
     throw new Error("失败 Workflow 的诊断日志暂时无法读取，请稍后重试。");

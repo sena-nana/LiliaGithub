@@ -1,8 +1,18 @@
-import { deviceFlow, applyBindingStatus, state } from "./state";
-import { loadWorkspaceService } from "./serviceLoader";
-import { copyText } from "./system";
+import type { WorkspaceStateFeature } from "./state";
+import type { WorkspaceSystemFeature, WorkspaceServiceLoader } from "./system";
 import type { GitHubDeviceFlowPollResult } from "../../services/workspace";
-import { reloadAccountWorkspace } from "./account";
+import type { WorkspaceAccountFeature } from "./account";
+
+export function createWorkspaceAuthFeature(
+  {
+    deviceFlow,
+    applyBindingStatus,
+    state,
+  }: Pick<WorkspaceStateFeature, "deviceFlow" | "applyBindingStatus" | "state">,
+  { copyText }: Pick<WorkspaceSystemFeature, "copyText">,
+  { reloadAccountWorkspace }: Pick<WorkspaceAccountFeature, "reloadAccountWorkspace">,
+  loadWorkspaceService: WorkspaceServiceLoader,
+) {
 
 let authPollTimer: ReturnType<typeof setTimeout> | null = null;
 let authCountdownTimer: ReturnType<typeof setInterval> | null = null;
@@ -71,7 +81,7 @@ async function copyAuthUserCode() {
   state.authNotice = "授权码已复制，请在 GitHub 授权页粘贴。";
 }
 
-export async function startAuthFlow() {
+async function startAuthFlow() {
   authFlowVersion += 1;
   const currentVersion = authFlowVersion;
   clearAuthTimers();
@@ -105,7 +115,7 @@ export async function startAuthFlow() {
   }
 }
 
-export async function pollAuthFlow() {
+async function pollAuthFlow() {
   if (!deviceFlow.value) return null;
   if (state.authLoading) return null;
 
@@ -168,7 +178,7 @@ export async function pollAuthFlow() {
   }
 }
 
-export async function unbindGitHub() {
+async function unbindGitHub() {
   const currentVersion = ++authFlowVersion;
   clearAuthTimers();
   state.authLoading = true;
@@ -196,7 +206,12 @@ export async function unbindGitHub() {
   }
 }
 
-export function resetAuthFlowRuntimeForTests() {
+function resetAuthRuntime() {
   authFlowVersion += 1;
   clearAuthTimers();
 }
+
+return { startAuthFlow, pollAuthFlow, unbindGitHub, resetAuthRuntime };
+}
+
+export type WorkspaceAuthFeature = ReturnType<typeof createWorkspaceAuthFeature>;

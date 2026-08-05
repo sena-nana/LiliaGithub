@@ -1,22 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import {
-  applyWorkspaceRepoRefreshed,
-  applyWorkspaceTaskChanged,
   ACTIVE_REMOTE_REPO_REFRESH_TTL_MS,
-  ensureRepoRefreshEventsReady,
-  hydrateRepoRemoteCheckedAt,
-  markActiveRepoLocalReady,
   REMOTE_REPO_REFRESH_TTL_MS,
-  requestManualRepoRemoteRefresh,
-  resetRepoRefreshRuntimeForTests,
-  scheduleAutoSyncRepoRefreshes,
-  setActiveRepoForRefresh,
-  setRepoRefreshLifecycleFocused,
-  waitForWorkspaceTask,
 } from "../src/composables/workspace/repoRefreshEvents";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
+import { createWorkspaceStoreFixture, resetWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 
 const service = vi.hoisted(() => ({
   setActiveWorkspaceRepo: vi.fn(),
@@ -24,10 +12,21 @@ const service = vi.hoisted(() => ({
   listWorkspaceTasks: vi.fn(),
   setWorkspaceRefreshPaused: vi.fn(),
 }));
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
+const workspace = createWorkspaceStoreFixture(service);
+const {
+  applyWorkspaceRepoRefreshed,
+  applyWorkspaceTaskChanged,
+  ensureRepoRefreshEventsReady,
+  hydrateRepoRemoteCheckedAt,
+  markActiveRepoLocalReady,
+  requestManualRepoRemoteRefresh,
+  resetRepoRefreshRuntimeForTests,
+  scheduleAutoSyncRepoRefreshes,
+  setActiveRepoForRefresh,
+  setRepoRefreshLifecycleFocused,
+  waitForWorkspaceTask,
+} = workspace;
+const { state } = workspace.stateFeature;
 
 function currentWorkspaceContext() {
   return { workspaceId: state.settings?.activeWorkspaceId ?? null, contextRevision: state.contextRevision };
@@ -36,8 +35,7 @@ function currentWorkspaceContext() {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-10T00:00:00Z"));
-  resetRepoRefreshRuntimeForTests();
-  resetWorkspaceStateForTests();
+  resetWorkspaceStoreFixture(workspace);
   vi.clearAllMocks();
   state.settings = workspaceSettings();
   state.repos = [repoSummary("A"), repoSummary("B")];

@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::shared::configure_background_command;
+use reqwest::Url;
 
 pub use super::lilia_code_handoff::{
     lilia_code_create_task_handoff, lilia_code_get_task_handoff_status,
@@ -53,9 +54,19 @@ pub fn system_open_path_target(app: AppHandle, path: String, target: String) -> 
 }
 
 pub fn system_open_url(app: AppHandle, url: String) -> Result<(), String> {
+    validate_external_url(&url)?;
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("打开链接失败：{e}"))
+}
+
+fn validate_external_url(value: &str) -> Result<(), String> {
+    let url = Url::parse(value).map_err(|_| "链接格式无效".to_string())?;
+    if matches!(url.scheme(), "http" | "https") {
+        Ok(())
+    } else {
+        Err("仅支持打开 HTTP 或 HTTPS 链接".to_string())
+    }
 }
 
 fn open_command_target(path: &Path, label: &str, commands: &[&str]) -> Result<(), String> {
@@ -152,4 +163,18 @@ fn spawn_external(mut command: Command) -> Result<(), String> {
 fn path_to_str(path: &Path) -> Result<&str, String> {
     path.to_str()
         .ok_or_else(|| format!("路径不是有效 UTF-8：{}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_urls_are_limited_to_web_protocols() {
+        assert!(validate_external_url("https://github.com/sena-nana/LiliaGithub").is_ok());
+        assert!(validate_external_url("http://localhost:1420/path").is_ok());
+        assert!(validate_external_url("file:///tmp/private").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("not a url").is_err());
+    }
 }

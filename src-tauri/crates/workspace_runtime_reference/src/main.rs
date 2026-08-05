@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use lilia_github_workspace::task_runtime::{
-    DispatchLane, ExecutionClass, TaskOutcome, TaskSpec, WorkspaceTaskRuntime,
+    ExecutionClass, TaskOutcome, TaskSpec, WorkspaceTaskRuntime,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -97,24 +97,14 @@ fn run_sample(
     background_ms: u64,
 ) -> Result<f64, String> {
     let first = runtime.submit(
-        TaskSpec::new(
-            format!("bench-{sample}-analysis"),
-            DispatchLane::Background,
-            -50,
-            ExecutionClass::Cpu,
-        ),
+        TaskSpec::new(format!("bench-{sample}-analysis"), -50, ExecutionClass::Cpu),
         Box::new(move |_| {
             thread::sleep(Duration::from_millis(background_ms));
             Ok(())
         }),
     )?;
     let second = runtime.submit(
-        TaskSpec::new(
-            format!("bench-{sample}-bulk"),
-            DispatchLane::Bulk,
-            -50,
-            ExecutionClass::Cpu,
-        ),
+        TaskSpec::new(format!("bench-{sample}-bulk"), -50, ExecutionClass::Cpu),
         Box::new(move |_| {
             thread::sleep(Duration::from_millis(background_ms));
             Ok(())
@@ -127,7 +117,6 @@ fn run_sample(
     let interactive = runtime.submit(
         TaskSpec::new(
             format!("bench-{sample}-status"),
-            DispatchLane::Interactive,
             100,
             ExecutionClass::Blocking,
         ),

@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
-import { UiButton } from "../ui";
+import { UiButton } from "@lilia/ui";
 
 const repoProjectPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoProjectPanel.vue"));
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));

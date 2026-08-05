@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
+import { workspaceFallbackForTests } from "../src/services/workspace";
+import { createDefaultWorkspaceTransport, createWorkspaceClient } from "../src/services/workspace/client";
+const {
   abortConflictOperation,
   acceptConflictFile,
   continueConflictOperation,
   getRepoConflicts,
   markFileResolved,
   resolveConflictFile,
-  workspaceFallbackForTests,
-} from "../src/services/workspace";
+} = createWorkspaceClient(createDefaultWorkspaceTransport());
 import { conflictState, repoSummary } from "./fixtures/workspace";
 
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;

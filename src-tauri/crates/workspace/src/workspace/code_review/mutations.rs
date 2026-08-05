@@ -68,7 +68,7 @@ pub async fn github_create_pull_request_line_comment(
             let payload = line_comment_payload(request)?;
             let (binding, token) = github_require_token(&app)?;
             github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "提交 Pull Request 行评论失败",
@@ -84,7 +84,7 @@ pub async fn github_create_pull_request_line_comment(
             )?;
             let comment =
                 github_json::<RestCommentResponse>("提交 Pull Request 行评论失败", response)?;
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(rest_comment(comment))
         },
     )
@@ -106,9 +106,9 @@ pub async fn github_reply_pull_request_review_thread(
             let body = non_empty(request.body).ok_or_else(|| "回复内容不能为空".to_string())?;
             let (binding, token) = github_require_token(&app)?;
             github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let comment = reply_to_review_thread(&app, &client, &token, &thread_id, &body)?;
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(comment)
         },
     )
@@ -158,7 +158,7 @@ pub async fn github_submit_pull_request_code_review(
             let payload = submit_review_payload(request)?;
             let (binding, token) = github_require_token(&app)?;
             github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "提交 Pull Request Code Review 失败",
@@ -174,7 +174,7 @@ pub async fn github_submit_pull_request_code_review(
             )?;
             let review =
                 github_json::<ReviewResponse>("提交 Pull Request Code Review 失败", response)?;
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(review_from_response(review))
         },
     )

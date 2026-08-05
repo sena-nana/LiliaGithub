@@ -9,6 +9,10 @@ import type {
   GitHubRepositoryDiscussionMetadata,
   GitHubRepositoryDiscussionSummary,
 } from "../src/services/workspace/discussions/types";
+import {
+  createWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
 
 const api = vi.hoisted(() => ({
   getMetadata: vi.fn(),
@@ -19,14 +23,7 @@ const api = vi.hoisted(() => ({
   createDiscussion: vi.fn(),
 }));
 
-vi.mock("../src/services/workspace/discussions/client", () => ({
-  getGitHubRepositoryDiscussionMetadata: api.getMetadata,
-  listGitHubRepositoryDiscussions: api.listDiscussions,
-  getGitHubRepositoryDiscussion: api.getDiscussion,
-  listGitHubRepositoryDiscussionComments: api.listComments,
-  listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
-  createGitHubRepositoryDiscussion: api.createDiscussion,
-}));
+let workspace: WorkspaceStore;
 
 const metadata: GitHubRepositoryDiscussionMetadata = {
   enabled: true,
@@ -85,6 +82,14 @@ describe("repo discussions store", () => {
     resetRepoDiscussionsStoresForTests();
     vi.clearAllMocks();
     api.getMetadata.mockResolvedValue(metadata);
+    workspace = createWorkspaceStoreFixture({
+      getGitHubRepositoryDiscussionMetadata: api.getMetadata,
+      listGitHubRepositoryDiscussions: api.listDiscussions,
+      getGitHubRepositoryDiscussion: api.getDiscussion,
+      listGitHubRepositoryDiscussionComments: api.listComments,
+      listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
+      createGitHubRepositoryDiscussion: api.createDiscussion,
+    });
   });
 
   it("loads cursor pages with the selected filters and deduplicates overlapping items", async () => {
@@ -100,7 +105,7 @@ describe("repo discussions store", () => {
         totalCount: 3,
       });
 
-    const store = repoDiscussionsStore("acme/repo");
+    const store = repoDiscussionsStore(workspace, "acme/repo");
     await store.list.ensureLoaded();
     await store.list.loadMore();
 
@@ -150,7 +155,7 @@ describe("repo discussions store", () => {
         totalCount: 2,
       });
 
-    const store = repoDiscussionsStore("acme/repo");
+    const store = repoDiscussionsStore(workspace, "acme/repo");
     await store.detail.open(1);
     await store.detail.loadMoreComments(1);
     await store.detail.loadReplies("comment-1");
@@ -182,7 +187,7 @@ describe("repo discussions store", () => {
     const created = discussion(8, { title: "New topic", body: "Body" });
     api.createDiscussion.mockResolvedValue(created);
 
-    const store = repoDiscussionsStore("acme/repo");
+    const store = repoDiscussionsStore(workspace, "acme/repo");
     await store.list.ensureLoaded();
     store.create.prepare();
     store.create.draft.title = "  New topic  ";

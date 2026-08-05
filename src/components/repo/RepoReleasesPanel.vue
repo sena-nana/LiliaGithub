@@ -9,7 +9,7 @@ import {
   X,
 } from "@lucide/vue";
 import { computed, reactive, ref, watch } from "vue";
-import { openContextMenuAt, type ContextMenuItem } from "../../ui";
+import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables";
 import type {
   GitHubCreateReleaseRequest,
   GitHubRelease,
@@ -87,7 +87,11 @@ watch(() => props.repoFullName, () => {
 });
 
 watch(() => props.createRequested, (requested) => {
-  if (requested) openCreate();
+  if (requested) {
+    if (!createOpen.value) openCreate();
+    return;
+  }
+  if (createOpen.value) resetForm();
 }, { immediate: true });
 
 function blankForm(): ReleaseForm {
@@ -161,10 +165,14 @@ function openReleaseActions(release: GitHubRelease, event: MouseEvent) {
 
 function closeForm() {
   const wasCreating = createOpen.value;
+  resetForm();
+  if (wasCreating) emit("closeCreate");
+}
+
+function resetForm() {
   createOpen.value = false;
   editingReleaseId.value = null;
   Object.assign(form, blankForm());
-  if (wasCreating) emit("closeCreate");
 }
 
 function submitForm() {
@@ -283,9 +291,6 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
   if (target.kind === "external") emit("openUrl", target.href);
 }
 
-defineExpose({
-  openCreate,
-});
 </script>
 
 <template>

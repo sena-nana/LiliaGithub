@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { Settings } from "@lucide/vue";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { SB_MENU_POP_TRANSITION_MS, UiSwitch, useAnchoredMenuMotion } from "../../ui";
+import { AnchoredActionMenu } from "@lilia/ui/overlay";
+import { useAnchoredActionMenu } from "@lilia/ui/composables/useAnchoredActionMenu";
+import { createAnchoredMenuPosition } from "@lilia/ui/composables/menuMotion";
+import { UiSwitch } from "@lilia/ui";
 import { REPO_SETTING_ITEMS, type RepoSettingKey } from "../../config/repoSettingsManifest";
 
 const props = defineProps<{
@@ -14,59 +16,28 @@ const emit = defineEmits<{
   openRemoteSyncSettings: [];
 }>();
 
-const open = ref(false);
-const placement = computed(() => "bottom" as const);
-const menuMotion = useAnchoredMenuMotion(open, placement);
-const menuStyle = computed(() => menuMotion.overlayStyle.value);
+const { open, position, close } = useAnchoredActionMenu();
 const settings = REPO_SETTING_ITEMS;
 
 function toggle(event: MouseEvent) {
   if (props.disabled) return;
-  menuMotion.captureAnchor(event);
-  open.value = !open.value;
-}
-
-function close() {
-  open.value = false;
-}
-
-function onDocPointer(event: PointerEvent) {
-  if (!menuMotion.containsTarget(event.target)) close();
-}
-
-function onKey(event: KeyboardEvent) {
-  if (event.key === "Escape" && open.value) {
+  if (open.value) {
     close();
-    event.stopPropagation();
+    return;
   }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  position.value = createAnchoredMenuPosition(rect.right, rect.bottom, rect.right, rect.bottom);
+  open.value = true;
 }
 
 function settingAgentId(key: RepoSettingKey) {
   return `repo.toolbar.settings.${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
 }
-
-watch(open, async (value) => {
-  if (value) {
-    await menuMotion.updatePosition();
-    document.addEventListener("pointerdown", onDocPointer, true);
-    document.addEventListener("keydown", onKey);
-  } else {
-    menuMotion.clearAnchor();
-    document.removeEventListener("pointerdown", onDocPointer, true);
-    document.removeEventListener("keydown", onKey);
-  }
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointer, true);
-  document.removeEventListener("keydown", onKey);
-});
 </script>
 
 <template>
   <div class="repo-toolbar-settings">
     <button
-      :ref="menuMotion.triggerEl"
       type="button"
       class="repo-toolbar__btn repo-toolbar-settings__button"
       :class="{ 'is-open': open }"
@@ -81,15 +52,14 @@ onBeforeUnmount(() => {
       <Settings :size="17" aria-hidden="true" />
     </button>
 
-    <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
-      <div
-        v-if="open"
-        :ref="menuMotion.menuEl"
-        class="repo-toolbar-settings__menu"
-        role="menu"
-        aria-label="项目设置"
-        :style="menuStyle"
-      >
+    <AnchoredActionMenu
+      :open="open"
+      :position="position"
+      preferred-placement="bottom-end"
+      :offset="4"
+      aria-label="项目设置"
+    >
+      <div class="repo-toolbar-settings__menu">
         <button
           type="button"
           class="repo-toolbar-settings__item"
@@ -121,7 +91,7 @@ onBeforeUnmount(() => {
           </span>
         </UiSwitch>
       </div>
-    </Transition>
+    </AnchoredActionMenu>
   </div>
 </template>
 
@@ -138,19 +108,9 @@ onBeforeUnmount(() => {
 }
 
 .repo-toolbar-settings__menu {
-  position: fixed;
-  z-index: var(--z-dropdown, 1900);
   display: grid;
   gap: 3px;
-  width: 260px;
-  max-width: min(260px, calc(100vw - 16px));
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
-  transform-origin: var(--sb-menu-origin-x, 100%) var(--sb-menu-origin-y, 0);
-  will-change: transform, opacity;
+  width: 250px;
 }
 
 .repo-toolbar-settings__item {

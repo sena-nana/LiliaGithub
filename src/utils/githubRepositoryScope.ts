@@ -3,6 +3,10 @@ import type {
   GitHubRepositoryPermissions,
   GitHubRepositoryScope,
 } from "../services/workspace";
+import {
+  errorMessage,
+  workspaceErrorCode,
+} from "../services/workspace/errors";
 
 export const ALL_GITHUB_REPOSITORIES: GitHubRepositoryScope = { kind: "all" };
 
@@ -82,10 +86,8 @@ export function githubRepositoryPermissionLabel(
 }
 
 export function githubUserFacingError(error: unknown) {
-  const message = (error instanceof Error ? error.message : String(error))
-    .replace(/^Error:\s*/, "")
-    .trim();
-  const code = message.match(/^((?:github|workspace)_[a-z_]+)\s*[:：]/i)?.[1]?.toLocaleLowerCase();
+  const message = errorMessage(error);
+  const code = workspaceErrorCode(error);
   const knownMessages: Record<string, string> = {
     github_org_sso_required: "组织要求额外的 SSO 授权，请在 GitHub 完成授权后重试。",
     github_org_membership_forbidden: "当前授权无法在该组织创建仓库，请检查组织权限或重新授权。",

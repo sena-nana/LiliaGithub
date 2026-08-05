@@ -3,8 +3,11 @@ import { Settings } from "@lucide/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SidebarFooter from "../src/components/sidebar/SidebarFooter.vue";
-import { resetWorkspaceStateForTests, setWorkspaceTasks } from "../src/composables/workspace/state";
-import type { LiliaSidebarConfigInput } from "../src/ui";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
+import type { LiliaSidebarConfigInput } from "@lilia/ui/shell";
 
 type FooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatuses"]>[number];
 
@@ -15,6 +18,8 @@ const authorizedStatus: FooterStatus = {
   tone: "ok",
   icon: Settings,
 };
+const workspace = createWorkspaceStoreFixture();
+const { resetWorkspaceStateForTests, setWorkspaceTasks } = workspace.stateFeature;
 
 const accountMenuFixture = {
   login: "octocat",
@@ -73,6 +78,7 @@ async function renderFooter(options: {
     },
     global: {
       plugins: [router],
+      provide: provideWorkspaceStoreFixture(workspace),
     },
   });
   return { ...view, router };

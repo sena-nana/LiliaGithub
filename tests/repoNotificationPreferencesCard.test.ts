@@ -1,28 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoNotificationPreferencesCard from "../src/components/repo/RepoNotificationPreferencesCard.vue";
+import type { GitHubBinding } from "../src/services/workspace";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
-const mocks = vi.hoisted(() => ({
-  binding: {
-    value: {
-      login: "octocat",
-      avatarUrl: null as string | null,
-      scopes: ["repo", "notifications"],
-    } as { login: string; avatarUrl: string | null; scopes: string[] } | null,
-  },
+const mocks = {
   getSubscription: vi.fn(),
   updateSubscription: vi.fn(),
   openUrl: vi.fn(),
-}));
+};
+let workspace: WorkspaceStore;
 
-vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => ({
-    githubBinding: mocks.binding,
-    getGitHubRepositorySubscription: mocks.getSubscription,
-    updateGitHubRepositorySubscription: mocks.updateSubscription,
-    openUrl: mocks.openUrl,
-  }),
-}));
+function setBinding(binding: GitHubBinding | null) {
+  workspace.stateFeature.state.bindingStatus = binding
+    ? { state: "bound", binding }
+    : { state: "unbound", binding: null };
+}
 
 vi.mock("../src/utils/githubErrors", () => ({
   githubErrorCode: (error: unknown) => {
@@ -50,7 +47,10 @@ function permissionError() {
 function renderCard(repoFullName = "sena-nana/LiliaGithub") {
   return render(RepoNotificationPreferencesCard, {
     props: { repoFullName },
-    global: { stubs: { transition: false } },
+    global: {
+      provide: provideWorkspaceStoreFixture(workspace),
+      stubs: { transition: false },
+    },
   });
 }
 
@@ -62,11 +62,17 @@ async function selectMode(label: string) {
 describe("RepoNotificationPreferencesCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.binding.value = {
+    workspace = createWorkspaceStoreFixture({
+      getGitHubRepositorySubscription: mocks.getSubscription,
+      updateGitHubRepositorySubscription: mocks.updateSubscription,
+      openUrl: mocks.openUrl,
+    });
+    setBinding({
       login: "octocat",
       avatarUrl: null,
       scopes: ["repo", "notifications"],
-    };
+      boundAt: "2026-07-15T00:00:00Z",
+    });
     mocks.getSubscription.mockResolvedValue({ mode: "watching" });
     mocks.updateSubscription.mockImplementation(async (_repoFullName, mode) => ({ mode }));
     mocks.openUrl.mockResolvedValue(undefined);
@@ -121,11 +127,12 @@ describe("RepoNotificationPreferencesCard", () => {
   });
 
   it("缺少 notifications scope 时不显示假可用控件并保留 GitHub 入口", async () => {
-    mocks.binding.value = {
+    setBinding({
       login: "octocat",
       avatarUrl: null,
       scopes: ["repo"],
-    };
+      boundAt: "2026-07-15T00:00:00Z",
+    });
     renderCard();
 
     expect(screen.getByRole("status")).toHaveTextContent("未包含通知权限");

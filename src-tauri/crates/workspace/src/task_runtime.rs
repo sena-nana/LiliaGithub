@@ -13,15 +13,6 @@ pub const TASK_QUEUE_CAPACITY: usize = 64;
 pub type TaskId = String;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DispatchLane {
-    Interactive,
-    Normal,
-    Background,
-    Bulk,
-    Control,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionClass {
     Orchestration,
     Io,
@@ -29,67 +20,20 @@ pub enum ExecutionClass {
     Blocking,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResourceAccessMode {
-    Read,
-    ExclusiveWrite,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResourceRequirement {
-    pub ref_id: String,
-    pub mode: ResourceAccessMode,
-    pub expected_version: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OrderingRequirement {
-    None,
-    SameResourceOrder { ref_id: String },
-}
-
 #[derive(Clone, Debug)]
 pub struct TaskSpec {
     pub task_id: TaskId,
-    pub lane: DispatchLane,
     pub priority: i64,
     pub execution_class: ExecutionClass,
-    pub correlation_id: Option<String>,
-    pub resources: Vec<ResourceRequirement>,
-    pub ordering: OrderingRequirement,
 }
 
 impl TaskSpec {
-    pub fn new(
-        task_id: impl Into<TaskId>,
-        lane: DispatchLane,
-        priority: i64,
-        execution_class: ExecutionClass,
-    ) -> Self {
+    pub fn new(task_id: impl Into<TaskId>, priority: i64, execution_class: ExecutionClass) -> Self {
         Self {
             task_id: task_id.into(),
-            lane,
             priority,
             execution_class,
-            correlation_id: None,
-            resources: Vec::new(),
-            ordering: OrderingRequirement::None,
         }
-    }
-
-    pub fn correlation_id(mut self, value: impl Into<String>) -> Self {
-        self.correlation_id = Some(value.into());
-        self
-    }
-
-    pub fn resources(mut self, value: Vec<ResourceRequirement>) -> Self {
-        self.resources = value;
-        self
-    }
-
-    pub fn ordering(mut self, value: OrderingRequirement) -> Self {
-        self.ordering = value;
-        self
     }
 
     fn physical_lane(&self) -> PhysicalLane {
@@ -212,6 +156,7 @@ struct TaskEnvelope {
     sequence: u64,
     spec: TaskSpec,
     control: Arc<TaskControl>,
+    shutdown: Arc<AtomicBool>,
     job: TaskJob,
 }
 
@@ -315,6 +260,7 @@ pub struct WorkspaceTaskRuntime {
     workspace_cpu: LaneSender,
     local_blocking: LaneSender,
     sequence: AtomicU64,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl WorkspaceTaskRuntime {
@@ -331,6 +277,7 @@ impl WorkspaceTaskRuntime {
         let github_io_queued = Arc::clone(&github_io.queued);
         let workspace_cpu_queued = Arc::clone(&workspace_cpu.queued);
         let local_blocking_queued = Arc::clone(&local_blocking.queued);
+        let shutdown = Arc::new(AtomicBool::new(false));
 
         thread::Builder::new()
             .name("lilia-workspace-task-runtime".to_string())
@@ -368,10 +315,14 @@ impl WorkspaceTaskRuntime {
             workspace_cpu,
             local_blocking,
             sequence: AtomicU64::new(0),
+            shutdown,
         })
     }
 
     pub fn submit(&self, spec: TaskSpec, job: TaskJob) -> Result<TaskHandle, String> {
+        if self.shutdown.load(AtomicOrdering::Acquire) {
+            return Err("任务执行器已关闭".to_string());
+        }
         let control = TaskControl::new();
         let handle = TaskHandle {
             task_id: spec.task_id.clone(),
@@ -381,6 +332,7 @@ impl WorkspaceTaskRuntime {
             sequence: self.sequence.fetch_add(1, AtomicOrdering::Relaxed),
             spec: spec.clone(),
             control,
+            shutdown: Arc::clone(&self.shutdown),
             job,
         };
         self.sender(spec.physical_lane())
@@ -396,6 +348,10 @@ impl WorkspaceTaskRuntime {
 
     pub fn cancel(&self, handle: &TaskHandle) -> CancelResult {
         handle.control.cancel()
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, AtomicOrdering::Release);
     }
 
     fn sender(&self, lane: PhysicalLane) -> &LaneSender {
@@ -457,6 +413,13 @@ async fn lane_loop(
 
 fn run_task(envelope: TaskEnvelope) {
     let task_id = envelope.spec.task_id;
+    if envelope.shutdown.load(AtomicOrdering::Acquire) {
+        envelope.control.finish(TaskOutcome::Cancelled {
+            task_id,
+            reason: "任务执行器已关闭".to_string(),
+        });
+        return;
+    }
     if envelope.control.requested.load(AtomicOrdering::Acquire) {
         envelope.control.finish(TaskOutcome::Cancelled {
             task_id,
@@ -500,7 +463,7 @@ mod tests {
     use std::time::Duration;
 
     fn spec(id: &str, priority: i64, class: ExecutionClass) -> TaskSpec {
-        TaskSpec::new(id, DispatchLane::Normal, priority, class)
+        TaskSpec::new(id, priority, class)
     }
 
     #[test]
@@ -787,6 +750,52 @@ mod tests {
             handle.wait(),
             TaskOutcome::Completed {
                 task_id: "running".into()
+            }
+        );
+    }
+
+    #[test]
+    fn shutdown_rejects_new_work_and_cancels_queued_work() {
+        let runtime = WorkspaceTaskRuntime::new();
+        let gate = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
+        let running_gate = Arc::clone(&gate);
+        let running_started = Arc::clone(&started);
+        let running = runtime
+            .submit(
+                spec("running", 100, ExecutionClass::Cpu),
+                Box::new(move |_| {
+                    running_started.store(true, AtomicOrdering::Release);
+                    while !running_gate.load(AtomicOrdering::Acquire) {
+                        thread::yield_now();
+                    }
+                    Ok(())
+                }),
+            )
+            .unwrap();
+        while !started.load(AtomicOrdering::Acquire) {
+            thread::yield_now();
+        }
+        let queued = runtime
+            .submit(spec("queued", 0, ExecutionClass::Cpu), Box::new(|_| Ok(())))
+            .unwrap();
+
+        runtime.shutdown();
+        let rejected = match runtime.submit(
+            spec("rejected", 0, ExecutionClass::Cpu),
+            Box::new(|_| Ok(())),
+        ) {
+            Ok(_) => panic!("shutdown runtime must reject new tasks"),
+            Err(error) => error,
+        };
+        assert_eq!(rejected, "任务执行器已关闭");
+        gate.store(true, AtomicOrdering::Release);
+        assert!(matches!(running.wait(), TaskOutcome::Completed { .. }));
+        assert_eq!(
+            queued.wait(),
+            TaskOutcome::Cancelled {
+                task_id: "queued".into(),
+                reason: "任务执行器已关闭".into(),
             }
         );
     }

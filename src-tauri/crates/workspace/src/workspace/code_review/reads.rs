@@ -12,7 +12,7 @@ use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
     build_client, github_branch_protection_api_url, github_branch_protection_from_response,
     github_fetch_paginated, github_headers, github_json, github_repo_api_url, github_require_token,
-    github_send,
+    github_send, GitHubSession,
 };
 use crate::workspace::operations::OperationKind;
 use crate::workspace::run_core_operation;
@@ -20,7 +20,7 @@ use crate::workspace::run_core_operation;
 fn fetch_branch_protection(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     repo_full_name: &str,
     branch: &str,
 ) -> GitHubPullRequestBranchProtectionSummary {
@@ -55,7 +55,7 @@ pub async fn github_get_pull_request_code_review(
                 return Err("Pull Request 编号不合法".to_string());
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_url = github_repo_api_url(&repo_full_name)?;
             let pull_response = github_send(
                 &app,

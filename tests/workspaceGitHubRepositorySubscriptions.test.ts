@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  getGitHubRepositorySubscription,
   githubErrorCode,
   isGitHubPermissionError,
+  workspaceFallbackForTests,
+} from "../src/services/workspace";
+import { createDefaultWorkspaceTransport, createWorkspaceClient } from "../src/services/workspace/client";
+
+const {
+  getGitHubRepositorySubscription,
   listGitHubRepos,
   listGitHubWatchedRepos,
   updateGitHubRepositorySubscription,
-  workspaceFallbackForTests,
-} from "../src/services/workspace";
+} = createWorkspaceClient(createDefaultWorkspaceTransport());
 
 type WorkspaceFallback = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 let fallback: WorkspaceFallback;
@@ -60,6 +64,6 @@ describe("GitHub repository subscription fallback", () => {
     expect(isGitHubPermissionError(error)).toBe(true);
     expect(isGitHubPermissionError("github_forbidden：操作被拒绝")).toBe(true);
     expect(isGitHubPermissionError("github_org_sso_required：需要 SSO 授权")).toBe(true);
-    expect(isGitHubPermissionError(new Error("HTTP 403"))).toBe(false);
+    expect(isGitHubPermissionError(new Error("HTTP 403"))).toBe(true);
   });
 });

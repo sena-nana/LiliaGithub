@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{Cursor, Read};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufReader, Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::{fmt, ops::Deref};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use base64::{
@@ -11,18 +12,24 @@ use base64::{
     Engine as _,
 };
 use keyring::{Entry, Error as KeyringError};
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Body, Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+
+pub(super) use lilia_github_github::{
+    github_issue_cache_key, github_pull_request_cache_key, GitHubIssueCacheQuery,
+    GitHubPullRequestCacheQuery,
+};
 
 use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
 use crate::workspace::operations::OperationKind;
 use crate::workspace::readme::{image_mime_for_path, readme_image_sources};
 use crate::workspace::repos::{commit_file_patches, run_repo_analysis_blocking};
 use crate::workspace::settings::{
-    clear_github_binding as clear_github_binding_settings, load_settings, repo_path_by_id,
-    switch_github_binding as switch_github_binding_settings, STORE_FILE,
+    clear_github_binding as clear_github_binding_settings, github_binding_identity, load_settings,
+    repo_path_by_id, switch_github_binding as switch_github_binding_settings, try_load_settings,
+    STORE_FILE,
 };
 use crate::workspace::shared::{
     collect_local_contribution_counts, current_utc_day_index, github_contribution_days,
@@ -33,16 +40,16 @@ use crate::workspace::{run_core_operation, run_core_operation_as};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
     GitHubAccountProfile, GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest,
-    GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult, GitHubCreateIssueRequest,
-    GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest, GitHubCreateRepoRequest,
-    GitHubDevelopmentItem, GitHubDeviceFlowPollResult, GitHubDeviceFlowStart,
-    GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion, GitHubIssueFilterMetadata,
-    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
-    GitHubOrganizationFeaturedSection, GitHubOrganizationFeaturedSource, GitHubOrganizationMember,
-    GitHubOrganizationMembersSection, GitHubOrganizationOverview, GitHubOrganizationProfile,
-    GitHubOrganizationProfileView, GitHubOrganizationRepositorySection,
-    GitHubOrganizationSectionStatus, GitHubOwnerKind, GitHubProfileReadmeSection,
-    GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
+    GitHubBindingMetadata, GitHubBindingState, GitHubBindingStatus, GitHubContributionResult,
+    GitHubCreateIssueRequest, GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest,
+    GitHubCreateRepoRequest, GitHubDevelopmentItem, GitHubDeviceFlowPollResult,
+    GitHubDeviceFlowPollStatus, GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue,
+    GitHubIssueDiscussion, GitHubIssueFilterMetadata, GitHubIssueMilestone, GitHubIssueProjectItem,
+    GitHubMergePullRequestRequest, GitHubOrganizationFeaturedSection,
+    GitHubOrganizationFeaturedSource, GitHubOrganizationMember, GitHubOrganizationMembersSection,
+    GitHubOrganizationOverview, GitHubOrganizationProfile, GitHubOrganizationProfileView,
+    GitHubOrganizationRepositorySection, GitHubOrganizationSectionStatus, GitHubOwnerKind,
+    GitHubProfileReadmeSection, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubReadmeSectionStatus,
     GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest, GitHubRepoLicense,
     GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage, GitHubRepoSettingsEndpointItem,
@@ -92,7 +99,6 @@ const GITHUB_PROJECT_CACHE_KEYED_FIELDS: [&str; 8] = [
     "commitDetails",
 ];
 pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
-#[cfg(test)]
 pub(super) const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 =
     lilia_github_github::GITHUB_RELEASE_ASSET_MAX_BYTES;
 
@@ -1054,9 +1060,9 @@ pub(super) fn client_id_source() -> &'static str {
 pub(super) fn binding_status(binding: Option<GitHubBindingMetadata>) -> GitHubBindingStatus {
     GitHubBindingStatus {
         state: if binding.is_some() {
-            "bound".to_string()
+            GitHubBindingState::Bound
         } else {
-            "unbound".to_string()
+            GitHubBindingState::Unbound
         },
         client_id_configured: client_id().is_some(),
         client_id_source: client_id_source().to_string(),
@@ -1064,56 +1070,221 @@ pub(super) fn binding_status(binding: Option<GitHubBindingMetadata>) -> GitHubBi
     }
 }
 
-pub(super) fn build_client() -> Result<Client, String> {
-    Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))
+pub(super) fn build_client(app: &AppHandle) -> Result<Client, String> {
+    app.github_runtime().json_client()
+}
+
+fn build_transfer_client(app: &AppHandle) -> Result<Client, String> {
+    app.github_runtime().transfer_client()
 }
 
 pub(super) fn keyring_entry(login: &str) -> Result<Entry, String> {
     Entry::new(GITHUB_SERVICE, login).map_err(|e| format!("创建 GitHub 凭证项失败：{e}"))
 }
 
-fn token_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) trait CredentialStore: Send + Sync {
+    fn read(&self, login: &str) -> Result<Option<String>, String>;
+    fn write(&self, login: &str, token: &str) -> Result<(), String>;
+    fn delete(&self, login: &str) -> Result<(), String>;
+}
+
+struct KeyringCredentialStore;
+
+impl CredentialStore for KeyringCredentialStore {
+    fn read(&self, login: &str) -> Result<Option<String>, String> {
+        match keyring_entry(login)?.get_password() {
+            Ok(token) => Ok(Some(token)),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(error) => Err(format!("读取 GitHub 凭证失败：{error}")),
+        }
+    }
+
+    fn write(&self, login: &str, token: &str) -> Result<(), String> {
+        keyring_entry(login)?
+            .set_password(token)
+            .map_err(|error| format!("保存 GitHub 凭证失败：{error}"))
+    }
+
+    fn delete(&self, login: &str) -> Result<(), String> {
+        match keyring_entry(login)?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(format!("删除 GitHub 凭证失败：{error}")),
+        }
+    }
+}
+
+pub(crate) struct GitHubRuntimeState {
+    api_client: Mutex<Option<Result<lilia_github_github::GitHubApiClient, String>>>,
+    credential_store: Mutex<Arc<dyn CredentialStore>>,
+    credential_gate: Mutex<()>,
+    token_cache: Mutex<HashMap<String, Option<String>>>,
+    artifact_guards: Mutex<HashMap<GitHubArtifactKey, Weak<Mutex<()>>>>,
+    project_cache_write: Mutex<()>,
+    temporary_file_sequence: AtomicU64,
+    pub(crate) binding_revision: AtomicU64,
+}
+
+impl Default for GitHubRuntimeState {
+    fn default() -> Self {
+        Self {
+            api_client: Mutex::new(None),
+            credential_store: Mutex::new(Arc::new(KeyringCredentialStore)),
+            credential_gate: Mutex::new(()),
+            token_cache: Mutex::new(HashMap::new()),
+            artifact_guards: Mutex::new(HashMap::new()),
+            project_cache_write: Mutex::new(()),
+            temporary_file_sequence: AtomicU64::new(0),
+            binding_revision: AtomicU64::new(1),
+        }
+    }
+}
+
+impl GitHubRuntimeState {
+    fn initialize_api_client() -> Result<lilia_github_github::GitHubApiClient, String> {
+        std::thread::Builder::new()
+            .name("github-client-init".to_string())
+            .spawn(lilia_github_github::GitHubApiClient::new)
+            .map_err(|error| format!("启动 GitHub 客户端初始化线程失败：{error}"))?
+            .join()
+            .map_err(|_| "GitHub 客户端初始化线程异常退出".to_string())?
+    }
+
+    fn json_client(&self) -> Result<Client, String> {
+        let mut api_client = self
+            .api_client
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let api_client = api_client.get_or_insert_with(Self::initialize_api_client);
+        match api_client {
+            Ok(client) => Ok(client.json()),
+            Err(error) => Err(error.clone()),
+        }
+    }
+
+    fn transfer_client(&self) -> Result<Client, String> {
+        let mut api_client = self
+            .api_client
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let api_client = api_client.get_or_insert_with(Self::initialize_api_client);
+        match api_client {
+            Ok(client) => Ok(client.transfer()),
+            Err(error) => Err(error.clone()),
+        }
+    }
+
+    fn credential_store(&self) -> Arc<dyn CredentialStore> {
+        self.credential_store
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    #[cfg(test)]
+    fn set_credential_store(&self, store: Arc<dyn CredentialStore>) {
+        let _gate = self
+            .credential_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *self
+            .credential_store
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = store;
+        self.token_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
 }
 
 fn token_cache_key(login: &str) -> String {
     login.trim().to_ascii_lowercase()
 }
 
-pub(super) fn read_token(login: &str) -> Result<Option<String>, String> {
+pub(super) fn read_token(app: &AppHandle, login: &str) -> Result<Option<String>, String> {
+    let _gate = app
+        .github_runtime()
+        .credential_gate
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let key = token_cache_key(login);
-    if let Some(cached) = token_cache().lock().ok().and_then(|cache| cache.get(&key).cloned()) {
+    if let Some(cached) = app
+        .github_runtime()
+        .token_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&key).cloned())
+    {
         return Ok(cached);
     }
-    let token = match keyring_entry(login)?.get_password() {
-        Ok(token) => Some(token),
-        Err(KeyringError::NoEntry) => None,
-        Err(err) => return Err(format!("读取 GitHub 凭证失败：{err}")),
-    };
-    if let Ok(mut cache) = token_cache().lock() {
-        cache.insert(key, token.clone());
-    }
+    let token = app.github_runtime().credential_store().read(login)?;
+    app.github_runtime()
+        .token_cache
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(key, token.clone());
     Ok(token)
 }
 
-pub(super) fn write_token(login: &str, token: &str) -> Result<(), String> {
-    keyring_entry(login)?
-        .set_password(token)
-        .map_err(|e| format!("保存 GitHub 凭证失败：{e}"))?;
-    if let Ok(mut cache) = token_cache().lock() {
-        cache.insert(token_cache_key(login), Some(token.to_string()));
+fn replace_credential_transactionally<T>(
+    store: &dyn CredentialStore,
+    login: &str,
+    token: &str,
+    persist: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let previous = store.read(login)?;
+    store.write(login, token)?;
+    match persist() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let rollback = match previous {
+                Some(previous) => store.write(login, &previous),
+                None => store.delete(login),
+            };
+            if let Err(rollback_error) = rollback {
+                return Err(format!("{error}；回滚 GitHub 凭证失败：{rollback_error}"));
+            }
+            Err(error)
+        }
     }
-    Ok(())
 }
 
-pub(super) fn invalidate_token(login: &str) {
-    if let Ok(mut cache) = token_cache().lock() {
-        cache.remove(&token_cache_key(login));
+fn delete_credential_transactionally<T>(
+    store: &dyn CredentialStore,
+    login: &str,
+    persist: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let previous = store.read(login)?;
+    store.delete(login)?;
+    match persist() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if let Some(previous) = previous {
+                if let Err(rollback_error) = store.write(login, &previous) {
+                    return Err(format!("{error}；恢复 GitHub 凭证失败：{rollback_error}"));
+                }
+            }
+            Err(error)
+        }
     }
+}
+
+#[cfg(test)]
+fn invalidate_token(app: &AppHandle, login: &str) {
+    let _gate = app
+        .github_runtime()
+        .credential_gate
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    invalidate_token_unlocked(app, login);
+}
+
+fn invalidate_token_unlocked(app: &AppHandle, login: &str) {
+    app.github_runtime()
+        .token_cache
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(&token_cache_key(login));
 }
 
 pub(super) fn normalize_scope_list(scope: Option<&str>) -> Vec<String> {
@@ -1125,15 +1296,46 @@ pub(super) fn normalize_scope_list(scope: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn github_headers(builder: RequestBuilder, token: Option<&str>) -> RequestBuilder {
+pub(super) struct GitHubRequestBuilder {
+    builder: RequestBuilder,
+    session: Option<GitHubSession>,
+}
+
+impl GitHubRequestBuilder {
+    pub(super) fn json<T: Serialize + ?Sized>(self, value: &T) -> Self {
+        Self {
+            builder: self.builder.json(value),
+            session: self.session,
+        }
+    }
+}
+
+pub(super) fn github_headers(
+    builder: RequestBuilder,
+    session: Option<&GitHubSession>,
+) -> GitHubRequestBuilder {
     let builder = builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_ACCEPT)
         .header("X-GitHub-Api-Version", "2022-11-28");
-    if let Some(token) = token {
-        builder.bearer_auth(token)
-    } else {
-        builder
+    let builder = match session {
+        Some(session) => builder.bearer_auth(&session.token),
+        None => builder,
+    };
+    GitHubRequestBuilder {
+        builder,
+        session: session.cloned(),
+    }
+}
+
+fn github_unbound_token_headers(builder: RequestBuilder, token: &str) -> GitHubRequestBuilder {
+    GitHubRequestBuilder {
+        builder: builder
+            .header(USER_AGENT, GITHUB_USER_AGENT)
+            .header(ACCEPT, GITHUB_ACCEPT)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .bearer_auth(token),
+        session: None,
     }
 }
 
@@ -1459,11 +1661,11 @@ struct GitHubProjectCacheIndexEntry {
     estimated_size: usize,
 }
 
-fn github_project_cache_account(app: &AppHandle) -> Option<String> {
-    load_settings(app).github_binding.and_then(|binding| {
+fn github_project_cache_account(app: &AppHandle) -> Result<Option<String>, String> {
+    Ok(try_load_settings(app)?.github_binding.and_then(|binding| {
         let login = binding.login.trim().to_ascii_lowercase();
         (!login.is_empty()).then_some(login)
-    })
+    }))
 }
 
 fn github_project_cache_shard_file(repo_key: &str) -> String {
@@ -1483,7 +1685,7 @@ fn save_github_project_cache_index(
     store.set(
         GITHUB_PROJECT_CACHE_INDEX_KEY,
         serde_json::to_value(index).map_err(|error| error.to_string())?,
-    );
+    )?;
     store
         .save()
         .map_err(|error| format!("保存 GitHub 项目缓存索引失败：{error}"))
@@ -1493,13 +1695,13 @@ fn clear_github_project_cache_shard(app: &AppHandle, shard_file: &str) -> Result
     let store = app
         .store(shard_file)
         .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
-    store.delete(GITHUB_PROJECT_CACHE_SHARD_KEY);
+    store.delete(GITHUB_PROJECT_CACHE_SHARD_KEY)?;
     store
         .save()
         .map_err(|error| format!("清理 GitHub 项目缓存分片失败：{error}"))
 }
 
-fn load_github_project_cache_index_for_account(
+fn load_github_project_cache_index_for_account_unlocked(
     app: &AppHandle,
     account_login: Option<String>,
 ) -> Result<GitHubProjectCacheIndex, String> {
@@ -1507,7 +1709,7 @@ fn load_github_project_cache_index_for_account(
         .store(GITHUB_PROJECT_CACHE_INDEX_FILE)
         .map_err(|error| format!("打开 GitHub 项目缓存索引失败：{error}"))?;
     let existing = index_store
-        .get(GITHUB_PROJECT_CACHE_INDEX_KEY)
+        .get(GITHUB_PROJECT_CACHE_INDEX_KEY)?
         .and_then(|value| serde_json::from_value::<GitHubProjectCacheIndex>(value).ok())
         .filter(|index| index.version == GITHUB_PROJECT_CACHE_VERSION);
     if let Some(mut index) = existing {
@@ -1528,8 +1730,8 @@ fn load_github_project_cache_index_for_account(
     let legacy_store = app
         .store(STORE_FILE)
         .map_err(|error| format!("打开旧 GitHub 项目缓存失败：{error}"))?;
-    if legacy_store.get(GITHUB_PROJECT_CACHE_KEY).is_some() {
-        legacy_store.delete(GITHUB_PROJECT_CACHE_KEY);
+    if legacy_store.get(GITHUB_PROJECT_CACHE_KEY)?.is_some() {
+        legacy_store.delete(GITHUB_PROJECT_CACHE_KEY)?;
         legacy_store
             .save()
             .map_err(|error| format!("清理旧 GitHub 项目缓存失败：{error}"))?;
@@ -1543,31 +1745,88 @@ fn load_github_project_cache_index_for_account(
     Ok(index)
 }
 
-fn load_github_project_cache_index(
+fn load_github_project_cache_index_for_account(
     app: &AppHandle,
+    account_login: Option<String>,
 ) -> Result<GitHubProjectCacheIndex, String> {
-    load_github_project_cache_index_for_account(app, github_project_cache_account(app))
+    let _guard = app
+        .github_runtime()
+        .project_cache_write
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    load_github_project_cache_index_for_account_unlocked(app, account_login)
 }
 
-fn clear_github_binding(
-    app: &AppHandle,
-) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
-    let settings = clear_github_binding_settings(app)?;
-    load_github_project_cache_index_for_account(app, None)?;
-    Ok(settings)
+fn load_github_project_cache_index(app: &AppHandle) -> Result<GitHubProjectCacheIndex, String> {
+    load_github_project_cache_index_for_account_unlocked(app, github_project_cache_account(app)?)
 }
 
 fn switch_github_binding(
     app: &AppHandle,
     binding: GitHubBindingMetadata,
+    token: &str,
 ) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
+    let login = binding.login.clone();
     let account_login = {
         let login = binding.login.trim().to_ascii_lowercase();
         (!login.is_empty()).then_some(login)
     };
-    let settings = switch_github_binding_settings(app, binding)?;
+    let _credential_gate = app
+        .github_runtime()
+        .credential_gate
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let credential_store = app.github_runtime().credential_store();
+    let result =
+        replace_credential_transactionally(credential_store.as_ref(), &login, token, || {
+            switch_github_binding_settings(app, binding)
+        });
+    invalidate_token_unlocked(app, &login);
+    let settings = result?;
     load_github_project_cache_index_for_account(app, account_login)?;
     Ok(settings)
+}
+
+fn clear_github_binding_with_credential(
+    app: &AppHandle,
+    login: &str,
+) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
+    let _credential_gate = app
+        .github_runtime()
+        .credential_gate
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_github_binding_with_credential_locked(app, login)
+}
+
+fn clear_github_binding_with_credential_locked(
+    app: &AppHandle,
+    login: &str,
+) -> Result<lilia_github_contracts::workspace::WorkspaceSettings, String> {
+    let credential_store = app.github_runtime().credential_store();
+    let result = delete_credential_transactionally(credential_store.as_ref(), login, || {
+        clear_github_binding_settings(app)
+    });
+    invalidate_token_unlocked(app, login);
+    let settings = result?;
+    load_github_project_cache_index_for_account(app, None)?;
+    Ok(settings)
+}
+
+fn clear_github_binding_if_session_is_current(
+    app: &AppHandle,
+    session: &GitHubSession,
+) -> Result<bool, String> {
+    let _credential_gate = app
+        .github_runtime()
+        .credential_gate
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !github_session_is_current(app, session)? {
+        return Ok(false);
+    }
+    clear_github_binding_with_credential_locked(app, &session.login)?;
+    Ok(true)
 }
 
 fn load_github_project_cache_shard(
@@ -1578,7 +1837,7 @@ fn load_github_project_cache_shard(
         .store(shard_file)
         .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
     store
-        .get(GITHUB_PROJECT_CACHE_SHARD_KEY)
+        .get(GITHUB_PROJECT_CACHE_SHARD_KEY)?
         .map(serde_json::from_value)
         .transpose()
         .map_err(|error| format!("读取 GitHub 项目缓存分片失败：{error}"))
@@ -1592,7 +1851,7 @@ fn save_github_project_cache_shard(
     let store = app
         .store(shard_file)
         .map_err(|error| format!("打开 GitHub 项目缓存分片失败：{error}"))?;
-    store.set(GITHUB_PROJECT_CACHE_SHARD_KEY, cache);
+    store.set(GITHUB_PROJECT_CACHE_SHARD_KEY, cache)?;
     store
         .save()
         .map_err(|error| format!("保存 GitHub 项目缓存分片失败：{error}"))
@@ -1655,6 +1914,11 @@ fn load_github_project_repo_cache(
     app: &AppHandle,
     repo_full_name: &str,
 ) -> Result<Option<GitHubProjectRepoCache>, String> {
+    let _guard = app
+        .github_runtime()
+        .project_cache_write
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let repo_key = github_project_cache_repo_key(repo_full_name)?;
     let mut index = load_github_project_cache_index(app)?;
     let Some(position) = index
@@ -1692,8 +1956,37 @@ pub(super) fn github_project_cache_enabled(force_refresh: Option<bool>) -> bool 
 pub(super) fn update_github_project_repo_cache(
     app: &AppHandle,
     repo_full_name: &str,
+    session: &GitHubSession,
     update: impl FnOnce(&mut GitHubProjectRepoCache),
 ) -> Result<(), String> {
+    update_github_project_repo_cache_inner(app, repo_full_name, Some(session), update)
+}
+
+#[cfg(test)]
+fn update_github_project_repo_cache_for_tests(
+    app: &AppHandle,
+    repo_full_name: &str,
+    update: impl FnOnce(&mut GitHubProjectRepoCache),
+) -> Result<(), String> {
+    update_github_project_repo_cache_inner(app, repo_full_name, None, update)
+}
+
+fn update_github_project_repo_cache_inner(
+    app: &AppHandle,
+    repo_full_name: &str,
+    session: Option<&GitHubSession>,
+    update: impl FnOnce(&mut GitHubProjectRepoCache),
+) -> Result<(), String> {
+    let _guard = app
+        .github_runtime()
+        .project_cache_write
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(session) = session {
+        if !github_session_is_current(app, session)? {
+            return Ok(());
+        }
+    }
     let repo_key = github_project_cache_repo_key(repo_full_name)?;
     let mut index = load_github_project_cache_index(app)?;
     let existing_position = index
@@ -1727,6 +2020,11 @@ pub(super) fn update_github_project_repo_cache(
     let (cache, estimated_size) = bound_github_project_repo_cache(after, &before)?;
     entry.last_accessed_at = now_millis();
     entry.estimated_size = estimated_size;
+    if let Some(session) = session {
+        if !github_session_is_current(app, session)? {
+            return Ok(());
+        }
+    }
     save_github_project_cache_shard(app, &shard_file, cache)?;
 
     loop {
@@ -1751,10 +2049,7 @@ pub(super) fn update_github_project_repo_cache(
             break;
         };
         let evicted = index.repos.remove(evicted_position);
-        clear_github_project_cache_shard(
-            app,
-            &github_project_cache_shard_file(&evicted.repo_key),
-        )?;
+        clear_github_project_cache_shard(app, &github_project_cache_shard_file(&evicted.repo_key))?;
     }
     save_github_project_cache_index(app, &index)
 }
@@ -1762,7 +2057,16 @@ pub(super) fn update_github_project_repo_cache(
 pub(super) fn clear_github_project_repo_cache(
     app: &AppHandle,
     repo_full_name: &str,
+    session: &GitHubSession,
 ) -> Result<(), String> {
+    let _guard = app
+        .github_runtime()
+        .project_cache_write
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !github_session_is_current(app, session)? {
+        return Ok(());
+    }
     let repo_key = github_project_cache_repo_key(repo_full_name)?;
     let mut index = load_github_project_cache_index(app)?;
     let Some(position) = index
@@ -1773,18 +2077,16 @@ pub(super) fn clear_github_project_repo_cache(
         return Ok(());
     };
     let entry = index.repos.remove(position);
-    clear_github_project_cache_shard(
-        app,
-        &github_project_cache_shard_file(&entry.repo_key),
-    )?;
+    clear_github_project_cache_shard(app, &github_project_cache_shard_file(&entry.repo_key))?;
     save_github_project_cache_index(app, &index)
 }
 
 pub(super) fn clear_github_project_issue_cache(
     app: &AppHandle,
     repo_full_name: &str,
+    session: &GitHubSession,
 ) -> Result<(), String> {
-    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+    update_github_project_repo_cache(app, repo_full_name, session, |repo_cache| {
         repo_cache.issues.clear();
         repo_cache.issue_discussions.clear();
         repo_cache.issue_filter_metadata = None;
@@ -1794,8 +2096,9 @@ pub(super) fn clear_github_project_issue_cache(
 pub(super) fn clear_github_project_pull_request_cache(
     app: &AppHandle,
     repo_full_name: &str,
+    session: &GitHubSession,
 ) -> Result<(), String> {
-    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+    update_github_project_repo_cache(app, repo_full_name, session, |repo_cache| {
         repo_cache.pull_requests.clear();
         repo_cache.pull_request_discussions.clear();
         repo_cache.pull_request_checks.clear();
@@ -1805,157 +2108,11 @@ pub(super) fn clear_github_project_pull_request_cache(
 pub(super) fn clear_github_project_release_cache(
     app: &AppHandle,
     repo_full_name: &str,
+    session: &GitHubSession,
 ) -> Result<(), String> {
-    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+    update_github_project_repo_cache(app, repo_full_name, session, |repo_cache| {
         repo_cache.releases = None;
     })
-}
-
-pub(super) fn github_issue_cache_key(
-    state: Option<&str>,
-    per_page: Option<u32>,
-    sort: Option<&str>,
-    direction: Option<&str>,
-    since: Option<&str>,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-    project: Option<&str>,
-    query: Option<&str>,
-) -> String {
-    let issue_state = state.unwrap_or("open");
-    let issue_per_page = per_page.unwrap_or(100).clamp(1, 100);
-    let issue_sort = match sort {
-        Some("updated") => "updated",
-        Some("comments") => "comments",
-        _ => "created",
-    };
-    let issue_direction = match direction {
-        Some("asc") => "asc",
-        _ => "desc",
-    };
-    let issue_since = since
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let issue_creator = creator
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let issue_assignee = assignee
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let mut issue_labels = labels
-        .unwrap_or(&[])
-        .iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    issue_labels.sort();
-    let issue_milestone = milestone
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let issue_project = project
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let issue_query = query
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    serde_json::json!({
-        "state": issue_state,
-        "perPage": issue_per_page,
-        "sort": issue_sort,
-        "direction": issue_direction,
-        "since": issue_since,
-        "creator": issue_creator,
-        "assignee": issue_assignee,
-        "labels": issue_labels,
-        "milestone": issue_milestone,
-        "project": issue_project,
-        "query": issue_query,
-    })
-    .to_string()
-}
-
-pub(super) fn github_pull_request_cache_key(
-    state: Option<&str>,
-    per_page: Option<u32>,
-    sort: Option<&str>,
-    direction: Option<&str>,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-    project: Option<&str>,
-    review: Option<&str>,
-    query: Option<&str>,
-) -> String {
-    let pull_state = match state {
-        Some("closed") => "closed",
-        Some("merged") => "merged",
-        Some("all") => "all",
-        _ => "open",
-    };
-    let pull_per_page = per_page.unwrap_or(100).clamp(1, 100);
-    let pull_sort = match sort {
-        Some("created") => "created",
-        Some("comments") => "comments",
-        _ => "updated",
-    };
-    let pull_direction = match direction {
-        Some("asc") => "asc",
-        _ => "desc",
-    };
-    let pull_creator = creator
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let pull_assignee = assignee
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let mut pull_labels = labels
-        .unwrap_or(&[])
-        .iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    pull_labels.sort();
-    let pull_milestone = milestone
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let pull_project = project
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let pull_review = review
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let pull_query = query
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    serde_json::json!({
-        "state": pull_state,
-        "perPage": pull_per_page,
-        "sort": pull_sort,
-        "direction": pull_direction,
-        "creator": pull_creator,
-        "assignee": pull_assignee,
-        "labels": pull_labels,
-        "milestone": pull_milestone,
-        "project": pull_project,
-        "review": pull_review,
-        "query": pull_query,
-    })
-    .to_string()
 }
 
 pub(super) fn github_workflow_runs_cache_key(per_page: Option<u32>) -> String {
@@ -1971,18 +2128,81 @@ pub(super) fn github_commit_list_cache_key(per_page: Option<u32>, sha: Option<&s
     format!("{commit_per_page}|{commit_sha}")
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GitHubSession {
+    login: String,
+    revision: u64,
+    token: String,
+}
+
+impl Deref for GitHubSession {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.token
+    }
+}
+
+impl fmt::Display for GitHubSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.token)
+    }
+}
+
+fn github_session_is_current(app: &AppHandle, session: &GitHubSession) -> Result<bool, String> {
+    let (login, revision) = github_binding_identity(app)?;
+    Ok(github_session_matches_identity(
+        login.as_deref(),
+        revision,
+        session,
+    ))
+}
+
+fn github_session_matches_identity(
+    login: Option<&str>,
+    revision: u64,
+    session: &GitHubSession,
+) -> bool {
+    revision == session.revision
+        && login.is_some_and(|login| login.eq_ignore_ascii_case(&session.login))
+}
+
+fn github_binding_snapshot(app: &AppHandle) -> Result<(GitHubBindingMetadata, u64), String> {
+    loop {
+        let (_, before) = github_binding_identity(app)?;
+        let settings = try_load_settings(app)?;
+        let (_, after) = github_binding_identity(app)?;
+        if before != after {
+            continue;
+        }
+        let binding = settings
+            .github_binding
+            .ok_or_else(|| "请先绑定 GitHub".to_string())?;
+        return Ok((binding, after));
+    }
+}
+
 pub(super) fn github_require_token(
     app: &AppHandle,
-) -> Result<(GitHubBindingMetadata, String), String> {
-    let settings = load_settings(app);
-    let Some(binding) = settings.github_binding.clone() else {
-        return Err("请先绑定 GitHub".to_string());
-    };
-    let Some(token) = read_token(&binding.login)? else {
-        clear_github_binding(app)?;
+) -> Result<(GitHubBindingMetadata, GitHubSession), String> {
+    let (binding, revision) = github_binding_snapshot(app)?;
+    let Some(token) = read_token(app, &binding.login)? else {
+        let session = GitHubSession {
+            login: binding.login.clone(),
+            revision,
+            token: String::new(),
+        };
+        clear_github_binding_if_session_is_current(app, &session)?;
         return Err("GitHub 绑定已失效，请重新绑定".to_string());
     };
-    Ok((binding, token))
+    Ok((
+        binding.clone(),
+        GitHubSession {
+            login: binding.login,
+            revision,
+            token,
+        },
+    ))
 }
 
 pub(super) fn github_binding_has_scope(binding: &GitHubBindingMetadata, scope: &str) -> bool {
@@ -2006,16 +2226,26 @@ pub(super) fn github_require_notifications_scope(
 pub(super) fn github_send(
     app: &AppHandle,
     prefix: &str,
-    builder: RequestBuilder,
+    request: GitHubRequestBuilder,
 ) -> Result<Response, String> {
-    let response = builder
+    let response = request
+        .builder
         .send()
         .map_err(|e| format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}"))?;
     if github_binding_expired_status(response.status()) {
-        clear_github_binding(app)?;
+        if let Some(session) = request.session {
+            expire_github_session_if_current(app, &session)?;
+        }
         return Err("GitHub 绑定已失效，请重新绑定".to_string());
     }
     Ok(response)
+}
+
+fn expire_github_session_if_current(
+    app: &AppHandle,
+    session: &GitHubSession,
+) -> Result<bool, String> {
+    clear_github_binding_if_session_is_current(app, session)
 }
 
 pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSummary {
@@ -2366,7 +2596,7 @@ pub(super) fn decode_github_preview_bytes(
     file: &GitHubContentFileResponse,
 ) -> Result<Vec<u8>, String> {
     let encoding = file.encoding.as_deref().unwrap_or_default();
-    if encoding.to_ascii_lowercase() != "base64" {
+    if !encoding.eq_ignore_ascii_case("base64") {
         return Err(format!("{prefix}：不支持的文件编码：{encoding}"));
     }
     let encoded = file
@@ -2495,10 +2725,10 @@ pub(super) fn github_fetch_pull_request_response(
     app: &AppHandle,
     repo_full_name: &str,
     pull_number: u64,
-    token: &str,
+    token: &GitHubSession,
     prefix: &str,
 ) -> Result<GitHubPullRequestResponse, String> {
-    let client = build_client()?;
+    let client = build_client(app)?;
     let response = github_send(
         app,
         prefix,
@@ -2517,10 +2747,10 @@ pub(super) fn github_fetch_issue_response(
     app: &AppHandle,
     repo_full_name: &str,
     issue_number: u64,
-    token: &str,
+    token: &GitHubSession,
     prefix: &str,
 ) -> Result<GitHubIssueResponse, String> {
-    let client = build_client()?;
+    let client = build_client(app)?;
     let response = github_send(
         app,
         prefix,
@@ -2538,7 +2768,7 @@ pub(super) fn github_fetch_issue_response(
 pub(super) fn github_fetch_paginated<T>(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     url: String,
     prefix: &str,
 ) -> Result<Vec<T>, String>
@@ -2772,9 +3002,7 @@ pub(super) fn github_account_issue_item_from_response(
 }
 
 fn github_pull_request_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue> {
-    if issue.pull_request.is_none() {
-        return None;
-    }
+    issue.pull_request.as_ref()?;
     Some(github_issue_like_from_response(issue))
 }
 
@@ -3030,7 +3258,7 @@ fn github_timeline_event_title(event: &str) -> String {
         "referenced" => "引用了该讨论",
         "cross-referenced" => "交叉引用了该讨论",
         "commented" => "发表了评论",
-        value => return value.replace('_', " ").replace('-', " "),
+        value => return value.replace(['_', '-'], " "),
     };
     title.to_string()
 }
@@ -3244,7 +3472,7 @@ pub(super) fn add_pull_request_reviewers_from_reviews(
 fn fetch_github_pull_request_requested_reviewers(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     repo_url: &str,
     pull_number: u64,
 ) -> Result<Vec<GitHubPullRequestReviewer>, String> {
@@ -3310,24 +3538,38 @@ fn github_search_qualifier(name: &str, value: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct GitHubPullRequestSearchQuery<'a> {
+    pub repo_full_name: &'a str,
+    pub state: &'a str,
+    pub sort: &'a str,
+    pub text: &'a str,
+    pub creator: Option<&'a str>,
+    pub assignee: Option<&'a str>,
+    pub labels: Option<&'a [String]>,
+    pub milestone: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub review: Option<&'a str>,
+}
+
 pub(super) fn github_pull_request_search_required(
-    state: &str,
-    sort: &str,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-    project: Option<&str>,
-    review: Option<&str>,
-    query: Option<&str>,
+    filter: &GitHubPullRequestSearchQuery<'_>,
 ) -> bool {
     let has_value = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
-    matches!(state, "closed" | "merged")
-        || sort == "comments"
-        || [creator, assignee, milestone, project, review, query]
-            .into_iter()
-            .any(has_value)
-        || labels
+    matches!(filter.state, "closed" | "merged")
+        || filter.sort == "comments"
+        || [
+            filter.creator,
+            filter.assignee,
+            filter.milestone,
+            filter.project,
+            filter.review,
+            Some(filter.text),
+        ]
+        .into_iter()
+        .any(has_value)
+        || filter
+            .labels
             .unwrap_or(&[])
             .iter()
             .any(|label| !label.trim().is_empty())
@@ -3344,41 +3586,57 @@ fn sort_items_by_number<T>(items: &mut [T], direction: &str, number: impl Fn(&T)
     });
 }
 
-fn github_issue_search_query(
-    repo_full_name: &str,
-    state: &str,
-    text: &str,
-    since: Option<&str>,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-) -> String {
+#[derive(Clone, Copy, Debug)]
+struct GitHubIssueSearchQuery<'a> {
+    repo_full_name: &'a str,
+    state: &'a str,
+    text: &'a str,
+    since: Option<&'a str>,
+    creator: Option<&'a str>,
+    assignee: Option<&'a str>,
+    labels: Option<&'a [String]>,
+    milestone: Option<&'a str>,
+}
+
+fn github_issue_search_query(filter: GitHubIssueSearchQuery<'_>) -> String {
     let mut parts = vec![
-        github_search_qualifier("repo", repo_full_name),
+        github_search_qualifier("repo", filter.repo_full_name),
         "is:issue".to_string(),
     ];
-    let text = text.trim();
+    let text = filter.text.trim();
     if !text.is_empty() {
         parts.push(text.to_string());
     }
-    if state == "open" || state == "closed" {
-        parts.push(github_search_qualifier("state", state));
+    if filter.state == "open" || filter.state == "closed" {
+        parts.push(github_search_qualifier("state", filter.state));
     }
-    if let Some(value) = since.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .since
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         parts.push(format!("updated:>={value}"));
     }
-    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         parts.push(github_search_qualifier("author", value));
     }
-    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if value == "none" {
             parts.push("no:assignee".to_string());
         } else {
             parts.push(github_search_qualifier("assignee", value));
         }
     }
-    for label in labels
+    for label in filter
+        .labels
         .unwrap_or(&[])
         .iter()
         .map(|label| label.trim())
@@ -3386,7 +3644,11 @@ fn github_issue_search_query(
     {
         parts.push(github_search_qualifier("label", label));
     }
-    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if value == "none" {
             parts.push("no:milestone".to_string());
         } else {
@@ -3397,24 +3659,17 @@ fn github_issue_search_query(
 }
 
 pub(super) fn github_pull_request_search_query(
-    repo_full_name: &str,
-    state: &str,
-    text: &str,
-    creator: Option<&str>,
-    assignee: Option<&str>,
-    labels: Option<&[String]>,
-    milestone: Option<&str>,
-    review: Option<&str>,
+    filter: &GitHubPullRequestSearchQuery<'_>,
 ) -> String {
     let mut parts = vec![
-        github_search_qualifier("repo", repo_full_name),
+        github_search_qualifier("repo", filter.repo_full_name),
         "is:pr".to_string(),
     ];
-    let text = text.trim();
+    let text = filter.text.trim();
     if !text.is_empty() {
         parts.push(text.to_string());
     }
-    match state {
+    match filter.state {
         "merged" => parts.push("is:merged".to_string()),
         "closed" => {
             parts.push(github_search_qualifier("state", "closed"));
@@ -3423,17 +3678,26 @@ pub(super) fn github_pull_request_search_query(
         "all" => {}
         _ => parts.push(github_search_qualifier("state", "open")),
     }
-    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         parts.push(github_search_qualifier("author", value));
     }
-    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if value == "none" {
             parts.push("no:assignee".to_string());
         } else {
             parts.push(github_search_qualifier("assignee", value));
         }
     }
-    for label in labels
+    for label in filter
+        .labels
         .unwrap_or(&[])
         .iter()
         .map(|label| label.trim())
@@ -3441,14 +3705,22 @@ pub(super) fn github_pull_request_search_query(
     {
         parts.push(github_search_qualifier("label", label));
     }
-    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if value == "none" {
             parts.push("no:milestone".to_string());
         } else {
             parts.push(github_search_qualifier("milestone", value));
         }
     }
-    if let Some(value) = review.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(value) = filter
+        .review
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         parts.push(github_search_qualifier("review", value));
     }
     parts.join(" ")
@@ -3465,7 +3737,7 @@ pub(super) fn github_issue_project_items_from_graphql(
         .issues
         .nodes
         .into_iter()
-        .chain(repository.pull_requests.nodes.into_iter())
+        .chain(repository.pull_requests.nodes)
         .flatten()
     {
         let projects = issue
@@ -3490,13 +3762,13 @@ pub(super) fn fetch_github_issue_project_items(
     app: &AppHandle,
     repo_full_name: &str,
     binding: &GitHubBindingMetadata,
-    token: &str,
+    token: &GitHubSession,
 ) -> Result<std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>>, String> {
     if !github_binding_has_scope(binding, GITHUB_READ_PROJECT_SCOPE) {
         return Ok(std::collections::HashMap::new());
     }
     let repo = normalize_github_repo_input(repo_full_name)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let query = r#"
       query RepoIssueProjects($owner: String!, $name: String!) {
         repository(owner: $owner, name: $name) {
@@ -3573,7 +3845,7 @@ pub(super) fn enrich_github_issues_with_projects(
     app: &AppHandle,
     repo_full_name: &str,
     binding: &GitHubBindingMetadata,
-    token: &str,
+    token: &GitHubSession,
     issues: &mut [GitHubIssue],
 ) -> Result<(), String> {
     if issues.is_empty() {
@@ -3819,16 +4091,6 @@ pub(super) fn github_release_validate_asset_file_size(size: u64) -> Result<(), S
     lilia_github_github::github_release_validate_asset_file_size(size)
 }
 
-pub(super) fn github_release_asset_bytes(file_path: &str) -> Result<Vec<u8>, String> {
-    let metadata =
-        fs::metadata(file_path).map_err(|e| format!("读取 Release asset 文件失败：{e}"))?;
-    if !metadata.is_file() {
-        return Err("Release asset 必须是文件".to_string());
-    }
-    github_release_validate_asset_file_size(metadata.len())?;
-    fs::read(file_path).map_err(|e| format!("读取 Release asset 文件失败：{e}"))
-}
-
 fn insert_optional_release_string(
     payload: &mut serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -3871,7 +4133,7 @@ pub(super) fn github_workflow_definition_for_run(
     client: &reqwest::blocking::Client,
     repo_api_url: &str,
     repo_full_name: &str,
-    token: &str,
+    token: &GitHubSession,
     run: &GitHubWorkflowRun,
 ) -> Result<Option<GitHubWorkflowDefinition>, String> {
     let Some(workflow_id) = run.workflow_id else {
@@ -4068,38 +4330,87 @@ pub(super) fn github_artifact_preview_from_bytes(
     }
 }
 
-pub(super) fn github_artifact_file_bytes_from_zip(
+pub(super) struct TemporaryReleaseAsset {
+    path: PathBuf,
+}
+
+impl TemporaryReleaseAsset {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TemporaryReleaseAsset {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn create_temporary_release_asset(
+    runtime: &GitHubRuntimeState,
+) -> Result<(TemporaryReleaseAsset, File), String> {
+    let directory = std::env::temp_dir().join("lilia-github-release-assets");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("创建 Release asset 临时目录失败：{error}"))?;
+    for _ in 0..16 {
+        let path = directory.join(format!(
+            "asset-{}-{}-{}",
+            std::process::id(),
+            now_millis(),
+            runtime
+                .temporary_file_sequence
+                .fetch_add(1, Ordering::Relaxed)
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((TemporaryReleaseAsset { path }, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("创建 Release asset 临时文件失败：{error}")),
+        }
+    }
+    Err("创建 Release asset 临时文件失败：名称冲突".to_string())
+}
+
+pub(super) fn github_artifact_file_from_zip(
+    runtime: &GitHubRuntimeState,
     cache_path: &Path,
     requested_path: &str,
-) -> Result<(String, Vec<u8>), String> {
+) -> Result<(String, TemporaryReleaseAsset), String> {
     let requested_path = github_artifact_requested_file_path(requested_path)?;
-    let bytes = fs::read(cache_path)
-        .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+    let source = File::open(cache_path).map_err(|error| {
+        format!(
+            "读取 artifact 缓存失败：{}（{error}）",
+            cache_path.display()
+        )
+    })?;
+    let mut archive =
+        zip::ZipArchive::new(source).map_err(|error| format!("读取 artifact ZIP 失败：{error}"))?;
     for index in 0..archive.len() {
-        let mut file = archive
+        let mut entry = archive
             .by_index(index)
-            .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
-        let Some(enclosed_name) = file.enclosed_name() else {
+            .map_err(|error| format!("读取 artifact ZIP 条目失败：{error}"))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
             continue;
         };
         let entry_path = github_artifact_entry_path(&enclosed_name)?;
         if entry_path != requested_path {
             continue;
         }
-        if file.is_dir() {
+        if entry.is_dir() {
             return Err("不能上传 artifact 目录".to_string());
         }
-        let size = file.size();
-        github_release_validate_asset_file_size(size)?;
-        let mut file_bytes = Vec::with_capacity(size as usize);
-        file.read_to_end(&mut file_bytes)
-            .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
-        if file_bytes.is_empty() {
+        github_release_validate_asset_file_size(entry.size())?;
+        let (temporary, mut output) = create_temporary_release_asset(runtime)?;
+        let mut bounded = (&mut entry).take(GITHUB_RELEASE_ASSET_MAX_BYTES + 1);
+        let copied = io::copy(&mut bounded, &mut output)
+            .map_err(|error| format!("解压 artifact 文件失败：{error}"))?;
+        output
+            .flush()
+            .map_err(|error| format!("写入 artifact 临时文件失败：{error}"))?;
+        github_release_validate_asset_file_size(copied)?;
+        if copied == 0 {
             return Err("Release asset 文件不能为空".to_string());
         }
-        return Ok((entry_path, file_bytes));
+        return Ok((entry_path, temporary));
     }
     Err("artifact 文件不存在".to_string())
 }
@@ -4384,20 +4695,20 @@ pub(super) fn url_encode_path_segment(value: &str) -> String {
 }
 
 pub(super) fn token_for_binding(app: &AppHandle) -> Result<Option<String>, String> {
-    let settings = load_settings(app);
+    let settings = try_load_settings(app)?;
     let Some(binding) = settings.github_binding else {
         return Ok(None);
     };
-    read_token(&binding.login)
+    read_token(app, &binding.login)
 }
 
 pub fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, String> {
-    let settings = load_settings(&app);
+    let settings = try_load_settings(&app)?;
     if let Some(binding) = settings.github_binding.clone() {
-        if read_token(&binding.login)?.is_some() {
+        if read_token(&app, &binding.login)?.is_some() {
             return Ok(binding_status(Some(binding)));
         }
-        clear_github_binding(&app)?;
+        clear_github_binding_with_credential(&app, &binding.login)?;
     }
     Ok(binding_status(None))
 }
@@ -4409,7 +4720,7 @@ pub async fn github_get_account_profile(app: AppHandle) -> Result<GitHubAccountP
         "读取 GitHub 个人资料",
         move || {
             let (_, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 个人资料失败",
@@ -4430,7 +4741,7 @@ pub async fn github_get_account_readme(
         "读取 GitHub 个人 README",
         move || {
             let (binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let source_repo = format!("{0}/{0}", binding.login);
             Ok(github_readme_section(
                 &app,
@@ -4498,7 +4809,7 @@ pub async fn github_update_account_profile(
         move || {
             let (binding, token) = github_require_token(&app)?;
             github_require_scope(&binding, GITHUB_USER_SCOPE)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "更新 GitHub 个人资料失败",
@@ -4520,7 +4831,7 @@ pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlow
             let Some(client_id) = client_id() else {
                 return Err("GitHub Client ID 未配置".to_string());
             };
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response =
                 github_oauth_headers(client.post("https://github.com/login/device/code"))
                     .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
@@ -4557,7 +4868,7 @@ pub async fn github_poll_device_flow(
             let Some(client_id) = client_id() else {
                 return Err("GitHub Client ID 未配置".to_string());
             };
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response =
                 github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
                     .form(&[
@@ -4574,10 +4885,11 @@ pub async fn github_poll_device_flow(
                 .json::<TokenResponse>()
                 .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
             if let Some(token) = body.access_token {
-                let user_response =
-                    github_headers(client.get("https://api.github.com/user"), Some(&token))
-                        .send()
-                        .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
+                let user_response = github_send(
+                    &app,
+                    "读取 GitHub 账号信息失败",
+                    github_unbound_token_headers(client.get("https://api.github.com/user"), &token),
+                )?;
                 if !user_response.status().is_success() {
                     return Err(format!(
                         "读取 GitHub 账号信息失败：HTTP {}",
@@ -4587,7 +4899,6 @@ pub async fn github_poll_device_flow(
                 let user = user_response
                     .json::<GitHubUserResponse>()
                     .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
-                write_token(&user.login, &token)?;
                 let binding = GitHubBindingMetadata {
                     login: user.login,
                     avatar_url: user.avatar_url,
@@ -4595,9 +4906,9 @@ pub async fn github_poll_device_flow(
                     scopes: normalize_scope_list(body.scope.as_deref()),
                     client_id_source: client_id_source().to_string(),
                 };
-                switch_github_binding(&app, binding.clone())?;
+                switch_github_binding(&app, binding.clone(), &token)?;
                 return Ok(GitHubDeviceFlowPollResult {
-                    status: "authorized".to_string(),
+                    status: GitHubDeviceFlowPollStatus::Authorized,
                     interval_seconds: interval_seconds.unwrap_or(5),
                     binding_status: Some(binding_status(Some(binding))),
                     error: None,
@@ -4607,7 +4918,7 @@ pub async fn github_poll_device_flow(
             match body.error.as_deref() {
                 Some("authorization_pending") | Some("slow_down") => {
                     Ok(GitHubDeviceFlowPollResult {
-                        status: "pending".to_string(),
+                        status: GitHubDeviceFlowPollStatus::Pending,
                         interval_seconds: interval_seconds.unwrap_or(5)
                             + if body.error.as_deref() == Some("slow_down") {
                                 5
@@ -4619,13 +4930,13 @@ pub async fn github_poll_device_flow(
                     })
                 }
                 Some("expired_token") => Ok(GitHubDeviceFlowPollResult {
-                    status: "expired".to_string(),
+                    status: GitHubDeviceFlowPollStatus::Expired,
                     interval_seconds: interval_seconds.unwrap_or(5),
                     binding_status: None,
                     error: body.error,
                 }),
                 _ => Ok(GitHubDeviceFlowPollResult {
-                    status: "pending".to_string(),
+                    status: GitHubDeviceFlowPollStatus::Pending,
                     interval_seconds: interval_seconds.unwrap_or(5),
                     binding_status: None,
                     error: body.error,
@@ -4637,13 +4948,17 @@ pub async fn github_poll_device_flow(
 }
 
 pub fn github_unbind(app: AppHandle) -> Result<(), String> {
-    clear_github_binding(&app).map(|_| ())
+    let settings = try_load_settings(&app)?;
+    let Some(binding) = settings.github_binding else {
+        return Ok(());
+    };
+    clear_github_binding_with_credential(&app, &binding.login).map(|_| ())
 }
 
 fn github_fetch_repo_response_page(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     affiliation: &str,
     page: u32,
 ) -> Result<(Vec<GitHubRepoResponse>, Option<u32>), String> {
@@ -4724,7 +5039,7 @@ pub async fn github_get_organization_profile(
         "读取 GitHub 组织资料",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 组织资料失败",
@@ -4746,7 +5061,7 @@ pub async fn github_get_organization_profile(
 fn github_organization_member_view_available(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     login: &str,
 ) -> bool {
     let endpoint = match github_organization_api_url(login) {
@@ -4825,7 +5140,7 @@ pub(super) fn github_organization_graphql_query(
 fn github_organization_graphql(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     login: &str,
     view: GitHubOrganizationProfileView,
 ) -> Result<GitHubOrganizationGraphQlOrganization, String> {
@@ -4996,7 +5311,7 @@ pub(super) fn github_readme_image_paths(readme_path: &str, content: &str) -> Vec
 fn github_source_repo_is_public(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     source_repo: &str,
 ) -> Result<bool, String> {
     let response = github_send(
@@ -5027,7 +5342,7 @@ pub(super) fn github_repository_visibility_is_public(
 fn github_readme_image_data_url(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     source_repo: &str,
     path: &str,
 ) -> Option<String> {
@@ -5060,7 +5375,7 @@ fn github_readme_unavailable(error: &str) -> GitHubProfileReadmeSection {
 fn github_readme_section(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     sources: Vec<GitHubReadmeSource>,
     unavailable_message: &str,
 ) -> GitHubProfileReadmeSection {
@@ -5136,7 +5451,7 @@ fn github_readme_section(
 fn github_organization_readme(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     login: &str,
     view: GitHubOrganizationProfileView,
 ) -> GitHubProfileReadmeSection {
@@ -5166,7 +5481,7 @@ fn github_organization_readme(
 fn github_organization_members(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     login: &str,
     view: GitHubOrganizationProfileView,
 ) -> GitHubOrganizationMembersSection {
@@ -5259,7 +5574,7 @@ pub async fn github_get_organization_overview(
         move || {
             github_organization_api_url(&login)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let member_view_available =
                 github_organization_member_view_available(&app, &client, &token, &login);
             let effective_view =
@@ -5369,7 +5684,7 @@ pub async fn github_get_organization_overview(
 fn github_fetch_organization_repo_page(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     owner_login: &str,
     page: u32,
 ) -> Result<(Vec<GitHubRepoResponse>, Option<u32>), String> {
@@ -5402,7 +5717,7 @@ fn github_fetch_organization_repo_page(
 fn github_fetch_all_accessible_repo_responses(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
 ) -> Result<Vec<GitHubRepoResponse>, String> {
     let mut page = 1;
     let mut repos = Vec::new();
@@ -5436,7 +5751,7 @@ pub async fn github_list_repos(
             let page = page.unwrap_or(1).max(1);
             let scope = scope.unwrap_or_default();
             let (binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let (repos, next_page) = match &scope {
                 GitHubRepositoryScope::All => github_fetch_repo_response_page(
                     &app,
@@ -5491,7 +5806,7 @@ pub async fn github_list_watched_repos(
             let page = page.unwrap_or(1).max(1);
             let (binding, token) = github_require_token(&app)?;
             github_require_notifications_scope(&binding)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取关注仓库失败",
@@ -5527,7 +5842,7 @@ fn github_get_repo_subscription_sync(
 ) -> Result<GitHubRepositorySubscription, String> {
     let (binding, token) = github_require_token(app)?;
     github_require_notifications_scope(&binding)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let response = github_send(
         app,
         "读取仓库通知订阅失败",
@@ -5585,7 +5900,7 @@ pub async fn github_update_repo_subscription(
         move || {
             let (binding, token) = github_require_token(&app)?;
             github_require_notifications_scope(&binding)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let url = github_repository_subscription_url(&repo_full_name)?;
             if mode == GitHubRepositorySubscriptionMode::Participating {
                 let response = github_send(
@@ -5652,7 +5967,7 @@ fn github_membership_restriction(sso_header: Option<&str>) -> &'static str {
 fn github_fetch_active_memberships(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
 ) -> Result<GitHubMembershipResult, String> {
     let mut page = 1_u32;
     let mut memberships = Vec::new();
@@ -5746,7 +6061,7 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
         "读取 GitHub 仓库 owner",
         move || {
             let (binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repos = github_fetch_all_accessible_repo_responses(&app, &client, &token)?;
             let mut organizations = HashMap::new();
             for repo in repos {
@@ -5848,7 +6163,7 @@ mod project_cache_tests {
             &self,
             file: &str,
             key: &str,
-        ) -> Result<Option<serde_json::Value>, String> {
+        ) -> Result<Option<serde_json::Value>, crate::runtime::StoreError> {
             Ok(self.value(file, key))
         }
 
@@ -5857,12 +6172,12 @@ mod project_cache_tests {
             file: &str,
             key: &str,
             value: serde_json::Value,
-        ) -> Result<(), String> {
+        ) -> Result<(), crate::runtime::StoreError> {
             self.insert(file, key, value);
             Ok(())
         }
 
-        fn store_delete(&self, file: &str, key: &str) -> Result<(), String> {
+        fn store_delete(&self, file: &str, key: &str) -> Result<(), crate::runtime::StoreError> {
             self.values
                 .lock()
                 .unwrap()
@@ -5870,7 +6185,7 @@ mod project_cache_tests {
             Ok(())
         }
 
-        fn store_save(&self, file: &str) -> Result<(), String> {
+        fn store_save(&self, file: &str) -> Result<(), crate::runtime::StoreError> {
             self.saves.lock().unwrap().push(file.to_string());
             Ok(())
         }
@@ -5891,20 +6206,159 @@ mod project_cache_tests {
             Ok(())
         }
 
-        fn emit(
-            &self,
-            _event: &str,
-            _payload: serde_json::Value,
-        ) -> Result<(), String> {
+        fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
             Ok(())
         }
     }
 
-    fn github_cache_test_app(
-    ) -> (Arc<GitHubCacheTestRuntime>, crate::runtime::WorkspaceContext) {
+    fn github_cache_test_app() -> (
+        Arc<GitHubCacheTestRuntime>,
+        crate::runtime::WorkspaceContext,
+    ) {
         let runtime = Arc::new(GitHubCacheTestRuntime::default());
         let app = crate::runtime::WorkspaceContext::new(runtime.clone());
         (runtime, app)
+    }
+
+    fn binding(login: &str) -> GitHubBindingMetadata {
+        GitHubBindingMetadata {
+            login: login.to_string(),
+            avatar_url: None,
+            bound_at: 1,
+            scopes: vec!["repo".to_string()],
+            client_id_source: "bundled".to_string(),
+        }
+    }
+
+    #[test]
+    fn stale_account_request_cannot_commit_project_cache() {
+        let (runtime, app) = github_cache_test_app();
+        switch_github_binding_settings(&app, binding("alice")).unwrap();
+        let (_, revision) = github_binding_identity(&app).unwrap();
+        let stale_session = GitHubSession {
+            login: "alice".to_string(),
+            revision,
+            token: "alice-token".to_string(),
+        };
+        switch_github_binding_settings(&app, binding("bob")).unwrap();
+        runtime.take_saves();
+
+        update_github_project_repo_cache(&app, "owner/repo", &stale_session, |cache| {
+            cache.issues.insert("stale".to_string(), Vec::new());
+        })
+        .unwrap();
+
+        assert!(runtime.take_saves().is_empty());
+        assert!(runtime
+            .value(
+                GITHUB_PROJECT_CACHE_INDEX_FILE,
+                GITHUB_PROJECT_CACHE_INDEX_KEY
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn stale_unauthorized_response_cannot_clear_new_binding() {
+        let (_runtime, app) = github_cache_test_app();
+        switch_github_binding_settings(&app, binding("alice")).unwrap();
+        let (_, revision) = github_binding_identity(&app).unwrap();
+        let stale_session = GitHubSession {
+            login: "alice".to_string(),
+            revision,
+            token: "alice-token".to_string(),
+        };
+        switch_github_binding_settings(&app, binding("bob")).unwrap();
+
+        assert!(!expire_github_session_if_current(&app, &stale_session).unwrap());
+        assert_eq!(
+            try_load_settings(&app)
+                .unwrap()
+                .github_binding
+                .unwrap()
+                .login,
+            "bob"
+        );
+    }
+
+    #[test]
+    fn stale_unauthorized_response_rechecks_revision_inside_credential_transaction() {
+        let (_runtime, app) = github_cache_test_app();
+        switch_github_binding_settings(&app, binding("alice")).unwrap();
+        let (_, revision) = github_binding_identity(&app).unwrap();
+        let stale_session = GitHubSession {
+            login: "alice".to_string(),
+            revision,
+            token: "alice-token".to_string(),
+        };
+        let credential_gate = app
+            .github_runtime()
+            .credential_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let worker_app = app.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            expire_github_session_if_current(&worker_app, &stale_session)
+        });
+        started_rx.recv().unwrap();
+
+        switch_github_binding_settings(&app, binding("bob")).unwrap();
+        drop(credential_gate);
+
+        assert!(!worker.join().unwrap().unwrap());
+        assert_eq!(
+            try_load_settings(&app)
+                .unwrap()
+                .github_binding
+                .unwrap()
+                .login,
+            "bob"
+        );
+    }
+
+    #[test]
+    fn project_cache_is_isolated_between_apps() {
+        let (_first_runtime, first) = github_cache_test_app();
+        let (_second_runtime, second) = github_cache_test_app();
+        load_github_project_cache_index_for_account(&first, None).unwrap();
+        load_github_project_cache_index_for_account(&second, None).unwrap();
+        update_github_project_repo_cache_for_tests(&first, "owner/repo", |cache| {
+            cache.issues.insert("first".to_string(), Vec::new());
+        })
+        .unwrap();
+
+        assert!(load_github_project_repo_cache(&first, "owner/repo")
+            .unwrap()
+            .is_some());
+        assert!(load_github_project_repo_cache(&second, "owner/repo")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn session_revisions_are_isolated_between_apps() {
+        let (_first_runtime, first) = github_cache_test_app();
+        let (_second_runtime, second) = github_cache_test_app();
+        switch_github_binding_settings(&first, binding("alice")).unwrap();
+        switch_github_binding_settings(&second, binding("bob")).unwrap();
+        let (_, first_revision) = github_binding_identity(&first).unwrap();
+        let (_, second_revision) = github_binding_identity(&second).unwrap();
+        let first_session = GitHubSession {
+            login: "alice".to_string(),
+            revision: first_revision,
+            token: "first".to_string(),
+        };
+        let second_session = GitHubSession {
+            login: "bob".to_string(),
+            revision: second_revision,
+            token: "second".to_string(),
+        };
+
+        switch_github_binding_settings(&first, binding("carol")).unwrap();
+
+        assert!(!github_session_is_current(&first, &first_session).unwrap());
+        assert!(github_session_is_current(&second, &second_session).unwrap());
     }
 
     #[test]
@@ -5922,7 +6376,9 @@ mod project_cache_tests {
 
         assert_eq!(index.version, GITHUB_PROJECT_CACHE_VERSION);
         assert_eq!(index.account_login.as_deref(), Some("alice"));
-        assert!(runtime.value(STORE_FILE, GITHUB_PROJECT_CACHE_KEY).is_none());
+        assert!(runtime
+            .value(STORE_FILE, GITHUB_PROJECT_CACHE_KEY)
+            .is_none());
         assert_eq!(
             runtime.value(STORE_FILE, "business.setting"),
             Some(json!({ "preserved": true }))
@@ -5934,7 +6390,7 @@ mod project_cache_tests {
         let (_runtime, app) = github_cache_test_app();
         load_github_project_cache_index_for_account(&app, None).unwrap();
 
-        update_github_project_repo_cache(&app, "owner/current", |cache| {
+        update_github_project_repo_cache_for_tests(&app, "owner/current", |cache| {
             for index in 0..20 {
                 cache.issues.insert(format!("query-{index:02}"), Vec::new());
             }
@@ -5944,7 +6400,7 @@ mod project_cache_tests {
             .unwrap()
             .unwrap();
         assert_eq!(current.issues.len(), GITHUB_PROJECT_CACHE_MAX_KEYED_ITEMS);
-        update_github_project_repo_cache(&app, "owner/current", |cache| {
+        update_github_project_repo_cache_for_tests(&app, "owner/current", |cache| {
             cache.issues.insert("latest".to_string(), Vec::new());
         })
         .unwrap();
@@ -5955,9 +6411,13 @@ mod project_cache_tests {
         assert!(current.issues.contains_key("latest"));
 
         for index in 0..13 {
-            update_github_project_repo_cache(&app, &format!("owner/repo-{index:02}"), |cache| {
-                cache.issues.insert("recent".to_string(), Vec::new());
-            })
+            update_github_project_repo_cache_for_tests(
+                &app,
+                &format!("owner/repo-{index:02}"),
+                |cache| {
+                    cache.issues.insert("recent".to_string(), Vec::new());
+                },
+            )
             .unwrap();
         }
         let index = load_github_project_cache_index_for_account(&app, None).unwrap();
@@ -5972,7 +6432,7 @@ mod project_cache_tests {
     fn v2_account_change_clears_listed_shards() {
         let (runtime, app) = github_cache_test_app();
         load_github_project_cache_index_for_account(&app, None).unwrap();
-        update_github_project_repo_cache(&app, "owner/repo", |cache| {
+        update_github_project_repo_cache_for_tests(&app, "owner/repo", |cache| {
             cache.issues.insert("query".to_string(), Vec::new());
         })
         .unwrap();
@@ -5996,7 +6456,7 @@ mod project_cache_tests {
     fn v2_reads_only_save_the_index() {
         let (runtime, app) = github_cache_test_app();
         load_github_project_cache_index_for_account(&app, None).unwrap();
-        update_github_project_repo_cache(&app, "owner/repo", |cache| {
+        update_github_project_repo_cache_for_tests(&app, "owner/repo", |cache| {
             cache.issues.insert("query".to_string(), Vec::new());
         })
         .unwrap();
@@ -6012,7 +6472,7 @@ mod project_cache_tests {
             .iter()
             .all(|file| file == GITHUB_PROJECT_CACHE_INDEX_FILE));
 
-        update_github_project_repo_cache(&app, "owner/repo", |_| {}).unwrap();
+        update_github_project_repo_cache_for_tests(&app, "owner/repo", |_| {}).unwrap();
         let saves = runtime.take_saves();
         assert!(!saves.is_empty());
         assert!(saves
@@ -6025,7 +6485,7 @@ mod project_cache_tests {
         let (runtime, app) = github_cache_test_app();
         load_github_project_cache_index_for_account(&app, None).unwrap();
         for repo in ["owner/first", "owner/second"] {
-            update_github_project_repo_cache(&app, repo, |cache| {
+            update_github_project_repo_cache_for_tests(&app, repo, |cache| {
                 cache.issues.insert("initial".to_string(), Vec::new());
             })
             .unwrap();
@@ -6034,7 +6494,7 @@ mod project_cache_tests {
         let second_shard = github_project_cache_shard_file("owner/second");
         runtime.take_saves();
 
-        update_github_project_repo_cache(&app, "owner/first", |cache| {
+        update_github_project_repo_cache_for_tests(&app, "owner/first", |cache| {
             cache.issues.insert("changed".to_string(), Vec::new());
         })
         .unwrap();
@@ -6069,7 +6529,7 @@ mod repository_scope_tests {
                 "type": owner_kind,
                 "avatar_url": "https://avatars.example/owner.png"
             },
-            "permissions": { "pull": true, "push": id % 2 == 0, "admin": false }
+            "permissions": { "pull": true, "push": id.is_multiple_of(2), "admin": false }
         }))
         .expect("repository response")
     }
@@ -6390,7 +6850,7 @@ pub async fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepo
         "读取 GitHub 模板仓库",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut page = 1_u32;
             let mut templates = Vec::new();
             let mut seen = HashSet::new();
@@ -6438,7 +6898,7 @@ pub async fn github_list_repo_licenses(app: AppHandle) -> Result<Vec<GitHubRepoL
         OperationKind::GitHubRead,
         "读取 GitHub License 模板",
         move || {
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut page = 1_u32;
             let mut licenses = Vec::new();
             let mut seen = HashSet::new();
@@ -6448,10 +6908,9 @@ pub async fn github_list_repo_licenses(app: AppHandle) -> Result<Vec<GitHubRepoL
                     &app,
                     "读取 GitHub License 模板失败",
                     github_headers(
-                        client.get("https://api.github.com/licenses").query(&[
-                            ("per_page", "100"),
-                            ("page", page_string.as_str()),
-                        ]),
+                        client
+                            .get("https://api.github.com/licenses")
+                            .query(&[("per_page", "100"), ("page", page_string.as_str())]),
                         None,
                     ),
                 )?;
@@ -6519,7 +6978,7 @@ pub async fn github_create_repo(
                         map.insert("description".to_string(), serde_json::Value::String(value));
                     }
                 }
-                let client = build_client()?;
+                let client = build_client(&app)?;
                 let url = format!(
                     "https://api.github.com/repos/{}/{}/generate",
                     url_encode_path_segment(&template.owner),
@@ -6561,7 +7020,7 @@ pub async fn github_create_repo(
                     );
                 }
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let url = if organization_owner {
                 format!(
                     "https://api.github.com/orgs/{}/repos",
@@ -6589,14 +7048,14 @@ pub async fn github_create_repo(
 fn fetch_github_repo_management(
     app: &AppHandle,
     repo_full_name: &str,
+    token: &GitHubSession,
 ) -> Result<GitHubRepoManagement, String> {
-    let (_binding, token) = github_require_token(app)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let repo_url = github_repo_api_url(repo_full_name)?;
     let response = github_send(
         app,
         "读取 GitHub 仓库设置失败",
-        github_headers(client.get(&repo_url), Some(&token)),
+        github_headers(client.get(&repo_url), Some(token)),
     )?;
     let repo = github_json::<serde_json::Value>("读取 GitHub 仓库设置失败", response)?;
     let topics_response = github_send(
@@ -6604,7 +7063,7 @@ fn fetch_github_repo_management(
         "读取 GitHub 仓库 topics 失败",
         github_headers(
             client.get(github_repo_topics_api_url(repo_full_name)?),
-            Some(&token),
+            Some(token),
         ),
     )?;
     let topics =
@@ -6622,16 +7081,16 @@ pub async fn github_get_repo_management(
         OperationKind::GitHubRead,
         "读取 GitHub 仓库设置",
         move || {
+            let (_binding, token) = github_require_token(&app)?;
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) =
-                    load_github_project_repo_cache(&app, &repo_full_name)?
-                        .and_then(|repo_cache| repo_cache.management)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
+                    .and_then(|repo_cache| repo_cache.management)
                 {
                     return Ok(cached);
                 }
             }
-            let next = fetch_github_repo_management(&app, &repo_full_name)?;
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            let next = fetch_github_repo_management(&app, &repo_full_name, &token)?;
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.management = Some(next.clone());
             })?;
             Ok(next)
@@ -6652,7 +7111,7 @@ pub async fn github_update_repo_settings(
         move || {
             let (_binding, token) = github_require_token(&app)?;
             let payload = github_update_repo_settings_payload(&request);
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_url = github_repo_api_url(&repo_full_name)?;
             let repo = if payload.is_empty() {
                 let response = github_send(
@@ -6696,7 +7155,7 @@ pub async fn github_update_repo_settings(
             };
             let management =
                 github_repo_management_from_value("读取 GitHub 仓库设置失败", repo, topics)?;
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.management = Some(management.clone());
             })?;
             Ok(management)
@@ -6727,17 +7186,47 @@ fn github_json_value(prefix: &str, response: Response) -> Result<serde_json::Val
         .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
 }
 
+#[derive(Clone, Copy, Debug)]
+struct GitHubRepoSettingsItemSpec {
+    key: &'static str,
+    label: &'static str,
+    path: &'static str,
+    mutable: bool,
+    dangerous: bool,
+}
+
+impl GitHubRepoSettingsItemSpec {
+    const fn new(
+        key: &'static str,
+        label: &'static str,
+        path: &'static str,
+        mutable: bool,
+        dangerous: bool,
+    ) -> Self {
+        Self {
+            key,
+            label,
+            path,
+            mutable,
+            dangerous,
+        }
+    }
+}
+
 fn github_repo_settings_get_item(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     repo_full_name: &str,
-    key: &str,
-    label: &str,
-    path: &str,
-    mutable: bool,
-    dangerous: bool,
+    spec: GitHubRepoSettingsItemSpec,
 ) -> GitHubRepoSettingsEndpointItem {
+    let GitHubRepoSettingsItemSpec {
+        key,
+        label,
+        path,
+        mutable,
+        dangerous,
+    } = spec;
     if let Some(reason) = path.strip_prefix("unavailable:") {
         return GitHubRepoSettingsEndpointItem {
             key: key.to_string(),
@@ -6806,72 +7295,78 @@ fn github_repo_settings_section_title(section: &str) -> Result<&'static str, Str
 
 fn github_repo_settings_section_items(
     section: &str,
-) -> Result<Vec<(&'static str, &'static str, &'static str, bool, bool)>, String> {
-    match section {
-        "collaborators" => Ok(vec![
+) -> Result<Vec<GitHubRepoSettingsItemSpec>, String> {
+    let items = match section {
+        "collaborators" => vec![
             ("collaborators", "协作者", "collaborators?per_page=100", true, true),
             ("teams", "仓库团队", "teams?per_page=100", false, false),
-        ]),
-        "moderation" => Ok(vec![
+        ],
+        "moderation" => vec![
             ("interactionLimits", "互动限制", "interaction-limits", true, false),
-        ]),
-        "security" => Ok(vec![
+        ],
+        "security" => vec![
             ("repository", "仓库安全与分析", "", true, false),
             ("vulnerabilityAlerts", "漏洞警报", "vulnerability-alerts", true, false),
             ("dependabotSecurityUpdates", "Dependabot 安全更新", "automated-security-fixes", true, false),
             ("privateVulnerabilityReporting", "私有漏洞报告", "private-vulnerability-reporting", true, false),
             ("immutableReleases", "不可变 Release", "immutable-releases", true, false),
-        ]),
-        "branches" => Ok(vec![
+        ],
+        "branches" => vec![
             ("branches", "分支", "branches?per_page=100", false, false),
-        ]),
-        "tags" => Ok(vec![
+        ],
+        "tags" => vec![
             ("tags", "标签", "tags?per_page=100", false, false),
-        ]),
-        "rules" => Ok(vec![
+        ],
+        "rules" => vec![
             ("rulesets", "仓库规则集", "rulesets", true, true),
-        ]),
-        "actions" => Ok(vec![
+        ],
+        "actions" => vec![
             ("permissions", "Actions permissions", "actions/permissions", true, false),
             ("workflowPermissions", "工作流默认权限", "actions/permissions/workflow", true, false),
             ("workflows", "工作流", "actions/workflows?per_page=100", true, false),
-        ]),
-        "copilot" => Ok(vec![(
+        ],
+        "copilot" => vec![(
             "copilot",
             "Copilot repository settings",
             "unavailable:GitHub REST API does not expose a general repository-owned Copilot settings endpoint for this app.",
             false,
             false,
-        )]),
-        "environments" => Ok(vec![
+        )],
+        "environments" => vec![
             ("environments", "环境", "environments", true, true),
-        ]),
-        "codespaces" => Ok(vec![
+        ],
+        "codespaces" => vec![
             ("codespaces", "仓库 Codespaces", "codespaces?per_page=100", false, false),
             ("codespacesSecrets", "Codespaces 仓库密钥", "codespaces/secrets", true, true),
-        ]),
-        "pages" => Ok(vec![
+        ],
+        "pages" => vec![
             ("pages", "GitHub Pages 站点", "pages", true, false),
             ("pagesBuilds", "GitHub Pages 构建", "pages/builds?per_page=20", true, false),
-        ]),
-        "webhooks" => Ok(vec![
+        ],
+        "webhooks" => vec![
             ("webhooks", "Webhooks", "hooks", true, true),
-        ]),
-        "deployKeys" => Ok(vec![
+        ],
+        "deployKeys" => vec![
             ("deployKeys", "部署密钥", "keys?per_page=100", true, true),
-        ]),
-        "secretsVariables" => Ok(vec![
+        ],
+        "secretsVariables" => vec![
             ("actionsVariables", "Actions 仓库变量", "actions/variables", true, false),
             ("actionsSecrets", "Actions 仓库密钥", "actions/secrets", true, true),
-        ]),
-        "githubApps" => Ok(vec![
+        ],
+        "githubApps" => vec![
             ("installations", "仓库 GitHub App 安装", "installations", false, false),
-        ]),
-        "emailNotifications" => Ok(vec![
+        ],
+        "emailNotifications" => vec![
             ("subscription", "仓库通知订阅", "subscription", true, false),
-        ]),
-        _ => Err(format!("未知 GitHub 设置分区：{section}")),
-    }
+        ],
+        _ => return Err(format!("未知 GitHub 设置分区：{section}")),
+    };
+    Ok(items
+        .into_iter()
+        .map(|(key, label, path, mutable, dangerous)| {
+            GitHubRepoSettingsItemSpec::new(key, label, path, mutable, dangerous)
+        })
+        .collect())
 }
 
 fn github_get_repo_settings_section_sync(
@@ -6880,23 +7375,11 @@ fn github_get_repo_settings_section_sync(
     section: &str,
 ) -> Result<GitHubRepoSettingsSection, String> {
     let (_binding, token) = github_require_token(app)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let title = github_repo_settings_section_title(section)?;
     let items = github_repo_settings_section_items(section)?
         .into_iter()
-        .map(|(key, label, path, mutable, dangerous)| {
-            github_repo_settings_get_item(
-                app,
-                &client,
-                &token,
-                repo_full_name,
-                key,
-                label,
-                path,
-                mutable,
-                dangerous,
-            )
-        })
+        .map(|spec| github_repo_settings_get_item(app, &client, &token, repo_full_name, spec))
         .collect();
     Ok(GitHubRepoSettingsSection {
         key: section.to_string(),
@@ -6932,7 +7415,7 @@ pub async fn github_update_repo_actions_permissions(
         "更新 GitHub Actions 权限",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "更新 GitHub Actions 权限失败",
@@ -6966,7 +7449,7 @@ pub async fn github_update_repo_workflow_permissions(
         "更新 GitHub 工作流权限",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "更新 GitHub 工作流权限失败",
@@ -6997,7 +7480,7 @@ pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Resul
         move || {
             let (binding, token) = github_require_token(&app)?;
             github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "删除 GitHub 仓库失败",
@@ -7009,7 +7492,7 @@ pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Resul
             if !response.status().is_success() {
                 return Err(github_http_error("删除 GitHub 仓库失败", response));
             }
-            clear_github_project_repo_cache(&app, &repo_full_name)?;
+            clear_github_project_repo_cache(&app, &repo_full_name, &token)?;
             Ok(())
         },
     )
@@ -7026,7 +7509,7 @@ pub async fn github_list_branches(
         "读取 GitHub 分支",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_url = github_repo_api_url(&repo_full_name)?;
             let response = github_send(
                 &app,
@@ -7075,7 +7558,7 @@ pub async fn github_get_branch_protection(
         "读取 GitHub 分支保护",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 分支保护失败",
@@ -7105,7 +7588,7 @@ pub async fn github_update_branch_protection(
         "更新 GitHub 分支保护",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "更新 GitHub 分支保护失败",
@@ -7133,7 +7616,7 @@ fn github_ruleset_api_url(repo_full_name: &str, ruleset_id: Option<u64>) -> Resu
 fn fetch_github_ruleset(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     repo_full_name: &str,
     ruleset_id: u64,
 ) -> Result<serde_json::Value, String> {
@@ -7158,7 +7641,7 @@ pub async fn github_list_repo_rulesets(
         "读取 GitHub 规则集",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 规则集失败",
@@ -7197,7 +7680,7 @@ pub async fn github_get_repo_ruleset(
         "读取 GitHub 规则集",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)
         },
     )
@@ -7216,7 +7699,7 @@ pub async fn github_update_repo_ruleset(
         "更新 GitHub 规则集",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let current = fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)?;
             let source_type = current
                 .get("source_type")
@@ -7262,7 +7745,7 @@ pub async fn github_delete_branch(
             if branch.is_empty() {
                 return Err("分支名不能为空".to_string());
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "删除 GitHub 分支失败",
@@ -7284,6 +7767,8 @@ pub async fn github_delete_branch(
     .await
 }
 
+// These parameters mirror the stable Tauri command keys; grouping them would change the wire.
+#[allow(clippy::too_many_arguments)]
 pub async fn github_list_pull_requests(
     app: AppHandle,
     repo_full_name: String,
@@ -7307,19 +7792,19 @@ pub async fn github_list_pull_requests(
         move || {
             let milestone_key = github_issue_milestone_param(milestone.clone());
             let search_query = normalize_optional_string(query.clone());
-            let pull_key = github_pull_request_cache_key(
-                state.as_deref(),
+            let pull_key = github_pull_request_cache_key(GitHubPullRequestCacheQuery {
+                state: state.as_deref(),
                 per_page,
-                sort.as_deref(),
-                direction.as_deref(),
-                creator.as_deref(),
-                assignee.as_deref(),
-                labels.as_deref(),
-                milestone_key.as_deref(),
-                project.as_deref(),
-                review.as_deref(),
-                search_query.as_deref(),
-            );
+                sort: sort.as_deref(),
+                direction: direction.as_deref(),
+                creator: creator.as_deref(),
+                assignee: assignee.as_deref(),
+                labels: labels.as_deref(),
+                milestone: milestone_key.as_deref(),
+                project: project.as_deref(),
+                review: review.as_deref(),
+                query: search_query.as_deref(),
+            });
             if github_project_cache_enabled(force_refresh) {
                 if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.pull_requests.get(&pull_key).cloned())
@@ -7349,18 +7834,20 @@ pub async fn github_list_pull_requests(
             let pull_assignee = normalize_optional_string(assignee);
             let pull_review = normalize_optional_string(review);
             let pull_project = normalize_optional_string(project);
-            let client = build_client()?;
-            if !github_pull_request_search_required(
-                pull_state,
-                pull_sort,
-                pull_creator.as_deref(),
-                pull_assignee.as_deref(),
-                labels.as_deref(),
-                milestone_key.as_deref(),
-                pull_project.as_deref(),
-                pull_review.as_deref(),
-                search_query.as_deref(),
-            ) {
+            let client = build_client(&app)?;
+            let pull_search = GitHubPullRequestSearchQuery {
+                repo_full_name: &repo_full_name,
+                state: pull_state,
+                sort: pull_sort,
+                text: search_query.as_deref().unwrap_or(""),
+                creator: pull_creator.as_deref(),
+                assignee: pull_assignee.as_deref(),
+                labels: labels.as_deref(),
+                milestone: milestone_key.as_deref(),
+                project: pull_project.as_deref(),
+                review: pull_review.as_deref(),
+            };
+            if !github_pull_request_search_required(&pull_search) {
                 let repo_url = github_repo_api_url(&repo_full_name)?;
                 let response = github_send(
                     &app,
@@ -7391,21 +7878,12 @@ pub async fn github_list_pull_requests(
                 if sort_by_number {
                     sort_items_by_number(&mut pulls, pull_direction, |item| item.number);
                 }
-                update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                     repo_cache.pull_requests.insert(pull_key, pulls.clone());
                 })?;
                 return Ok(pulls);
             }
-            let search_q = github_pull_request_search_query(
-                &repo_full_name,
-                pull_state,
-                search_query.as_deref().unwrap_or(""),
-                pull_creator.as_deref(),
-                pull_assignee.as_deref(),
-                labels.as_deref(),
-                milestone_key.as_deref(),
-                pull_review.as_deref(),
-            );
+            let search_q = github_pull_request_search_query(&pull_search);
             let search_params = vec![
                 ("q", search_q),
                 ("per_page", pull_per_page),
@@ -7462,7 +7940,7 @@ pub async fn github_list_pull_requests(
             if sort_by_number {
                 sort_items_by_number(&mut pulls, pull_direction, |item| item.number);
             }
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.pull_requests.insert(pull_key, pulls.clone());
             })?;
             Ok(pulls)
@@ -7542,7 +8020,7 @@ pub async fn github_get_pull_request_discussion(
             if let Some(issue) = issue_metadata {
                 pull_request = github_pull_request_with_issue_metadata(pull_request, issue);
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_url = github_repo_api_url(&repo_full_name)?;
             let mut timeline = vec![github_timeline_item_from_pull_request(&pull_request)];
             let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
@@ -7617,7 +8095,7 @@ pub async fn github_get_pull_request_discussion(
                 pull_request,
                 timeline,
             };
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache
                     .pull_request_discussions
                     .insert(discussion_key, discussion.clone());
@@ -7656,7 +8134,7 @@ pub async fn github_create_pull_request(
                     map.insert("body".to_string(), serde_json::Value::String(value));
                 }
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "创建 GitHub Pull Request 失败",
@@ -7672,7 +8150,7 @@ pub async fn github_create_pull_request(
                 response,
             )?;
             let pull = github_pull_request_from_response(pull_request);
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(pull)
         },
     )
@@ -7721,7 +8199,7 @@ pub async fn github_update_pull_request(
             if let Some(value) = request.milestone {
                 issue_payload.insert("milestone".to_string(), serde_json::json!(value));
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_api_url = github_repo_api_url(&repo_full_name)?;
             if !payload.is_empty() {
                 let response = github_send(
@@ -7761,7 +8239,7 @@ pub async fn github_update_pull_request(
                 "读取更新后的 Pull Request 失败",
             )?;
             let pull = github_pull_request_from_response(pull_request);
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(pull)
         },
     )
@@ -7799,7 +8277,7 @@ pub async fn github_merge_pull_request(
             if let Some(value) = normalize_optional_string(request.sha) {
                 payload.insert("sha".to_string(), serde_json::Value::String(value));
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "合并 GitHub Pull Request 失败",
@@ -7824,7 +8302,7 @@ pub async fn github_merge_pull_request(
                 "读取合并后的 Pull Request 失败",
             )?;
             let pull = github_pull_request_from_response(pull_request);
-            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            clear_github_project_pull_request_cache(&app, &repo_full_name, &token)?;
             Ok(pull)
         },
     )
@@ -7866,7 +8344,7 @@ pub async fn github_list_pull_request_checks(
                 .sha
                 .filter(|value| !value.trim().is_empty())
                 .ok_or_else(|| "Pull Request 缺少 head sha".to_string())?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Pull Request Checks 失败",
@@ -7890,7 +8368,7 @@ pub async fn github_list_pull_request_checks(
                 .into_iter()
                 .map(github_pull_request_check_from_response)
                 .collect::<Vec<_>>();
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache
                     .pull_request_checks
                     .insert(checks_key, checks.clone());
@@ -7901,6 +8379,8 @@ pub async fn github_list_pull_request_checks(
     .await
 }
 
+// These parameters mirror the stable Tauri command keys; grouping them would change the wire.
+#[allow(clippy::too_many_arguments)]
 pub async fn github_list_issues(
     app: AppHandle,
     repo_full_name: String,
@@ -7924,19 +8404,19 @@ pub async fn github_list_issues(
         move || {
             let milestone_key = github_issue_milestone_param(milestone.clone());
             let search_query = normalize_optional_string(query.clone());
-            let issue_key = github_issue_cache_key(
-                state.as_deref(),
+            let issue_key = github_issue_cache_key(GitHubIssueCacheQuery {
+                state: state.as_deref(),
                 per_page,
-                sort.as_deref(),
-                direction.as_deref(),
-                since.as_deref(),
-                creator.as_deref(),
-                assignee.as_deref(),
-                labels.as_deref(),
-                milestone_key.as_deref(),
-                project.as_deref(),
-                search_query.as_deref(),
-            );
+                sort: sort.as_deref(),
+                direction: direction.as_deref(),
+                since: since.as_deref(),
+                creator: creator.as_deref(),
+                assignee: assignee.as_deref(),
+                labels: labels.as_deref(),
+                milestone: milestone_key.as_deref(),
+                project: project.as_deref(),
+                query: search_query.as_deref(),
+            });
             if github_project_cache_enabled(force_refresh) {
                 if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
                     .and_then(|repo_cache| repo_cache.issues.get(&issue_key).cloned())
@@ -7983,23 +8463,23 @@ pub async fn github_list_issues(
             if let Some(issue_milestone) = issue_milestone.clone() {
                 rest_query.push(("milestone", issue_milestone));
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let issues = if let Some(search_text) = search_query {
                 let search_sort = match issue_sort {
                     "updated" => "updated",
                     "comments" => "comments",
                     _ => "created",
                 };
-                let search_q = github_issue_search_query(
-                    &repo_full_name,
-                    &issue_state,
-                    &search_text,
-                    issue_since.as_deref(),
-                    issue_creator.as_deref(),
-                    issue_assignee.as_deref(),
-                    labels.as_deref(),
-                    milestone_key.as_deref(),
-                );
+                let search_q = github_issue_search_query(GitHubIssueSearchQuery {
+                    repo_full_name: &repo_full_name,
+                    state: &issue_state,
+                    text: &search_text,
+                    since: issue_since.as_deref(),
+                    creator: issue_creator.as_deref(),
+                    assignee: issue_assignee.as_deref(),
+                    labels: labels.as_deref(),
+                    milestone: milestone_key.as_deref(),
+                });
                 let search_params = vec![
                     ("q", search_q),
                     ("per_page", issue_per_page),
@@ -8052,7 +8532,7 @@ pub async fn github_list_issues(
             if sort_by_number {
                 sort_items_by_number(&mut issues, issue_direction, |item| item.number);
             }
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.issues.insert(issue_key, issues.clone());
             })?;
             Ok(issues)
@@ -8095,7 +8575,7 @@ pub async fn github_get_issue_discussion(
             )?;
             let mut issue = github_issue_from_response(issue_response)
                 .ok_or_else(|| format!("#{issue_number} 是 Pull Request，不是 Issue"))?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_url = github_repo_api_url(&repo_full_name)?;
             let mut timeline = vec![github_timeline_item_from_issue(&issue)];
             let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
@@ -8116,7 +8596,7 @@ pub async fn github_get_issue_discussion(
             timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
             sort_github_discussion_timeline(&mut timeline);
             let discussion = GitHubIssueDiscussion { issue, timeline };
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache
                     .issue_discussions
                     .insert(discussion_key, discussion.clone());
@@ -8138,9 +8618,7 @@ pub async fn github_get_issue_filter_metadata(
         "读取 GitHub Issue 筛选项",
         move || {
             if github_project_cache_enabled(force_refresh) {
-                if let Some(repo_cache) =
-                    load_github_project_repo_cache(&app, &repo_full_name)?
-                {
+                if let Some(repo_cache) = load_github_project_repo_cache(&app, &repo_full_name)? {
                     if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
                         if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
                             return Ok(cached);
@@ -8149,7 +8627,7 @@ pub async fn github_get_issue_filter_metadata(
                 }
             }
             let (binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let query = vec![
                 ("state", "all".to_string()),
                 ("per_page", "100".to_string()),
@@ -8182,7 +8660,7 @@ pub async fn github_get_issue_filter_metadata(
             let mut metadata = github_issue_filter_metadata_from_issues(&issues);
             let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
             metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.issue_filter_metadata = Some(metadata.clone());
             })?;
             Ok(metadata)
@@ -8191,14 +8669,19 @@ pub async fn github_get_issue_filter_metadata(
     .await
 }
 
+#[derive(Clone, Copy, Debug)]
+struct GitHubIssueValuesEndpoint {
+    path: &'static str,
+    error_label: &'static str,
+}
+
 fn list_github_issue_values(
     app: &AppHandle,
     repo_full_name: &str,
     force_refresh: Option<bool>,
     cache_read: impl Fn(&GitHubProjectRepoCache) -> Option<Vec<String>>,
     cache_write: impl Fn(&mut GitHubProjectRepoCache, Vec<String>),
-    endpoint: &str,
-    error_label: &'static str,
+    endpoint: GitHubIssueValuesEndpoint,
     parse_values: impl Fn(Response) -> Result<Vec<String>, String>,
 ) -> Result<Vec<String>, String> {
     if github_project_cache_enabled(force_refresh) {
@@ -8209,23 +8692,23 @@ fn list_github_issue_values(
         }
     }
     let (_binding, token) = github_require_token(app)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let response = github_send(
         app,
-        error_label,
+        endpoint.error_label,
         github_headers(
             client
                 .get(format!(
                     "{}/{}",
                     github_repo_api_url(repo_full_name)?,
-                    endpoint
+                    endpoint.path
                 ))
                 .query(&[("per_page", "100")]),
             Some(&token),
         ),
     )?;
     let values = parse_values(response)?;
-    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+    update_github_project_repo_cache(app, repo_full_name, &token, |repo_cache| {
         cache_write(repo_cache, values.clone());
     })?;
     Ok(values)
@@ -8242,8 +8725,10 @@ fn list_github_issue_labels_inner(
         force_refresh,
         |repo_cache| repo_cache.issue_labels.clone(),
         |repo_cache, labels| repo_cache.issue_labels = Some(labels),
-        "labels",
-        "读取 GitHub Issue Labels 失败",
+        GitHubIssueValuesEndpoint {
+            path: "labels",
+            error_label: "读取 GitHub Issue Labels 失败",
+        },
         |response| {
             Ok(
                 github_json::<Vec<GitHubLabelResponse>>("读取 GitHub Issue Labels 失败", response)?
@@ -8267,8 +8752,10 @@ fn list_github_issue_assignees_inner(
         force_refresh,
         |repo_cache| repo_cache.issue_assignees.clone(),
         |repo_cache, assignees| repo_cache.issue_assignees = Some(assignees),
-        "assignees",
-        "读取 GitHub Issue Assignees 失败",
+        GitHubIssueValuesEndpoint {
+            path: "assignees",
+            error_label: "读取 GitHub Issue Assignees 失败",
+        },
         |response| {
             Ok(github_json::<Vec<GitHubAssigneeResponse>>(
                 "读取 GitHub Issue Assignees 失败",
@@ -8335,7 +8822,7 @@ pub async fn github_create_issue(
                     map.insert("body".to_string(), serde_json::Value::String(value));
                 }
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "创建 GitHub Issue 失败",
@@ -8349,7 +8836,7 @@ pub async fn github_create_issue(
             let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
             let issue = github_issue_from_response(issue)
                 .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
-            clear_github_project_issue_cache(&app, &repo_full_name)?;
+            clear_github_project_issue_cache(&app, &repo_full_name, &token)?;
             Ok(issue)
         },
     )
@@ -8399,7 +8886,7 @@ pub async fn github_update_issue(
             if let Some(value) = request.milestone {
                 payload.insert("milestone".to_string(), serde_json::json!(value));
             }
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "更新 GitHub Issue 失败",
@@ -8416,7 +8903,7 @@ pub async fn github_update_issue(
             let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
             let issue = github_issue_from_response(issue)
                 .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
-            clear_github_project_issue_cache(&app, &repo_full_name)?;
+            clear_github_project_issue_cache(&app, &repo_full_name, &token)?;
             Ok(issue)
         },
     )
@@ -8444,7 +8931,7 @@ pub async fn github_list_workflow_runs(
             }
             let (_binding, token) = github_require_token(&app)?;
             let runs_per_page = per_page.unwrap_or(30).clamp(1, 100).to_string();
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Actions 失败",
@@ -8465,7 +8952,7 @@ pub async fn github_list_workflow_runs(
                 .into_iter()
                 .map(github_workflow_run_from_response)
                 .collect::<Vec<_>>();
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.workflow_runs.insert(runs_key, runs.clone());
             })?;
             Ok(runs)
@@ -8486,7 +8973,7 @@ pub async fn github_get_workflow_run_detail(
         "读取 GitHub Actions 详情",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let repo_api_url = github_repo_api_url(&repo_full_name)?;
             let run_response = github_send(
                 &app,
@@ -8569,10 +9056,7 @@ pub async fn github_get_workflow_job_log(
         "读取 GitHub Actions 日志",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()
-                .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+            let client = build_transfer_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Actions 日志失败",
@@ -8601,7 +9085,7 @@ fn github_post_workflow_action(
 ) -> Result<(), String> {
     let (binding, token) = github_require_token(app)?;
     github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
-    let client = build_client()?;
+    let client = build_client(app)?;
     let response = github_send(
         app,
         error_context,
@@ -8613,7 +9097,7 @@ fn github_post_workflow_action(
     if !response.status().is_success() {
         return Err(github_http_error(error_context, response));
     }
-    clear_github_project_repo_cache(app, repo_full_name)?;
+    clear_github_project_repo_cache(app, repo_full_name, &token)?;
     Ok(())
 }
 
@@ -8685,7 +9169,7 @@ fn ensure_github_artifact_zip(
     repo_full_name: &str,
     artifact_id: u64,
 ) -> Result<PathBuf, String> {
-    with_github_artifact_guard(repo_full_name, artifact_id, || {
+    with_github_artifact_guard(app, repo_full_name, artifact_id, || {
         ensure_github_artifact_zip_guarded(app, repo_full_name, artifact_id)
     })
 }
@@ -8703,10 +9187,7 @@ fn ensure_github_artifact_zip_guarded(
         let _ = fs::remove_file(&path);
     }
     let (_binding, token) = github_require_token(app)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+    let client = build_transfer_client(app)?;
     let response = github_send(
         app,
         "下载 GitHub Actions artifact 失败",
@@ -8718,38 +9199,123 @@ fn ensure_github_artifact_zip_guarded(
             Some(&token),
         ),
     )?;
+    let mut response = validate_artifact_download_response(response)?;
+    stream_artifact_reader_to_cache(
+        app.github_runtime(),
+        &mut response,
+        &path,
+        GITHUB_ACTIONS_ARTIFACT_MAX_BYTES,
+    )?;
+    Ok(path)
+}
+
+fn validate_artifact_download_response(response: Response) -> Result<Response, String> {
     if response
         .content_length()
         .is_some_and(|size| size > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES)
     {
         return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
     }
-    let bytes = response
-        .bytes()
-        .map_err(|e| format!("下载 GitHub Actions artifact 失败：读取响应失败：{e}"))?;
-    if bytes.len() as u64 > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES {
-        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    if !response.status().is_success() {
+        return Err(github_http_error(
+            "下载 GitHub Actions artifact 失败",
+            response,
+        ));
     }
+    Ok(response)
+}
+
+fn stream_artifact_reader_to_cache(
+    runtime: &GitHubRuntimeState,
+    reader: &mut impl Read,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<u64, String> {
     let Some(parent) = path.parent() else {
         return Err("artifact 缓存路径无效".to_string());
     };
     fs::create_dir_all(parent)
         .map_err(|e| format!("创建 artifact 缓存目录失败：{}（{e}）", parent.display()))?;
-    fs::write(&path, bytes)
-        .map_err(|e| format!("保存 artifact 缓存失败：{}（{e}）", path.display()))?;
-    Ok(path)
+    let (temporary, mut output) = create_temporary_artifact_download(runtime, parent)?;
+    let mut bounded = reader.take(max_bytes + 1);
+    let copied = io::copy(&mut bounded, &mut output)
+        .map_err(|error| format!("下载 GitHub Actions artifact 失败：读取响应失败：{error}"))?;
+    if copied > max_bytes {
+        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    }
+    output
+        .flush()
+        .and_then(|()| output.sync_all())
+        .map_err(|error| format!("保存 artifact 缓存失败：{error}"))?;
+    fs::rename(temporary.path(), path)
+        .map_err(|error| format!("提交 artifact 缓存失败：{}（{error}）", path.display()))?;
+    temporary.commit();
+    Ok(copied)
+}
+
+struct TemporaryArtifactDownload {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl TemporaryArtifactDownload {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for TemporaryArtifactDownload {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn create_temporary_artifact_download(
+    runtime: &GitHubRuntimeState,
+    directory: &Path,
+) -> Result<(TemporaryArtifactDownload, File), String> {
+    for _ in 0..16 {
+        let sequence = runtime
+            .temporary_file_sequence
+            .fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!(
+            ".artifact-{}-{}-{sequence}.part",
+            std::process::id(),
+            now_millis()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                return Ok((
+                    TemporaryArtifactDownload {
+                        path,
+                        committed: false,
+                    },
+                    file,
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("创建 artifact 临时文件失败：{error}")),
+        }
+    }
+    Err("创建 artifact 临时文件失败：名称冲突".to_string())
 }
 
 type GitHubArtifactKey = (String, u64);
 
-fn github_artifact_guards() -> &'static Mutex<HashMap<GitHubArtifactKey, Weak<Mutex<()>>>> {
-    static GUARDS: OnceLock<Mutex<HashMap<GitHubArtifactKey, Weak<Mutex<()>>>>> = OnceLock::new();
-    GUARDS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn github_artifact_guard(repo_full_name: &str, artifact_id: u64) -> Arc<Mutex<()>> {
+fn github_artifact_guard(
+    runtime: &GitHubRuntimeState,
+    repo_full_name: &str,
+    artifact_id: u64,
+) -> Arc<Mutex<()>> {
     let key = (repo_full_name.to_ascii_lowercase(), artifact_id);
-    let mut guards = github_artifact_guards()
+    let mut guards = runtime
+        .artifact_guards
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     guards.retain(|_, guard| guard.strong_count() > 0);
@@ -8762,18 +9328,35 @@ fn github_artifact_guard(repo_full_name: &str, artifact_id: u64) -> Arc<Mutex<()
 }
 
 fn with_github_artifact_guard<T>(
+    app: &AppHandle,
     repo_full_name: &str,
     artifact_id: u64,
     run: impl FnOnce() -> T,
 ) -> T {
-    let guard = github_artifact_guard(repo_full_name, artifact_id);
+    with_github_artifact_runtime_guard(app.github_runtime(), repo_full_name, artifact_id, run)
+}
+
+fn with_github_artifact_runtime_guard<T>(
+    runtime: &GitHubRuntimeState,
+    repo_full_name: &str,
+    artifact_id: u64,
+    run: impl FnOnce() -> T,
+) -> T {
+    let guard = github_artifact_guard(runtime, repo_full_name, artifact_id);
     let _held = guard.lock().unwrap_or_else(|error| error.into_inner());
     run()
 }
 
 #[cfg(test)]
 mod artifact_lock_tests {
-    use super::with_github_artifact_guard;
+    use super::{
+        github_artifact_guard, stream_artifact_reader_to_cache,
+        validate_artifact_download_response, with_github_artifact_runtime_guard,
+        GitHubRuntimeState,
+    };
+    use std::io::{self, Cursor, Read, Write};
+    use std::net::TcpListener;
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -8781,12 +9364,14 @@ mod artifact_lock_tests {
     fn identical_artifact_resource_downloads_once_after_locked_recheck() {
         let cached = Arc::new(AtomicBool::new(false));
         let downloads = Arc::new(AtomicUsize::new(0));
+        let runtime = Arc::new(GitHubRuntimeState::default());
         let workers = (0..8)
             .map(|_| {
                 let cached = Arc::clone(&cached);
                 let downloads = Arc::clone(&downloads);
+                let runtime = Arc::clone(&runtime);
                 std::thread::spawn(move || {
-                    with_github_artifact_guard("Owner/Repo", 42, || {
+                    with_github_artifact_runtime_guard(&runtime, "Owner/Repo", 42, || {
                         if !cached.swap(true, Ordering::SeqCst) {
                             downloads.fetch_add(1, Ordering::SeqCst);
                         }
@@ -8798,6 +9383,122 @@ mod artifact_lock_tests {
             worker.join().unwrap();
         }
         assert_eq!(downloads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn artifact_guards_are_isolated_between_apps() {
+        let first = GitHubRuntimeState::default();
+        let second = GitHubRuntimeState::default();
+
+        let first_guard = github_artifact_guard(&first, "owner/repo", 42);
+        let second_guard = github_artifact_guard(&second, "owner/repo", 42);
+
+        assert!(!Arc::ptr_eq(&first_guard, &second_guard));
+    }
+
+    struct InterruptedReader {
+        emitted: bool,
+    }
+
+    impl Read for InterruptedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.emitted {
+                return Err(io::Error::new(io::ErrorKind::ConnectionReset, "injected"));
+            }
+            self.emitted = true;
+            buffer[..3].copy_from_slice(b"zip");
+            Ok(3)
+        }
+    }
+
+    fn artifact_test_directory(label: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "lilia-artifact-stream-{label}-{}-{}",
+            std::process::id(),
+            super::now_millis()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn assert_no_partial_files(directory: &Path) {
+        assert!(std::fs::read_dir(directory).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".part")));
+    }
+
+    #[test]
+    fn artifact_stream_accepts_empty_files_without_buffering() {
+        let runtime = GitHubRuntimeState::default();
+        let directory = artifact_test_directory("empty");
+        let target = directory.join("artifact.zip");
+
+        assert_eq!(
+            stream_artifact_reader_to_cache(&runtime, &mut Cursor::new(Vec::new()), &target, 8)
+                .unwrap(),
+            0
+        );
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), 0);
+        assert_no_partial_files(&directory);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn oversized_or_interrupted_artifact_stream_cleans_temporary_files() {
+        let runtime = GitHubRuntimeState::default();
+        let oversized = artifact_test_directory("oversized");
+        let interrupted = artifact_test_directory("interrupted");
+        let cases = [
+            (
+                &oversized,
+                stream_artifact_reader_to_cache(
+                    &runtime,
+                    &mut Cursor::new(vec![0_u8; 9]),
+                    &oversized.join("unused"),
+                    8,
+                ),
+            ),
+            (
+                &interrupted,
+                stream_artifact_reader_to_cache(
+                    &runtime,
+                    &mut InterruptedReader { emitted: false },
+                    &interrupted.join("unused"),
+                    8,
+                ),
+            ),
+        ];
+        for (directory, result) in cases {
+            assert!(result.is_err());
+            assert!(!directory.join("unused").exists());
+            assert_no_partial_files(directory);
+            std::fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn artifact_download_rejects_http_errors_before_writing_cache() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 7\r\n\r\nmissing")
+                .unwrap();
+        });
+        let response = reqwest::blocking::Client::new()
+            .get(format!("http://{address}/artifact.zip"))
+            .send()
+            .unwrap();
+
+        let error = validate_artifact_download_response(response).unwrap_err();
+
+        server.join().unwrap();
+        assert!(error.contains("HTTP 404"));
     }
 }
 
@@ -8918,7 +9619,7 @@ pub async fn github_list_repo_commits(
             }
             let (_binding, token) = github_require_token(&app)?;
             let commits_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut request = client
                 .get(format!("{}/commits", github_repo_api_url(&repo_full_name)?))
                 .query(&[("per_page", commits_per_page.as_str())]);
@@ -8935,7 +9636,7 @@ pub async fn github_list_repo_commits(
                     .into_iter()
                     .map(github_commit_summary_from_response)
                     .collect::<Vec<_>>();
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.commits.insert(commits_key, commits.clone());
             })?;
             Ok(commits)
@@ -8975,7 +9676,7 @@ pub async fn github_get_repo_commit_detail(
                 }
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 提交详情失败",
@@ -8992,7 +9693,7 @@ pub async fn github_get_repo_commit_detail(
                 "读取 GitHub 提交详情失败",
                 response,
             )?);
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache
                     .commit_details
                     .insert(detail.hash.clone(), detail.clone());
@@ -9017,15 +9718,14 @@ pub async fn github_list_releases(
         "读取 GitHub Releases",
         move || {
             if github_project_cache_enabled(force_refresh) {
-                if let Some(cached) =
-                    load_github_project_repo_cache(&app, &repo_full_name)?
-                        .and_then(|repo_cache| repo_cache.releases)
+                if let Some(cached) = load_github_project_repo_cache(&app, &repo_full_name)?
+                    .and_then(|repo_cache| repo_cache.releases)
                 {
                     return Ok(cached);
                 }
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Releases 失败",
@@ -9044,7 +9744,7 @@ pub async fn github_list_releases(
                     .into_iter()
                     .map(github_release_from_response)
                     .collect::<Vec<_>>();
-            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            update_github_project_repo_cache(&app, &repo_full_name, &token, |repo_cache| {
                 repo_cache.releases = Some(releases.clone());
             })?;
             Ok(releases)
@@ -9068,7 +9768,7 @@ pub async fn github_get_release_by_tag(
                 return Err("Release tag 不能为空".to_string());
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Release 失败",
@@ -9107,7 +9807,7 @@ pub async fn github_create_release(
                 return Err("Release tag 不能为空".to_string());
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut payload = serde_json::Map::new();
             payload.insert("tag_name".to_string(), serde_json::Value::String(tag_name));
             payload.insert(
@@ -9147,7 +9847,7 @@ pub async fn github_create_release(
                 "创建 GitHub Release 失败",
                 response,
             )?);
-            clear_github_project_release_cache(&app, &repo_full_name)?;
+            clear_github_project_release_cache(&app, &repo_full_name, &token)?;
             Ok(release)
         },
     )
@@ -9166,7 +9866,7 @@ pub async fn github_update_release(
         "更新 GitHub Release",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut payload = serde_json::Map::new();
             insert_optional_release_string(&mut payload, "tag_name", request.tag_name);
             insert_optional_release_string(
@@ -9196,7 +9896,7 @@ pub async fn github_update_release(
                 "更新 GitHub Release 失败",
                 response,
             )?);
-            clear_github_project_release_cache(&app, &repo_full_name)?;
+            clear_github_project_release_cache(&app, &repo_full_name, &token)?;
             Ok(release)
         },
     )
@@ -9214,7 +9914,7 @@ pub async fn github_delete_release(
         "删除 GitHub Release",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "删除 GitHub Release 失败",
@@ -9229,7 +9929,7 @@ pub async fn github_delete_release(
             if !response.status().is_success() {
                 return Err(github_http_error("删除 GitHub Release 失败", response));
             }
-            clear_github_project_release_cache(&app, &repo_full_name)?;
+            clear_github_project_release_cache(&app, &repo_full_name, &token)?;
             Ok(())
         },
     )
@@ -9241,7 +9941,7 @@ fn github_release_for_asset_upload(
     client: &Client,
     repo_full_name: &str,
     release_id: u64,
-    token: &str,
+    token: &GitHubSession,
 ) -> Result<GitHubRelease, String> {
     let response = github_send(
         app,
@@ -9290,7 +9990,7 @@ fn github_validate_artifact_for_run(
     app: &AppHandle,
     client: &Client,
     repo_full_name: &str,
-    token: &str,
+    token: &GitHubSession,
     run_id: u64,
     artifact_id: u64,
     artifact_name: Option<String>,
@@ -9333,22 +10033,61 @@ fn github_validate_artifact_for_run(
     Ok(())
 }
 
-fn github_upload_release_asset_bytes(
+struct GitHubReleaseAssetUpload<'a> {
+    repo_full_name: &'a str,
+    token: &'a GitHubSession,
+    release: &'a GitHubRelease,
+    asset_name: &'a str,
+    file_path: &'a Path,
+    label: Option<String>,
+}
+
+/// Builds the exact request body used by Release asset uploads without buffering the file.
+///
+/// This is public so the transfer benchmark can exercise the production body path. Product
+/// callers should continue to use the higher-level upload commands.
+#[doc(hidden)]
+pub fn github_release_asset_stream_body(file_path: &Path) -> Result<(Body, u64), String> {
+    let file =
+        File::open(file_path).map_err(|error| format!("读取 Release asset 文件失败：{error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("读取 Release asset 文件失败：{error}"))?;
+    if !metadata.is_file() {
+        return Err("Release asset 必须是文件".to_string());
+    }
+    let size = metadata.len();
+    github_release_validate_asset_file_size(size)?;
+    if size == 0 {
+        return Err("Release asset 文件不能为空".to_string());
+    }
+    const READ_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+    Ok((
+        Body::sized(BufReader::with_capacity(READ_BUFFER_BYTES, file), size),
+        size,
+    ))
+}
+
+fn github_upload_release_asset_file(
     app: &AppHandle,
     client: &Client,
-    repo_full_name: &str,
-    token: &str,
-    release: &GitHubRelease,
-    asset_name: &str,
-    bytes: Vec<u8>,
-    label: Option<String>,
+    upload: GitHubReleaseAssetUpload<'_>,
 ) -> Result<GitHubReleaseAsset, String> {
+    let GitHubReleaseAssetUpload {
+        repo_full_name,
+        token,
+        release,
+        asset_name,
+        file_path,
+        label,
+    } = upload;
+    let (body, _size) = github_release_asset_stream_body(file_path)?;
     let upload_url = github_release_upload_base_url(&release.upload_url)?;
     let mut request = client
         .post(upload_url)
         .query(&[("name", asset_name)])
         .header(CONTENT_TYPE, "application/octet-stream")
-        .body(bytes);
+        .body(body);
     if let Some(label) = normalize_optional_string(label) {
         request = request.query(&[("label", label.as_str())]);
     }
@@ -9361,7 +10100,7 @@ fn github_upload_release_asset_bytes(
         "上传 GitHub Release asset 失败",
         response,
     )?);
-    clear_github_project_release_cache(app, repo_full_name)?;
+    clear_github_project_release_cache(app, repo_full_name, token)?;
     Ok(asset)
 }
 
@@ -9378,12 +10117,18 @@ pub async fn github_upload_release_asset(
         "上传 GitHub Release asset",
         move || {
             let asset_name = github_release_asset_name(&file_path)?;
-            let bytes = github_release_asset_bytes(&file_path)?;
-            if bytes.is_empty() {
+            let asset_path = PathBuf::from(&file_path);
+            let metadata = fs::metadata(&asset_path)
+                .map_err(|error| format!("读取 Release asset 文件失败：{error}"))?;
+            if !metadata.is_file() {
+                return Err("Release asset 必须是文件".to_string());
+            }
+            github_release_validate_asset_file_size(metadata.len())?;
+            if metadata.len() == 0 {
                 return Err("Release asset 文件不能为空".to_string());
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let release = github_release_for_asset_upload(
                 &app,
                 &client,
@@ -9394,15 +10139,18 @@ pub async fn github_upload_release_asset(
             if release.assets.iter().any(|asset| asset.name == asset_name) {
                 return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
             }
-            github_upload_release_asset_bytes(
+            let transfer_client = build_transfer_client(&app)?;
+            github_upload_release_asset_file(
                 &app,
-                &client,
-                &repo_full_name,
-                &token,
-                &release,
-                &asset_name,
-                bytes,
-                label,
+                &transfer_client,
+                GitHubReleaseAssetUpload {
+                    repo_full_name: &repo_full_name,
+                    token: &token,
+                    release: &release,
+                    asset_name: &asset_name,
+                    file_path: &asset_path,
+                    label,
+                },
             )
         },
     )
@@ -9421,11 +10169,14 @@ pub async fn github_attach_workflow_artifact_asset(
         move || {
             let cache_path =
                 ensure_github_artifact_zip(&app, &repo_full_name, request.artifact_id)?;
-            let (artifact_path, bytes) =
-                github_artifact_file_bytes_from_zip(&cache_path, &request.artifact_path)?;
+            let (artifact_path, temporary_asset) = github_artifact_file_from_zip(
+                app.github_runtime(),
+                &cache_path,
+                &request.artifact_path,
+            )?;
             let asset_name = github_release_asset_name(&artifact_path)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             github_validate_artifact_for_run(
                 &app,
                 &client,
@@ -9447,15 +10198,18 @@ pub async fn github_attach_workflow_artifact_asset(
                 &request.expected_tag_name,
                 &asset_name,
             )?;
-            github_upload_release_asset_bytes(
+            let transfer_client = build_transfer_client(&app)?;
+            github_upload_release_asset_file(
                 &app,
-                &client,
-                &repo_full_name,
-                &token,
-                &release,
-                &asset_name,
-                bytes,
-                request.label,
+                &transfer_client,
+                GitHubReleaseAssetUpload {
+                    repo_full_name: &repo_full_name,
+                    token: &token,
+                    release: &release,
+                    asset_name: &asset_name,
+                    file_path: temporary_asset.path(),
+                    label: request.label,
+                },
             )
         },
     )
@@ -9474,7 +10228,7 @@ pub async fn github_delete_release_asset(
         "删除 GitHub Release asset",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "删除 GitHub Release asset 失败",
@@ -9493,7 +10247,7 @@ pub async fn github_delete_release_asset(
                 ));
             }
             let _ = release_id;
-            clear_github_project_release_cache(&app, &repo_full_name)?;
+            clear_github_project_release_cache(&app, &repo_full_name, &token)?;
             Ok(())
         },
     )
@@ -9513,7 +10267,7 @@ pub async fn github_list_repo_files(
         "读取 GitHub 文件树",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut request = client.get(github_repo_contents_api_url(
                 &repo_full_name,
                 parent_path.as_deref(),
@@ -9554,7 +10308,7 @@ pub async fn github_get_repo_file_preview(
                 return Err("GitHub 文件路径不能为空".to_string());
             }
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let mut request =
                 client.get(github_repo_contents_api_url(&repo_full_name, Some(&path))?);
             if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
@@ -9599,7 +10353,7 @@ pub async fn github_list_account_issues(
                 Some("asc") => "asc",
                 _ => "desc",
             };
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub 待处理 Issue 失败",
@@ -9641,7 +10395,7 @@ pub async fn github_list_action_notifications(
         move || {
             let (_binding, token) = github_require_token(&app)?;
             let notification_per_page = per_page.unwrap_or(50).clamp(1, 100).to_string();
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "读取 GitHub Actions 通知失败",
@@ -9679,13 +10433,13 @@ pub async fn github_list_repo_contribution(
             "读取本地提交贡献",
             move || {
                 let end_day_index = current_utc_day_index();
-                return Ok(github_contribution_result(
+                Ok(github_contribution_result(
                     &HashMap::new(),
                     end_day_index,
                     0,
                     0,
                     0,
-                ));
+                ))
             },
         )
         .await;
@@ -9699,7 +10453,7 @@ pub async fn github_list_repo_contribution(
             let end_day_index = current_utc_day_index();
             let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
             let path = repo_path_by_id(&app, &repo_id)?;
-            let settings = load_settings(&app);
+            let settings = load_settings(&app)?;
             let identities = local_contribution_identities(&path, &settings);
             if identities.is_empty() {
                 return Ok(github_contribution_result(
@@ -9740,16 +10494,81 @@ pub(super) fn github_contribution_result(
 #[cfg(test)]
 mod token_cache_tests {
     use super::*;
+    use crate::runtime::{StoreError, WorkspaceContext, WorkspaceRuntime};
 
-    fn set_cache(login: &str, value: Option<String>) {
-        token_cache()
+    struct TokenTestRuntime;
+
+    impl WorkspaceRuntime for TokenTestRuntime {
+        fn store_get(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>, StoreError> {
+            Ok(None)
+        }
+        fn store_set(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn store_delete(&self, _: &str, _: &str) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn store_save(&self, _: &str) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn pick_folder(&self, _: Option<&str>) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn pick_files(&self, _: Option<&str>) -> Result<Option<Vec<String>>, String> {
+            Ok(None)
+        }
+        fn open_path(&self, _: &str, _: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+        fn open_url(&self, _: &str, _: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+        fn emit(&self, _: &str, _: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryCredentialStore {
+        values: Mutex<HashMap<String, String>>,
+    }
+
+    impl CredentialStore for MemoryCredentialStore {
+        fn read(&self, login: &str) -> Result<Option<String>, String> {
+            Ok(self.values.lock().unwrap().get(login).cloned())
+        }
+
+        fn write(&self, login: &str, token: &str) -> Result<(), String> {
+            self.values
+                .lock()
+                .unwrap()
+                .insert(login.to_string(), token.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, login: &str) -> Result<(), String> {
+            self.values.lock().unwrap().remove(login);
+            Ok(())
+        }
+    }
+
+    fn test_app(store: Arc<MemoryCredentialStore>) -> WorkspaceContext {
+        let app = WorkspaceContext::new(Arc::new(TokenTestRuntime));
+        app.github_runtime().set_credential_store(store);
+        app
+    }
+
+    fn set_cache(app: &AppHandle, login: &str, value: Option<String>) {
+        app.github_runtime()
+            .token_cache
             .lock()
             .unwrap()
             .insert(token_cache_key(login), value);
     }
 
-    fn cache_contains(login: &str) -> bool {
-        token_cache()
+    fn cache_contains(app: &AppHandle, login: &str) -> bool {
+        app.github_runtime()
+            .token_cache
             .lock()
             .unwrap()
             .contains_key(&token_cache_key(login))
@@ -9757,24 +10576,99 @@ mod token_cache_tests {
 
     #[test]
     fn read_token_serves_cached_value_without_keyring() {
-        set_cache("token-cache-hit-user", Some("secret".to_string()));
+        let app = test_app(Arc::new(MemoryCredentialStore::default()));
+        set_cache(&app, "token-cache-hit-user", Some("secret".to_string()));
         assert_eq!(
-            read_token("Token-Cache-Hit-User").unwrap(),
+            read_token(&app, "Token-Cache-Hit-User").unwrap(),
             Some("secret".to_string())
         );
     }
 
     #[test]
     fn read_token_serves_cached_none_without_keyring() {
-        set_cache("token-cache-miss-user", None);
-        assert_eq!(read_token("token-cache-miss-user").unwrap(), None);
+        let app = test_app(Arc::new(MemoryCredentialStore::default()));
+        set_cache(&app, "token-cache-miss-user", None);
+        assert_eq!(read_token(&app, "token-cache-miss-user").unwrap(), None);
     }
 
     #[test]
     fn invalidate_token_removes_cache_entry() {
-        set_cache("token-cache-invalidate-user", Some("secret".to_string()));
-        assert!(cache_contains("token-cache-invalidate-user"));
-        invalidate_token("TOKEN-CACHE-INVALIDATE-USER");
-        assert!(!cache_contains("token-cache-invalidate-user"));
+        let app = test_app(Arc::new(MemoryCredentialStore::default()));
+        set_cache(
+            &app,
+            "token-cache-invalidate-user",
+            Some("secret".to_string()),
+        );
+        assert!(cache_contains(&app, "token-cache-invalidate-user"));
+        invalidate_token(&app, "TOKEN-CACHE-INVALIDATE-USER");
+        assert!(!cache_contains(&app, "token-cache-invalidate-user"));
+    }
+
+    #[test]
+    fn token_and_credential_state_are_isolated_between_apps() {
+        let first_store = Arc::new(MemoryCredentialStore::default());
+        let second_store = Arc::new(MemoryCredentialStore::default());
+        first_store.write("alice", "first").unwrap();
+        second_store.write("alice", "second").unwrap();
+        let first = test_app(first_store);
+        let second = test_app(second_store);
+
+        assert_eq!(
+            read_token(&first, "alice").unwrap().as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            read_token(&second, "alice").unwrap().as_deref(),
+            Some("second")
+        );
+        invalidate_token(&first, "alice");
+
+        assert!(!cache_contains(&first, "alice"));
+        assert!(cache_contains(&second, "alice"));
+    }
+
+    #[test]
+    fn stale_session_cannot_match_new_binding_revision() {
+        let session = GitHubSession {
+            login: "alice".to_string(),
+            revision: 7,
+            token: "secret".to_string(),
+        };
+        assert!(github_session_matches_identity(Some("ALICE"), 7, &session));
+        assert!(!github_session_matches_identity(Some("alice"), 8, &session));
+        assert!(!github_session_matches_identity(Some("bob"), 7, &session));
+    }
+
+    #[test]
+    fn failed_binding_persistence_restores_previous_credential() {
+        let store = MemoryCredentialStore::default();
+        store.write("alice", "old").unwrap();
+        let result = replace_credential_transactionally(&store, "alice", "new", || {
+            Err::<(), _>("injected persistence failure".to_string())
+        });
+        assert!(result.is_err());
+        assert_eq!(store.read("alice").unwrap().as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn failed_first_binding_removes_new_credential() {
+        let store = MemoryCredentialStore::default();
+        let result = replace_credential_transactionally(&store, "alice", "new", || {
+            Err::<(), _>("injected persistence failure".to_string())
+        });
+        assert!(result.is_err());
+        assert_eq!(store.read("alice").unwrap(), None);
+    }
+
+    #[test]
+    fn delete_is_idempotent_and_rolls_back_when_unbind_persistence_fails() {
+        let store = MemoryCredentialStore::default();
+        delete_credential_transactionally(&store, "alice", || Ok(())).unwrap();
+        store.write("alice", "secret").unwrap();
+        let result = delete_credential_transactionally(&store, "alice", || {
+            Err::<(), _>("injected persistence failure".to_string())
+        });
+        assert!(result.is_err());
+        assert_eq!(store.read("alice").unwrap().as_deref(), Some("secret"));
     }
 }

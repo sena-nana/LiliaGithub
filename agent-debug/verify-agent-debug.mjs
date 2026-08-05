@@ -1491,6 +1491,19 @@ async function main() {
     let failureScreenshotPath = null;
     if (sessionId) {
       failureScreenshotPath = await screenshot(sessionId, "failure.png").catch(() => null);
+      const workspaceTransportProbe = await execute(
+        sessionId,
+        `const startedAt = Date.now();
+         return import('/src/services/workspace/mockTransport.ts')
+           .then((module) => module.createWorkspaceMockTransport().invoke(
+             'github_get_pull_request_code_review',
+             { repoFullName: 'sena-nana/LiliaGithub', pullNumber: 7 },
+           ))
+           .then(
+             (value) => ({ status: 'resolved', durationMs: Date.now() - startedAt, fileCount: value?.files?.length ?? null }),
+             (reason) => ({ status: 'rejected', durationMs: Date.now() - startedAt, error: String(reason?.message ?? reason) }),
+           );`,
+      ).catch((probeError) => ({ status: "probe-failed", error: String(probeError?.message ?? probeError) }));
       const diagnostics = await execute(
         sessionId,
         `return {
@@ -1499,6 +1512,14 @@ async function main() {
           readyState: document.readyState,
           bodyText: document.body?.innerText?.slice(0, 2000) ?? "",
           hasAgentDebug: Boolean(window.__liliaGithubAgentDebug || window.__liliaAgentDebug),
+          recentAgentDebugEntries: (() => {
+            try {
+              const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+              return api?.getRecentErrors?.() ?? [];
+            } catch (error) {
+              return [{ error: String(error?.message ?? error) }];
+            }
+          })(),
           observe: (() => {
             try {
               const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
@@ -1509,6 +1530,7 @@ async function main() {
           })(),
         };`,
       ).catch((diagnosticError) => ({ diagnosticError: String(diagnosticError?.message ?? diagnosticError) }));
+      diagnostics.workspaceTransportProbe = workspaceTransportProbe;
       failureDiagnosticsPath = await writeJson("failure-diagnostics.json", diagnostics).catch(() => null);
     }
     await writeJson("summary.json", {

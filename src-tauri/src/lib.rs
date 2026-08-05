@@ -1,7 +1,9 @@
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        .manage(lilia_github_workspace::WorkspaceTaskRuntime::new())
+        .manage(lilia_github_workspace::WorkspaceAppState::new())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
             tauri_plugin_lilia::Builder::new()
@@ -18,10 +20,16 @@ pub fn run() {
     #[cfg(feature = "agent-debug-webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
 
-    builder
+    let app = builder
         .invoke_handler(handle_invoke)
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            app.state::<lilia_github_workspace::WorkspaceAppState>()
+                .shutdown();
+        }
+    });
 }
 
 fn handle_invoke<R: tauri::Runtime>(invoke: tauri::ipc::Invoke<R>) -> bool {

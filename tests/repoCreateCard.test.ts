@@ -7,7 +7,12 @@ import type {
   GitHubRepoSummary,
   GitHubRepoTemplate,
 } from "../src/services/workspace";
-import { repoSummary } from "./fixtures/workspace";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
+import { repoSummary, workspaceSettings } from "./fixtures/workspace";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -74,30 +79,21 @@ function githubLicense(key: string, name: string, spdxId: string | null = key.to
   };
 }
 
-const workspace = vi.hoisted(() => ({
-  activeWorkspace: {
-    value: {
-      primaryRootId: "root-default",
-      roots: [{ id: "root-default", path: "C:\\Files\\workspace", available: true, unavailableReason: null }],
-    },
-  },
+const client = {
   createLocalRepo: vi.fn(),
   cloneRepo: vi.fn(),
-  refreshRepos: vi.fn(),
+  listManagedRepos: vi.fn(),
   createGitHubRepo: vi.fn(),
   listGitHubRepoTemplates: vi.fn(async () => []),
   listGitHubRepoLicenses: vi.fn(async () => []),
-  getAccountRepositoryOwners: vi.fn(async () => []),
-}));
+  listGitHubRepoOwners: vi.fn(async () => []),
+};
+let workspace: WorkspaceStore;
 
-vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => workspace,
-}));
-
-const listGitHubRepoOwners = workspace.getAccountRepositoryOwners;
-const listGitHubRepoTemplates = workspace.listGitHubRepoTemplates;
-const listGitHubRepoLicenses = workspace.listGitHubRepoLicenses;
-const createGitHubRepo = workspace.createGitHubRepo;
+const listGitHubRepoOwners = client.listGitHubRepoOwners;
+const listGitHubRepoTemplates = client.listGitHubRepoTemplates;
+const listGitHubRepoLicenses = client.listGitHubRepoLicenses;
+const createGitHubRepo = client.createGitHubRepo;
 
 async function renderRemoteRepoCard(repoGroups?: Array<{
   id: string;
@@ -113,6 +109,7 @@ async function renderRemoteRepoCard(repoGroups?: Array<{
       githubReady: true,
       repoGroups,
     },
+    global: { provide: provideWorkspaceStoreFixture(workspace) },
   });
   await view.rerender({
     open: true,
@@ -131,9 +128,11 @@ describe("RepoCreateCard", () => {
     vi.mocked(listGitHubRepoTemplates).mockResolvedValue([]);
     vi.mocked(listGitHubRepoLicenses).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
-    workspace.cloneRepo.mockReset();
-    workspace.refreshRepos.mockReset();
-    workspace.refreshRepos.mockResolvedValue(undefined);
+    client.cloneRepo.mockReset();
+    client.listManagedRepos.mockReset();
+    client.listManagedRepos.mockResolvedValue([]);
+    workspace = createWorkspaceStoreFixture(client);
+    workspace.stateFeature.state.settings = workspaceSettings();
   });
 
   it("创建仓库请求返回前关闭弹窗时忽略旧结果", async () => {
@@ -167,8 +166,8 @@ describe("RepoCreateCard", () => {
     await Promise.resolve();
 
     expect(view.emitted("remoteCloned")).toBeUndefined();
-    expect(workspace.cloneRepo).not.toHaveBeenCalled();
-    expect(workspace.refreshRepos).not.toHaveBeenCalled();
+    expect(client.cloneRepo).not.toHaveBeenCalled();
+    expect(client.listManagedRepos).not.toHaveBeenCalled();
   });
 
   it("创建 GitHub 仓库时默认选择 user owner 并将 user 排在最上方", async () => {
@@ -239,8 +238,8 @@ describe("RepoCreateCard", () => {
       expect(view.emitted("close")).toHaveLength(1);
     });
     expect(view.emitted("remoteCloned")).toBeUndefined();
-    expect(workspace.cloneRepo).not.toHaveBeenCalled();
-    expect(workspace.refreshRepos).not.toHaveBeenCalled();
+    expect(client.cloneRepo).not.toHaveBeenCalled();
+    expect(client.listManagedRepos).not.toHaveBeenCalled();
   });
 
   it("创建仓库时可搜索并选择 License 模板 key", async () => {
@@ -313,7 +312,7 @@ describe("RepoCreateCard", () => {
       private: true,
       description: "template repo",
     });
-    workspace.cloneRepo.mockResolvedValue(repoSummary("from-template"));
+    client.cloneRepo.mockResolvedValue({ settings: workspaceSettings(), repo: repoSummary("from-template") });
     const view = await renderRemoteRepoCard();
 
     const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
@@ -324,6 +323,7 @@ describe("RepoCreateCard", () => {
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     const templateTrigger = await within(dialog).findByRole("button", { name: "选择模板仓库" });
     expect(templateTrigger).toHaveAttribute("data-agent-id", "repo-create.template.trigger");
+    await waitFor(() => expect(templateTrigger).toBeEnabled());
     await fireEvent.click(templateTrigger);
     const templateOption = await screen.findByRole("option", { name: /sena-nana\/template/ });
     expect(templateOption).toHaveAttribute("data-agent-id", "repo-create.template.option.20");
@@ -342,7 +342,7 @@ describe("RepoCreateCard", () => {
         templateFullName: "sena-nana/template",
         includeAllBranches: true,
       }));
-      expect(workspace.cloneRepo).toHaveBeenCalledWith({
+      expect(client.cloneRepo).toHaveBeenCalledWith({
         remoteUrl: "https://github.com/sena-nana/from-template.git",
         repository: {
           id: 2,
@@ -354,7 +354,7 @@ describe("RepoCreateCard", () => {
         placement: { kind: "automatic" },
         target: { kind: "root", rootId: "root-default" },
       });
-      expect(workspace.refreshRepos).toHaveBeenCalledTimes(1);
+      expect(client.listManagedRepos).toHaveBeenCalledTimes(1);
     });
     expect(view.emitted("remoteCloned")?.[0]).toEqual([
       repoSummary("from-template"),
@@ -380,7 +380,7 @@ describe("RepoCreateCard", () => {
       owner: { login: "team-lilia", kind: "organization" as const, avatarUrl: null },
     };
     vi.mocked(createGitHubRepo).mockResolvedValue(remote);
-    workspace.cloneRepo.mockResolvedValue(repoSummary("created"));
+    client.cloneRepo.mockResolvedValue({ settings: workspaceSettings(), repo: repoSummary("created") });
     await renderRemoteRepoCard([
       { id: "organization", name: "组织项目", repoIds: [], organizationLogin: "TEAM-LILIA" },
       { id: "custom", name: "自定义", repoIds: [] },
@@ -396,7 +396,7 @@ describe("RepoCreateCard", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
-      expect(workspace.cloneRepo).toHaveBeenCalledWith({
+      expect(client.cloneRepo).toHaveBeenCalledWith({
         remoteUrl: remote.cloneUrl,
         repository: {
           id: remote.id,
@@ -452,7 +452,7 @@ describe("RepoCreateCard", () => {
     dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
-    expect(await within(dialog).findByRole("button", { name: "选择模板仓库" })).toBeEnabled();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "选择模板仓库" })).toBeEnabled());
   });
 
   it("远端没有模板仓库时显示空态并保持创建操作不可用", async () => {
@@ -487,7 +487,7 @@ describe("RepoCreateCard", () => {
 
     await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
     const trigger = await within(dialog).findByRole("button", { name: "选择模板仓库" });
-    expect(trigger).toBeEnabled();
+    await waitFor(() => expect(trigger).toBeEnabled());
     await fireEvent.click(trigger);
     expect(await screen.findByRole("option", { name: /sena-nana\/retry-template/ })).toBeInTheDocument();
   });

@@ -55,7 +55,7 @@ pub async fn github_create_issue_comment(
             }
             let body = comment_body(request)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "新增 GitHub 评论失败",
@@ -71,7 +71,7 @@ pub async fn github_create_issue_comment(
             )?;
             let comment =
                 github_json::<GitHubIssueTimelineResponse>("新增 GitHub 评论失败", response)?;
-            clear_comment_caches(&app, &repo_full_name)?;
+            clear_comment_caches(&app, &repo_full_name, &token)?;
             Ok(github_timeline_item_from_response(comment))
         },
     )
@@ -92,7 +92,7 @@ pub async fn github_update_issue_comment(
             let comment_id = validate_comment_id(comment_id)?;
             let body = comment_body(request)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "编辑 GitHub 评论失败",
@@ -108,7 +108,7 @@ pub async fn github_update_issue_comment(
             )?;
             let comment =
                 github_json::<GitHubIssueTimelineResponse>("编辑 GitHub 评论失败", response)?;
-            clear_comment_caches(&app, &repo_full_name)?;
+            clear_comment_caches(&app, &repo_full_name, &token)?;
             Ok(github_timeline_item_from_response(comment))
         },
     )
@@ -127,7 +127,7 @@ pub async fn github_delete_issue_comment(
         move || {
             let comment_id = validate_comment_id(comment_id)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "删除 GitHub 评论失败",
@@ -142,7 +142,7 @@ pub async fn github_delete_issue_comment(
             if !response.status().is_success() {
                 return Err(github_http_error("删除 GitHub 评论失败", response));
             }
-            clear_comment_caches(&app, &repo_full_name)
+            clear_comment_caches(&app, &repo_full_name, &token)
         },
     )
     .await
@@ -162,7 +162,7 @@ pub async fn github_add_issue_comment_reaction(
             let comment_id = validate_comment_id(comment_id)?;
             let content = validate_reaction(request.content)?;
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let response = github_send(
                 &app,
                 "添加 GitHub Reaction 失败",
@@ -185,9 +185,13 @@ pub async fn github_add_issue_comment_reaction(
     .await
 }
 
-fn clear_comment_caches(app: &AppHandle, repo_full_name: &str) -> Result<(), String> {
-    clear_github_project_issue_cache(app, repo_full_name)?;
-    clear_github_project_pull_request_cache(app, repo_full_name)
+fn clear_comment_caches(
+    app: &AppHandle,
+    repo_full_name: &str,
+    session: &crate::workspace::github::GitHubSession,
+) -> Result<(), String> {
+    clear_github_project_issue_cache(app, repo_full_name, session)?;
+    clear_github_project_pull_request_cache(app, repo_full_name, session)
 }
 
 #[cfg(test)]

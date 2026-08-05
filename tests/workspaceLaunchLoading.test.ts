@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/vue";
-import { loadLaunch, refreshLaunchLogs, startLaunch } from "../src/composables/workspace/launch";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
-import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
+import { createWorkspaceStoreFixture, resetWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -20,13 +18,12 @@ const service = {
   listRepoLaunchHistory: vi.fn(),
   startRepoLaunch: vi.fn(),
 };
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
+const workspace = createWorkspaceStoreFixture(service);
+const { loadLaunch, refreshLaunchLogs, startLaunch } = workspace;
+const { state } = workspace.stateFeature;
 
 beforeEach(() => {
-  resetWorkspaceStateForTests();
+  resetWorkspaceStoreFixture(workspace);
   vi.clearAllMocks();
   service.getRepoLaunchConfig.mockResolvedValue(null);
   service.listRepoLaunchCandidates.mockResolvedValue([]);

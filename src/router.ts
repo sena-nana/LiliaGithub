@@ -1,12 +1,11 @@
-import { LiliaSettingsPage } from "./ui";
+import { LiliaSettingsPage } from "@lilia/ui/settings";
 import {
   createRouter,
   createWebHistory,
   type RouteRecordRaw,
-  type Router,
   type RouterHistory,
 } from "vue-router";
-import { invalidateSessionContextSnapshot } from "./composables/sessionContext";
+import type { SessionContext } from "./composables/sessionContext";
 import { createCachedAsyncModule } from "./utils/asyncModule";
 
 const projectOverviewPageModule = createCachedAsyncModule(() => import("./pages/Home.vue"));
@@ -39,14 +38,10 @@ export const LILIA_GITHUB_ROUTES: RouteRecordRaw[] = [
   },
 ];
 
-export function installLiliaGithubRouterGuards(router: Router) {
-  router.beforeEach((to, from) => {
-    if (to.fullPath !== from.fullPath) invalidateSessionContextSnapshot();
-    return true;
-  });
-}
-
-export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
+export function createLiliaGithubRouter(
+  _sessionContext: SessionContext,
+  history: RouterHistory = createWebHistory(),
+) {
   const router = createRouter({
     history,
     routes: [
@@ -57,8 +52,5 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
       { path: "/:pathMatch(.*)*", redirect: "/" },
     ],
   });
-  installLiliaGithubRouterGuards(router);
   return router;
 }
-
-export const router = createLiliaGithubRouter();

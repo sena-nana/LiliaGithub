@@ -1,20 +1,11 @@
 import { ref } from "vue";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
-import {
-  getGitHubRepositoryDiscussion,
-  listGitHubRepositoryDiscussionCommentReplies,
-  listGitHubRepositoryDiscussionComments,
-  createGitHubDiscussionComment,
-  updateGitHubDiscussionComment,
-  deleteGitHubDiscussionComment,
-  updateGitHubDiscussionReaction,
-  updateGitHubDiscussionState,
-  updateGitHubDiscussionAnswer,
-} from "../../../services/workspace/discussions/client";
+import type { WorkspaceClient } from "../../../services/workspace/client";
 import type {
   GitHubRepositoryDiscussion,
   GitHubRepositoryDiscussionComment,
 } from "../../../services/workspace/discussions/types";
+import { errorMessage, workspaceErrorCategory } from "../../../services/workspace/errors";
 
 const COMMENT_PAGE_SIZE = 30;
 const REPLY_PAGE_SIZE = 20;
@@ -29,7 +20,7 @@ export type DiscussionReplyState = {
   error: string | null;
 };
 
-export function useDiscussionDetail(repoFullName: string) {
+export function useDiscussionDetail(repoFullName: string, github: WorkspaceClient) {
   const detail = ref<GitHubRepositoryDiscussion | null>(null);
   const comments = ref<GitHubRepositoryDiscussionComment[]>([]);
   const commentsTotalCount = ref(0);
@@ -53,7 +44,7 @@ export function useDiscussionDetail(repoFullName: string) {
       detailLoading.value = true;
       detailError.value = null;
       try {
-        const next = await getGitHubRepositoryDiscussion(repoFullName, discussionNumber);
+        const next = await github.getGitHubRepositoryDiscussion(repoFullName, discussionNumber);
         if (detailLoader.isCurrent(runId)) detail.value = next;
       } catch (error) {
         if (detailLoader.isCurrent(runId)) detailError.value = readableError(error);
@@ -71,7 +62,7 @@ export function useDiscussionDetail(repoFullName: string) {
       else commentsLoadingMore.value = true;
       commentsError.value = null;
       try {
-        const page = await listGitHubRepositoryDiscussionComments(repoFullName, discussionNumber, {
+        const page = await github.listGitHubRepositoryDiscussionComments(repoFullName, discussionNumber, {
           first: COMMENT_PAGE_SIZE,
           after: cursor,
         });
@@ -109,7 +100,7 @@ export function useDiscussionDetail(repoFullName: string) {
     updateReplyState(commentId, { ...current, loading: true, error: null });
     await loader.run(`${commentId}:${cursor ?? "first"}`, async (runId) => {
       try {
-        const page = await listGitHubRepositoryDiscussionCommentReplies(repoFullName, commentId, {
+        const page = await github.listGitHubRepositoryDiscussionCommentReplies(repoFullName, commentId, {
           first: REPLY_PAGE_SIZE,
           after: cursor,
         });
@@ -141,7 +132,7 @@ export function useDiscussionDetail(repoFullName: string) {
     if (!discussion) return null;
     const key = replyToId ? `reply:${replyToId}` : "create";
     return runMutation(key, async () => {
-      const created = await createGitHubDiscussionComment({ discussionId: discussion.id, body, replyToId });
+      const created = await github.createGitHubDiscussionComment({ discussionId: discussion.id, body, replyToId });
       if (replyToId) {
         const parent = comments.value.find((item) => item.id === replyToId);
         if (parent) Object.assign(parent, { replyCount: parent.replyCount + 1 });
@@ -158,7 +149,7 @@ export function useDiscussionDetail(repoFullName: string) {
 
   async function updateComment(commentId: string, body: string) {
     return runMutation(`edit:${commentId}`, async () => {
-      const updated = await updateGitHubDiscussionComment({ commentId, body });
+      const updated = await github.updateGitHubDiscussionComment({ commentId, body });
       replaceComment(updated);
       return updated;
     });
@@ -166,7 +157,7 @@ export function useDiscussionDetail(repoFullName: string) {
 
   async function deleteComment(commentId: string) {
     return runMutation(`delete:${commentId}`, async () => {
-      await deleteGitHubDiscussionComment(commentId);
+      await github.deleteGitHubDiscussionComment(commentId);
       const topLevel = comments.value.some((item) => item.id === commentId);
       comments.value = comments.value.filter((item) => item.id !== commentId);
       if (topLevel) {
@@ -183,14 +174,14 @@ export function useDiscussionDetail(repoFullName: string) {
   }
 
   async function react(commentId: string, content: import("../../../services/workspace/discussions/types").GitHubDiscussionReactionContent, remove = false) {
-    return runMutation(`reaction:${commentId}:${content}`, () => updateGitHubDiscussionReaction({ subjectId: commentId, content, remove }));
+    return runMutation(`reaction:${commentId}:${content}`, () => github.updateGitHubDiscussionReaction({ subjectId: commentId, content, remove }));
   }
 
   async function changeState(action: import("../../../services/workspace/discussions/types").GitHubDiscussionStateAction) {
     const discussion = detail.value;
     if (!discussion) return;
     await runMutation(`state:${action}`, async () => {
-      await updateGitHubDiscussionState({ discussionId: discussion.id, action });
+      await github.updateGitHubDiscussionState({ discussionId: discussion.id, action });
       if (detail.value) detail.value = { ...detail.value,
         closed: action === "close" ? true : action === "reopen" ? false : detail.value.closed,
         locked: action === "lock" ? true : action === "unlock" ? false : detail.value.locked,
@@ -200,7 +191,7 @@ export function useDiscussionDetail(repoFullName: string) {
 
   async function setAnswer(commentId: string, mark: boolean) {
     await runMutation(`answer:${commentId}`, async () => {
-      await updateGitHubDiscussionAnswer({ commentId, mark });
+      await github.updateGitHubDiscussionAnswer({ commentId, mark });
       comments.value = comments.value.map((item) => ({ ...item, isAnswer: item.id === commentId ? mark : mark ? false : item.isAnswer }));
       if (detail.value) detail.value = { ...detail.value, isAnswered: mark, answerId: mark ? commentId : null };
     });
@@ -287,11 +278,10 @@ function dedupe(items: readonly GitHubRepositoryDiscussionComment[]) {
 }
 
 function readableError(error: unknown) {
-  const text = String(error).replace(/^Error:\s*/, "");
-  const lower = text.toLowerCase();
-  if (lower.includes("forbidden") || lower.includes("permission") || lower.includes("scope") || lower.includes("403") || text.includes("权限") || text.includes("授权")) return `当前 GitHub 授权无权执行此操作，请重新绑定有写权限的账号后重试。（${text}）`;
-  if (lower.includes("network") || lower.includes("timeout") || text.includes("连接失败") || text.includes("网络")) return `网络连接失败，草稿、分页和展开状态已保留，请检查网络后重试。（${text}）`;
-  if (lower.includes("not found") || lower.includes("404") || text.includes("失效") || text.includes("不存在")) return `Discussion 或评论已失效，请刷新详情后重试。（${text}）`;
-  if (text.includes("绑定已失效") || lower.includes("unauthorized")) return "GitHub 绑定已失效，请重新绑定后重试；草稿和当前阅读位置已保留。";
-  return text;
+  const category = workspaceErrorCategory(error);
+  if (category === "authentication") return "GitHub 绑定已失效，请重新绑定后重试；草稿和当前阅读位置已保留。";
+  if (category === "authorization") return "当前 GitHub 授权无权执行此操作，请重新绑定有写权限的账号后重试。";
+  if (category === "network" || category === "rate-limit") return "暂时无法连接 GitHub，草稿、分页和展开状态已保留，请稍后重试。";
+  if (category === "not-found" || category === "conflict" || category === "validation") return "Discussion 或评论已失效，请刷新详情后重试。";
+  return errorMessage(error);
 }

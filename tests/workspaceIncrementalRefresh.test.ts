@@ -1,56 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/vue";
-import {
-  abortConflictOperation,
-  acceptConflictFile,
-  checkout,
-  commit,
-  createBranch,
-  continueConflictOperation,
-  hideRepo,
-  loadRepoDetail,
-  markConflictFileResolved,
-  mergeBranch,
-  mergePull,
-  pull,
-  push,
-  renameBranch,
-  autoSyncRepoIfNeeded,
-  useDefaultTokenAuthForRepo,
-  refreshRepoContributions,
-  refreshRepos,
-  refreshRepoLanguageStats,
-  refreshRepoSummaries,
-  requestRepoStatusRefresh,
-  refreshWorkspaceTasks,
-  resolveConflictFile,
-  resetRepositoryRuntimeForTests,
-  discardChanges,
-  stage,
-  unhideRepo,
-  unstage,
-  deleteBranch,
-} from "../src/composables/workspace/repositories";
-import { initialize } from "../src/composables/workspace/lifecycle";
-import {
-  applyWorkspaceRepoRefreshed,
-  applyWorkspaceTaskChanged,
-  resetRepoRefreshRuntimeForTests,
-} from "../src/composables/workspace/repoRefreshEvents";
-import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
-import {
-  bulkSyncRepoIds,
-  bulkSyncRunningRepoIds,
-  repoActionErrorForRepo,
-  repoActionErrorDetailForRepo,
-  repoSyncIssueForRepo,
-  syncErrorByRepoId,
-  syncErrorDetailsByRepoId,
-  recentSyncErrorForRepo,
-  resetWorkspaceStateForTests,
-  state,
-} from "../src/composables/workspace/state";
-import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
+import { createWorkspaceStoreFixture, resetWorkspaceStoreFixture } from "./fixtures/createWorkspaceStoreFixture";
 import type {
   BulkSyncPreview,
   GitHubContributionResult,
@@ -125,6 +75,7 @@ const service = {
   writeStartupContributions: vi.fn(),
   setRepoAutoSync: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
+  listGitHubRepoOwners: vi.fn(),
   listManagedRepos: vi.fn(),
   refreshRepos: vi.fn(),
   refreshRepoSummary: vi.fn(),
@@ -164,15 +115,61 @@ const service = {
   bulkSyncPreview: vi.fn(),
   bulkSyncExecute: vi.fn(),
 };
-
-vi.mock("../src/composables/workspace/serviceLoader", () => ({
-  loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
-}));
+const workspace = createWorkspaceStoreFixture(service);
+const {
+  abortConflictOperation,
+  acceptConflictFile,
+  checkout,
+  commit,
+  createBranch,
+  continueConflictOperation,
+  hideRepo,
+  loadRepoDetail,
+  markConflictFileResolved,
+  mergeBranch,
+  mergePull,
+  pull,
+  push,
+  renameBranch,
+  autoSyncRepoIfNeeded,
+  useDefaultTokenAuthForRepo,
+  refreshRepoContributions,
+  refreshRepos,
+  refreshRepoLanguageStats,
+  refreshRepoSummaries,
+  requestRepoStatusRefresh,
+  refreshWorkspaceTasks,
+  resolveConflictFile,
+  resetRepositoryRuntimeForTests,
+  discardChanges,
+  stage,
+  unhideRepo,
+  unstage,
+  deleteBranch,
+  initialize,
+  applyWorkspaceRepoRefreshed,
+  applyWorkspaceTaskChanged,
+  resetRepoRefreshRuntimeForTests,
+  closeBulkPreview,
+  executeBulk,
+  previewBulk,
+  syncAll,
+} = workspace;
+const {
+  bulkSyncRepoIds,
+  bulkSyncRunningRepoIds,
+  repoActionErrorForRepo,
+  repoActionErrorDetailForRepo,
+  repoSyncIssueForRepo,
+  syncErrorByRepoId,
+  syncErrorDetailsByRepoId,
+  recentSyncErrorForRepo,
+  resetWorkspaceStateForTests,
+  state,
+} = workspace.stateFeature;
 
 beforeEach(() => {
-  resetWorkspaceStateForTests();
-  resetRepositoryRuntimeForTests();
-  resetRepoRefreshRuntimeForTests();
+  resetWorkspaceStoreFixture(workspace);
   vi.clearAllMocks();
   service.listRepoContribution.mockResolvedValue({
     days: [],
@@ -221,6 +218,7 @@ beforeEach(() => {
       clientIdSource: "bundled",
     },
   });
+  service.listGitHubRepoOwners.mockResolvedValue([]);
   service.listManagedRepos.mockResolvedValue([]);
   service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
   service.refreshRepoDetailPatch.mockImplementation(async (

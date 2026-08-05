@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
-    build_client, github_headers, github_json, github_require_token, github_send,
+    build_client, github_headers, github_json, github_require_token, github_send, GitHubSession,
 };
 use crate::workspace::operations::OperationKind;
 use crate::workspace::run_core_operation;
@@ -35,7 +35,7 @@ pub async fn github_get_discussion_metadata(
         "读取 GitHub Discussion 分类",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let request = metadata_request(&repo_full_name)?;
             let value = send_graphql(
                 &app,
@@ -70,7 +70,7 @@ pub async fn github_list_discussions(
         "读取 GitHub Discussions",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let request = list_request(
                 &repo_full_name,
                 first,
@@ -106,7 +106,7 @@ pub async fn github_get_discussion(
         "读取 GitHub Discussion",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let request = detail_request(&repo_full_name, discussion_number)?;
             let value = send_graphql(
                 &app,
@@ -135,7 +135,7 @@ pub async fn github_list_discussion_comments(
         "读取 GitHub Discussion 评论",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let request = comments_request(&repo_full_name, discussion_number, first, after)?;
             let value = send_graphql(
                 &app,
@@ -164,7 +164,7 @@ pub async fn github_list_discussion_comment_replies(
         "读取 GitHub Discussion 评论回复",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let request = replies_request(comment_id, first, after)?;
             let value = send_graphql(
                 &app,
@@ -191,7 +191,7 @@ pub async fn github_create_discussion(
         "创建 GitHub Discussion",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let metadata = metadata_request(&repo_full_name)?;
             let metadata_value = send_graphql(
                 &app,
@@ -227,7 +227,7 @@ pub async fn github_create_discussion_comment(
         "新增 GitHub Discussion 评论",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let graphql =
                 add_comment_request(request.discussion_id, request.body, request.reply_to_id)?;
             let value = send_graphql(
@@ -254,7 +254,7 @@ pub async fn github_update_discussion_comment(
         "编辑 GitHub Discussion 评论",
         move || {
             let (_binding, token) = github_require_token(&app)?;
-            let client = build_client()?;
+            let client = build_client(&app)?;
             let graphql = update_comment_request(request.comment_id, request.body)?;
             let value = send_graphql(
                 &app,
@@ -320,7 +320,7 @@ where
 {
     run_core_operation(app.clone(), OperationKind::GitHubWrite, label, move || {
         let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
+        let client = build_client(&app)?;
         let graphql = build()?;
         let value = send_graphql(&app, &client, &token, label, &graphql)?;
         parse_mutation_response(value).map_err(|error| error.contextualize(label))
@@ -331,7 +331,7 @@ where
 fn send_graphql(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    token: &GitHubSession,
     prefix: &str,
     request: &GitHubGraphQlRequest,
 ) -> Result<Value, String> {

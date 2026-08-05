@@ -2,6 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoDiscussionsPanel from "../src/components/repo/discussions/RepoDiscussionsPanel.vue";
 import { resetRepoDiscussionsStoresForTests } from "../src/components/repo/discussions/useRepoDiscussions";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
 const api = vi.hoisted(() => ({
   getMetadata: vi.fn(),
@@ -12,14 +16,16 @@ const api = vi.hoisted(() => ({
   createDiscussion: vi.fn(),
 }));
 
-vi.mock("../src/services/workspace/discussions/client", () => ({
-  getGitHubRepositoryDiscussionMetadata: api.getMetadata,
-  listGitHubRepositoryDiscussions: api.listDiscussions,
-  getGitHubRepositoryDiscussion: api.getDiscussion,
-  listGitHubRepositoryDiscussionComments: api.listComments,
-  listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
-  createGitHubRepositoryDiscussion: api.createDiscussion,
-}));
+function createDiscussionStoreFixture() {
+  return createWorkspaceStoreFixture({
+    getGitHubRepositoryDiscussionMetadata: api.getMetadata,
+    listGitHubRepositoryDiscussions: api.listDiscussions,
+    getGitHubRepositoryDiscussion: api.getDiscussion,
+    listGitHubRepositoryDiscussionComments: api.listComments,
+    listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
+    createGitHubRepositoryDiscussion: api.createDiscussion,
+  });
+}
 
 const category = {
   id: "general",
@@ -58,8 +64,10 @@ describe("RepoDiscussionsPanel recoverable errors", () => {
 
   it("retries metadata loading from an actionable error state", async () => {
     api.getMetadata.mockRejectedValueOnce(new Error("metadata unavailable")).mockResolvedValueOnce(metadata);
+    const store = createDiscussionStoreFixture();
     render(RepoDiscussionsPanel, {
       props: { repoFullName: "acme/repo", focusedDiscussionNumber: null, createView: false },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     expect(await screen.findByText("metadata unavailable")).toBeInTheDocument();
@@ -71,8 +79,10 @@ describe("RepoDiscussionsPanel recoverable errors", () => {
   it("lets a failed deep link return to the list or retry the detail", async () => {
     api.getMetadata.mockResolvedValue(metadata);
     api.getDiscussion.mockRejectedValueOnce(new Error("detail unavailable")).mockResolvedValueOnce(detail);
+    const store = createDiscussionStoreFixture();
     const view = render(RepoDiscussionsPanel, {
       props: { repoFullName: "acme/repo", focusedDiscussionNumber: 2, createView: false },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     expect(await screen.findByText("detail unavailable")).toBeInTheDocument();

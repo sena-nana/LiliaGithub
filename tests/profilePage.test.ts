@@ -6,6 +6,11 @@ import type {
   GitHubAccountProfile,
   GitHubProfileReadmeSection,
 } from "../src/services/workspace";
+import type { WorkspaceStore } from "../src/composables/workspace/store";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 
 type GitHubBinding = {
   login: string;
@@ -14,45 +19,18 @@ type GitHubBinding = {
   boundAt: string;
 };
 
-const { workspace } = vi.hoisted(() => ({
-  workspace: {
-    state: {
-      authLoading: false,
-      authFlowStatus: "idle" as "idle" | "pending" | "expired" | "error",
-      authRemainingSeconds: null as number | null,
-      authNotice: null as string | null,
-      error: null as string | null,
-    },
-    githubBinding: { value: null as GitHubBinding | null },
-    deviceFlow: {
-      value: null as null | {
-        deviceCode: string;
-        userCode: string;
-        verificationUri: string;
-        expiresInSeconds: number;
-        intervalSeconds: number;
-        expiresAt: number;
-      },
-    },
-    authPendingStatusText: { value: null as string | null },
-    authRemainingText: { value: null as string | null },
-    getAccountProfile: vi.fn(),
-    getAccountReadme: vi.fn(),
-    updateAccountProfile: vi.fn(),
-    startAuthFlow: vi.fn(async () => undefined),
-    openUrl: vi.fn(async () => undefined),
-  },
-}));
+const getAccountProfile = vi.fn();
+const getAccountReadme = vi.fn();
+const updateAccountProfile = vi.fn();
+const startGitHubDeviceFlow = vi.fn();
+const openUrl = vi.fn(async () => undefined);
+let workspace: WorkspaceStore;
 
-vi.mock("../src/composables/useWorkspace", async () => {
-  const { reactive, ref } = await vi.importActual<typeof import("vue")>("vue");
-  workspace.state = reactive(workspace.state);
-  workspace.githubBinding = ref(workspace.githubBinding.value);
-  workspace.deviceFlow = ref(workspace.deviceFlow.value);
-  workspace.authPendingStatusText = ref(workspace.authPendingStatusText.value);
-  workspace.authRemainingText = ref(workspace.authRemainingText.value);
-  return { useWorkspace: () => workspace };
-});
+function setBinding(binding: GitHubBinding | null) {
+  workspace.stateFeature.state.bindingStatus = binding
+    ? { state: "bound", binding }
+    : { state: "unbound", binding: null };
+}
 
 function accountProfile(
   login = "octocat",
@@ -122,7 +100,12 @@ async function renderProfile() {
   await router.push("/profile");
   await router.isReady();
   return {
-    ...render(Profile, { global: { plugins: [router] } }),
+    ...render(Profile, {
+      global: {
+        plugins: [router],
+        provide: provideWorkspaceStoreFixture(workspace),
+      },
+    }),
     router,
   };
 }
@@ -130,23 +113,22 @@ async function renderProfile() {
 describe("用户资料页", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    workspace.state.authLoading = false;
-    workspace.state.authFlowStatus = "idle";
-    workspace.state.authRemainingSeconds = null;
-    workspace.state.authNotice = null;
-    workspace.state.error = null;
-    workspace.deviceFlow.value = null;
-    workspace.authPendingStatusText.value = null;
-    workspace.authRemainingText.value = null;
-    workspace.githubBinding.value = {
+    workspace = createWorkspaceStoreFixture({
+      getGitHubAccountProfile: getAccountProfile,
+      getGitHubAccountReadme: getAccountReadme,
+      updateGitHubAccountProfile: updateAccountProfile,
+      startGitHubDeviceFlow,
+      openUrl,
+    });
+    setBinding({
       login: "octocat",
       avatarUrl: "https://avatars.example/octocat.png",
       scopes: ["repo", "user"],
       boundAt: "2026-07-15T00:00:00Z",
-    };
-    workspace.getAccountProfile.mockResolvedValue(accountProfile());
-    workspace.getAccountReadme.mockResolvedValue(accountReadme());
-    workspace.updateAccountProfile.mockImplementation(async (request) => accountProfile("octocat", request));
+    });
+    getAccountProfile.mockResolvedValue(accountProfile());
+    getAccountReadme.mockResolvedValue(accountReadme());
+    updateAccountProfile.mockImplementation(async (request) => accountProfile("octocat", request));
   });
 
   it("资料加载后进入只读展示态", async () => {
@@ -165,7 +147,7 @@ describe("用户资料页", () => {
 
     const sidebar = await waitFor(() => agent(view.container, "profile.sidebar"));
     const readme = await waitFor(() => agent(view.container, "profile.readme"));
-    expect(sidebar).toHaveTextContent("Octo Cat");
+    await waitFor(() => expect(sidebar).toHaveTextContent("Octo Cat"));
     expect(within(readme).getByRole("heading", { name: "octocat" })).toBeInTheDocument();
     expect(readme.querySelector("script")).toBeNull();
 
@@ -173,13 +155,13 @@ describe("用户资料页", () => {
     const toolbar = await screen.findByRole("toolbar", { name: "链接操作" });
     await fireEvent.click(within(toolbar).getByRole("button", { name: "打开" }));
 
-    expect(workspace.openUrl).toHaveBeenCalledWith(
+    expect(openUrl).toHaveBeenCalledWith(
       "https://github.com/octocat/octocat/blob/main/docs/guide.md",
     );
   });
 
   it("README 不存在时展示独立空态", async () => {
-    workspace.getAccountReadme.mockResolvedValueOnce(accountReadme("octocat", {
+    getAccountReadme.mockResolvedValueOnce(accountReadme("octocat", {
       status: "empty",
       preview: null,
       sourceRepo: null,
@@ -188,12 +170,12 @@ describe("用户资料页", () => {
     const view = await renderProfile();
 
     const readme = await waitFor(() => agent(view.container, "profile.readme"));
-    expect(within(readme).getByText("尚未公开个人 README。")).toBeInTheDocument();
+    expect(await within(readme).findByText("尚未公开个人 README。")).toBeInTheDocument();
     expect(within(readme).queryByRole("button", { name: "重试" })).toBeNull();
   });
 
   it("README 不可用时可独立重试并恢复内容", async () => {
-    workspace.getAccountReadme
+    getAccountReadme
       .mockResolvedValueOnce(accountReadme("octocat", {
         status: "unavailable",
         preview: null,
@@ -210,16 +192,16 @@ describe("用户资料页", () => {
     const view = await renderProfile();
 
     const readme = await waitFor(() => agent(view.container, "profile.readme"));
-    await fireEvent.click(within(readme).getByRole("button", { name: "重试" }));
+    await fireEvent.click(await within(readme).findByRole("button", { name: "重试" }));
 
     expect(await within(readme).findByRole("heading", { name: "Recovered README" })).toBeInTheDocument();
-    expect(workspace.getAccountReadme).toHaveBeenCalledTimes(2);
+    expect(getAccountReadme).toHaveBeenCalledTimes(2);
     expect(readme).not.toHaveTextContent("HTTP 502");
   });
 
   it("账号切换后忽略旧账号的延迟 README", async () => {
     const oldReadme = deferred<GitHubProfileReadmeSection>();
-    workspace.getAccountReadme
+    getAccountReadme
       .mockReturnValueOnce(oldReadme.promise)
       .mockResolvedValueOnce(accountReadme("mona", {
         preview: {
@@ -227,18 +209,19 @@ describe("用户资料页", () => {
           content: "# Mona README",
         },
       }));
-    workspace.getAccountProfile
+    getAccountProfile
       .mockResolvedValueOnce(accountProfile())
       .mockResolvedValueOnce(accountProfile("mona", { name: "Mona" }));
     const view = await renderProfile();
-    await waitFor(() => expect(workspace.getAccountReadme).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getAccountReadme).toHaveBeenCalledTimes(1));
 
-    workspace.githubBinding.value = {
+    setBinding({
       login: "mona",
       avatarUrl: "https://avatars.example/mona.png",
       scopes: ["repo", "user"],
       boundAt: "2026-07-15T01:00:00Z",
-    };
+    });
+    await waitFor(() => expect(getAccountReadme).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole("heading", { name: "Mona README" })).toBeInTheDocument();
 
     oldReadme.resolve(accountReadme("octocat", {
@@ -264,33 +247,33 @@ describe("用户资料页", () => {
     expect(view.container.querySelector('[data-agent-id="profile.name"]')).toBeNull();
     await fireEvent.click(agent(view.container, "profile.edit"));
     expect(agent<HTMLInputElement>(view.container, "profile.name")).toHaveValue("Octo Cat");
-    expect(workspace.updateAccountProfile).not.toHaveBeenCalled();
+    expect(updateAccountProfile).not.toHaveBeenCalled();
   });
 
   it("授权成功后允许编辑并提交完整公开资料", async () => {
-    workspace.githubBinding.value = {
+    setBinding({
       ...workspace.githubBinding.value!,
       scopes: ["repo", "read:user"],
-    };
+    });
     const view = await renderProfile();
     await waitFor(() => expect(agent(view.container, "profile.authorize")).toBeEnabled());
 
     await fireEvent.click(agent(view.container, "profile.authorize"));
-    expect(workspace.startAuthFlow).toHaveBeenCalledTimes(1);
+    expect(startGitHubDeviceFlow).toHaveBeenCalledTimes(1);
 
-    workspace.githubBinding.value = {
+    setBinding({
       ...workspace.githubBinding.value!,
       scopes: ["repo", "user"],
       boundAt: "2026-07-15T00:01:00Z",
-    };
-    workspace.getAccountProfile.mockResolvedValueOnce(accountProfile());
+    });
+    getAccountProfile.mockResolvedValueOnce(accountProfile());
     await waitFor(() => expect(agent(view.container, "profile.edit")).toBeEnabled());
     await fireEvent.click(agent(view.container, "profile.edit"));
     await fireEvent.update(agent(view.container, "profile.name"), "Mona Lisa");
     await fireEvent.click(agent(view.container, "profile.save"));
 
     await waitFor(() => {
-      expect(workspace.updateAccountProfile).toHaveBeenCalledWith({
+      expect(updateAccountProfile).toHaveBeenCalledWith({
         name: "Mona Lisa",
         email: "octocat@example.com",
         bio: "Builds developer tools",
@@ -304,26 +287,17 @@ describe("用户资料页", () => {
   });
 
   it("授权进行中展示设备码并阻止重复发起", async () => {
-    workspace.githubBinding.value = {
+    setBinding({
       ...workspace.githubBinding.value!,
       scopes: ["repo", "read:user"],
-    };
-    const auth = deferred<void>();
-    workspace.startAuthFlow.mockImplementationOnce(() => {
-      workspace.state.authLoading = true;
-      workspace.state.authFlowStatus = "pending";
-      workspace.state.authRemainingSeconds = 300;
-      workspace.authPendingStatusText.value = "Pending";
-      workspace.authRemainingText.value = "5:00";
-      workspace.deviceFlow.value = {
-        deviceCode: "device-code",
-        userCode: "ABCD-1234",
-        verificationUri: "https://github.com/login/device",
-        expiresInSeconds: 900,
-        intervalSeconds: 5,
-        expiresAt: Date.now() + 900_000,
-      };
-      return auth.promise;
+    });
+    startGitHubDeviceFlow.mockResolvedValueOnce({
+      deviceCode: "device-code",
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+      expiresInSeconds: 900,
+      intervalSeconds: 5,
+      expiresAt: Date.now() + 900_000,
     });
     const view = await renderProfile();
     await waitFor(() => expect(agent(view.container, "profile.authorize")).toBeEnabled());
@@ -332,15 +306,14 @@ describe("用户资料页", () => {
     await fireEvent.click(authorize);
     await fireEvent.click(authorize);
 
-    expect(workspace.startAuthFlow).toHaveBeenCalledTimes(1);
+    expect(startGitHubDeviceFlow).toHaveBeenCalledTimes(1);
     expect(agent(view.container, "profile.authorization")).toHaveAttribute("role", "status");
     expect(agent(view.container, "profile.authorization.code")).toHaveTextContent("ABCD-1234");
-    auth.resolve();
   });
 
   it("保存采用服务端回显、清除 dirty 状态并阻止重复提交", async () => {
     const save = deferred<GitHubAccountProfile>();
-    workspace.updateAccountProfile.mockReturnValueOnce(save.promise);
+    updateAccountProfile.mockReturnValueOnce(save.promise);
     const view = await renderProfile();
     await waitFor(() => expect(agent(view.container, "profile.edit")).toBeEnabled());
     await fireEvent.click(agent(view.container, "profile.edit"));
@@ -349,7 +322,7 @@ describe("用户资料页", () => {
     const saveButton = agent(view.container, "profile.save");
     await fireEvent.click(saveButton);
     await fireEvent.click(saveButton);
-    expect(workspace.updateAccountProfile).toHaveBeenCalledTimes(1);
+    expect(updateAccountProfile).toHaveBeenCalledTimes(1);
 
     save.resolve(accountProfile("octocat", { name: "Server value" }));
     await waitFor(() => expect(view.container.querySelector('[data-agent-id="profile.name"]')).toBeNull());
@@ -361,7 +334,7 @@ describe("用户资料页", () => {
   });
 
   it("保存失败时保留草稿和编辑态", async () => {
-    workspace.updateAccountProfile.mockRejectedValueOnce(new Error("422 validation failed"));
+    updateAccountProfile.mockRejectedValueOnce(new Error("422 validation failed"));
     const view = await renderProfile();
     await waitFor(() => expect(agent(view.container, "profile.edit")).toBeEnabled());
     await fireEvent.click(agent(view.container, "profile.edit"));
@@ -377,18 +350,18 @@ describe("用户资料页", () => {
 
   it("账号切换后忽略旧账号的延迟响应", async () => {
     const oldRequest = deferred<GitHubAccountProfile>();
-    workspace.getAccountProfile
+    getAccountProfile
       .mockReturnValueOnce(oldRequest.promise)
       .mockResolvedValueOnce(accountProfile("mona", { name: "Mona" }));
     const view = await renderProfile();
-    await waitFor(() => expect(workspace.getAccountProfile).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getAccountProfile).toHaveBeenCalledTimes(1));
 
-    workspace.githubBinding.value = {
+    setBinding({
       login: "mona",
       avatarUrl: "https://avatars.example/mona.png",
       scopes: ["repo", "user"],
       boundAt: "2026-07-15T01:00:00Z",
-    };
+    });
     await waitFor(() => expect(agent(view.container, "profile.editor")).toHaveTextContent("Mona"));
 
     oldRequest.resolve(accountProfile("octocat", { name: "Late Octocat" }));
@@ -397,29 +370,29 @@ describe("用户资料页", () => {
   });
 
   it("加载失败后可重试并恢复远端资料", async () => {
-    workspace.getAccountProfile
+    getAccountProfile
       .mockRejectedValueOnce(new Error("network unavailable"))
       .mockResolvedValueOnce(accountProfile("octocat", { name: "Recovered profile" }));
     const view = await renderProfile();
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(view.container.querySelector('[data-agent-id="profile.edit"]')).toBeNull();
-    expect(workspace.updateAccountProfile).not.toHaveBeenCalled();
+    expect(updateAccountProfile).not.toHaveBeenCalled();
     await fireEvent.click(agent(view.container, "profile.retry"));
 
     await waitFor(() => expect(agent(view.container, "profile.editor")).toHaveTextContent("Recovered profile"));
-    expect(workspace.getAccountProfile).toHaveBeenCalledTimes(2);
+    expect(getAccountProfile).toHaveBeenCalledTimes(2);
     expect(agent(view.container, "profile.edit")).toBeEnabled();
   });
 
   it("未绑定时通过账户设置入口完成站内导航", async () => {
-    workspace.githubBinding.value = null;
+    setBinding(null);
     const view = await renderProfile();
 
     await fireEvent.click(agent(view.container, "profile.open-account-settings"));
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=account"));
-    expect(workspace.getAccountProfile).not.toHaveBeenCalled();
-    expect(workspace.getAccountReadme).not.toHaveBeenCalled();
+    expect(getAccountProfile).not.toHaveBeenCalled();
+    expect(getAccountReadme).not.toHaveBeenCalled();
   });
 
   it("通过资料页入口在 GitHub 打开当前账号", async () => {
@@ -428,6 +401,6 @@ describe("用户资料页", () => {
 
     await fireEvent.click(agent(view.container, "profile.open-github"));
 
-    expect(workspace.openUrl).toHaveBeenCalledWith("https://github.com/octocat");
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/octocat");
   });
 });

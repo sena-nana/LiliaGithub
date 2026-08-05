@@ -1,6 +1,6 @@
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { invalidateSessionContextSnapshot } from "./sessionContext";
+import { useSessionContext } from "./sessionContext";
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { useWorkspace } from "./useWorkspace";
@@ -13,7 +13,6 @@ import {
   type RepoSummary,
   type WorkspaceRepoPlacement,
 } from "../services/workspace";
-import { readCachedGitHubRepos } from "../services/workspace/cache";
 import { isGitHubBindingExpiredError } from "../utils/githubErrors";
 import {
   ALL_GITHUB_REPOSITORIES,
@@ -70,6 +69,7 @@ function cloneErrorMessage(err: unknown) {
 
 export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const workspace = useWorkspace();
+  const sessionContext = useSessionContext();
   const accountPreferences = useAccountPreferences();
   const router = useRouter();
   const componentEpoch = useComponentEpoch();
@@ -347,7 +347,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
           await loadCloneRepoOwners();
           if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
           cloneRepositoryScope.value = preferredCloneRepositoryScope();
-          const cached = readCachedGitHubRepos(cloneRepositoryScope.value);
+          const cached = workspace.readCachedGitHubRepos(cloneRepositoryScope.value);
           if (cached) {
             applyCloneRepoPage(cached);
           }
@@ -365,7 +365,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
 
   function closeCloneDialog() {
     if (cloneBusy.value) return;
-    if (cloneOpen.value) invalidateSessionContextSnapshot();
+    if (cloneOpen.value) sessionContext.invalidate();
     invalidateCloneSearchPagination();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
@@ -469,7 +469,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   }
 
   async function openGitHubBindingSettings() {
-    invalidateSessionContextSnapshot();
+    sessionContext.invalidate();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
     cloneRepoOwnersLoader.invalidate();

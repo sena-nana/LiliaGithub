@@ -1,28 +1,19 @@
 export * from "./types";
 
-import { createCachedAsyncModule } from "../../utils/asyncModule";
-import { call } from "../workspace/client";
+import type { WorkspaceClient } from "../workspace/client";
 import type {
   HomeAttentionLoadOptions,
   HomeAttentionResult,
   HomeAttentionSection,
 } from "./types";
 
-const fallbackModule = createCachedAsyncModule(() => import("./fallback"));
-
 export function listGitHubHomeAttention(
+  client: WorkspaceClient,
   repoFullNames: readonly string[],
   options: HomeAttentionLoadOptions = {},
 ): Promise<HomeAttentionResult> {
   const repositories = normalizeRepositories(repoFullNames);
-  return call(
-    "github_list_home_attention",
-    {
-      repoFullNames: repositories,
-      forceRefresh: options.forceRefresh ?? null,
-    },
-    async () => (await fallbackModule.load()).listHomeAttentionFallback(repositories, options),
-  );
+  return client.listGitHubHomeAttention(repositories, options);
 }
 
 export function mergeHomeAttentionResult(

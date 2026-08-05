@@ -5,4 +5,5 @@ pub mod workspace;
 
 pub use workspace::operations::OperationKind;
 
+pub use runtime::WorkspaceAppState;
 pub use task_runtime::WorkspaceTaskRuntime;

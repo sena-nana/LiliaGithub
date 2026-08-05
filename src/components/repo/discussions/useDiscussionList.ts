@@ -1,9 +1,6 @@
 import { computed, reactive, ref } from "vue";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
-import {
-  getGitHubRepositoryDiscussionMetadata,
-  listGitHubRepositoryDiscussions,
-} from "../../../services/workspace/discussions/client";
+import type { WorkspaceClient } from "../../../services/workspace/client";
 import type {
   GitHubRepositoryDiscussionDirection,
   GitHubRepositoryDiscussionMetadata,
@@ -14,7 +11,7 @@ import type {
 
 const PAGE_SIZE = 25;
 
-export function useDiscussionList(repoFullName: string) {
+export function useDiscussionList(repoFullName: string, github: WorkspaceClient) {
   const metadata = ref<GitHubRepositoryDiscussionMetadata | null>(null);
   const items = ref<GitHubRepositoryDiscussionSummary[]>([]);
   const totalCount = ref(0);
@@ -49,7 +46,7 @@ export function useDiscussionList(repoFullName: string) {
       metadataLoading.value = true;
       metadataError.value = null;
       try {
-        const next = await getGitHubRepositoryDiscussionMetadata(repoFullName);
+        const next = await github.getGitHubRepositoryDiscussionMetadata(repoFullName);
         if (metadataLoader.isCurrent(runId)) metadata.value = next;
       } catch (error) {
         if (metadataLoader.isCurrent(runId)) metadataError.value = readableError(error);
@@ -68,7 +65,7 @@ export function useDiscussionList(repoFullName: string) {
       else listLoadingMore.value = true;
       listError.value = null;
       try {
-        const page = await listGitHubRepositoryDiscussions(repoFullName, {
+        const page = await github.listGitHubRepositoryDiscussions(repoFullName, {
           first: PAGE_SIZE,
           after: reset ? null : endCursor.value,
           ...filters,

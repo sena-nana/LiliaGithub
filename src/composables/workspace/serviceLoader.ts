@@ -1,9 +1,4 @@
-import { createCachedAsyncModule } from "../../utils/asyncModule";
+import type { WorkspaceClient } from "../../services/workspace/client";
 
-export type WorkspaceService = typeof import("../../services/workspace");
-
-const serviceModule = createCachedAsyncModule<WorkspaceService>(() => import("../../services/workspace"));
-
-export function loadWorkspaceService() {
-  return serviceModule.load();
-}
+/** The smallest service contract consumed by the app-scoped workspace graph. */
+export type WorkspaceService = WorkspaceClient;

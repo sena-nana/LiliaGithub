@@ -2,21 +2,15 @@
 import { GitMerge, LoaderCircle, RefreshCw, Send } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
-import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";
+import { createKeyedAsyncResource } from "../../../composables/useKeyedAsyncResource";
+import { useWorkspace } from "../../../composables/useWorkspace";
 import {
-  createPullRequestLineComment,
-  getPullRequestCodeReview,
-  replyPullRequestReviewThread,
-  submitPullRequestCodeReview,
   type CreatePullRequestLineCommentRequest,
   type PullRequestCodeReviewDetail,
   type SubmitPullRequestCodeReviewRequest,
 } from "../../../services/codeReview";
 import {
   buildPullRequestReviewHandoff,
-  createLiliaCodeTaskHandoff,
-  openLiliaCodeTaskHandoffResult,
-  waitForLiliaCodeTaskHandoff,
   type LiliaCodeTaskHandoff,
   type LiliaCodeTaskHandoffStatus,
 } from "../../../services/liliaCodeHandoff";
@@ -45,11 +39,26 @@ const emit = defineEmits<{
   merge: [pull: GitHubPullRequest];
   "update:mergeMethod": [value: "merge" | "squash" | "rebase"];
 }>();
-
-const detail = ref<PullRequestCodeReviewDetail | null>(null);
-const loading = ref(false);
-const refreshing = ref(false);
-const error = ref<string | null>(null);
+const workspace = useWorkspace();
+const github = workspace.github.client;
+const reviewResource = createKeyedAsyncResource<string, PullRequestCodeReviewDetail>({
+  componentEpoch: useComponentEpoch(),
+});
+const reviewKey = computed(() => {
+  const binding = workspace.githubBinding.value;
+  const bindingRevision = binding
+    ? `${binding.login.toLocaleLowerCase()}:${binding.boundAt}`
+    : "unbound";
+  return `${workspace.contextRevision.value}:${bindingRevision}:${props.repoFullName}:${props.pull.number}`;
+});
+const detail = computed(() => reviewResource.state.value.data);
+const loading = computed(() => reviewResource.state.value.status === "loading");
+const refreshing = computed(() => reviewResource.state.value.refreshing);
+const error = computed(() => (
+  reviewResource.state.value.error === null
+    ? null
+    : codeReviewErrorMessage(reviewResource.state.value.error)
+));
 const mutation = ref<"line-comment" | "thread-reply" | "review" | null>(null);
 const handoffDraft = ref<LiliaCodeTaskHandoff | null>(null);
 const handoffStatus = ref<LiliaCodeTaskHandoffStatus | null>(null);
@@ -57,7 +66,6 @@ const handoffPending = ref(false);
 const handoffError = ref<string | null>(null);
 const handoffOpenPending = ref(false);
 const handoffOpenError = ref<string | null>(null);
-const reviewLoader = createLatestAsyncLoader({ componentEpoch: useComponentEpoch() });
 
 const mergeGate = computed(() => evaluatePullRequestMergeGate(props.pull, props.checks, detail.value));
 const unresolvedThreads = computed(() => detail.value?.threads.filter((thread) => !thread.isResolved) ?? []);
@@ -94,24 +102,12 @@ function cleanError(reason: unknown) {
 
 async function load(force = false) {
   if (!props.repoFullName || !props.pull.number) return;
-  const key = `${props.repoFullName}:${props.pull.number}`;
-  if (!force && reviewLoader.isPending(key)) return;
-  await reviewLoader.run(key, async (runId) => {
-    if (force) refreshing.value = true;
-    else loading.value = true;
-    error.value = null;
-    try {
-      const next = await getPullRequestCodeReview(props.repoFullName, props.pull.number);
-      if (reviewLoader.isCurrent(runId)) detail.value = next;
-    } catch (reason) {
-      if (reviewLoader.isCurrent(runId)) error.value = codeReviewErrorMessage(reason);
-    } finally {
-      if (reviewLoader.isCurrent(runId)) {
-        loading.value = false;
-        refreshing.value = false;
-      }
-    }
-  });
+  const key = reviewKey.value;
+  await reviewResource.load(
+    key,
+    () => github.getPullRequestCodeReview(props.repoFullName, props.pull.number),
+    { preserveData: true, reusePending: !force },
+  );
 }
 
 async function runMutation<T>(kind: NonNullable<typeof mutation.value>, action: () => Promise<T>) {
@@ -128,19 +124,19 @@ async function runMutation<T>(kind: NonNullable<typeof mutation.value>, action: 
 
 function submitLineComment(request: CreatePullRequestLineCommentRequest) {
   return runMutation("line-comment", () =>
-    createPullRequestLineComment(props.repoFullName, props.pull.number, request)
+    github.createPullRequestLineComment(props.repoFullName, props.pull.number, request)
   ).then(() => undefined);
 }
 
 function replyThread(threadId: string, body: string) {
   return runMutation("thread-reply", () =>
-    replyPullRequestReviewThread(props.repoFullName, props.pull.number, { threadId, body })
+    github.replyPullRequestReviewThread(props.repoFullName, { threadId, body })
   ).then(() => undefined);
 }
 
 function submitReview(request: SubmitPullRequestCodeReviewRequest) {
   return runMutation("review", () =>
-    submitPullRequestCodeReview(props.repoFullName, props.pull.number, request)
+    github.submitPullRequestCodeReview(props.repoFullName, props.pull.number, request)
   ).then(() => undefined);
 }
 
@@ -172,11 +168,11 @@ async function handoffToLiliaCode() {
     handoffDraft.value = draft;
     let status = handoffStatus.value;
     if (!status || status.handoffId !== draft.id || status.status !== "pending") {
-      status = await createLiliaCodeTaskHandoff(draft);
+      status = await github.createLiliaCodeTaskHandoff(draft);
       handoffStatus.value = status;
     }
     if (status.status === "pending") {
-      status = await waitForLiliaCodeTaskHandoff(draft.id, { attempts: 4, intervalMs: 250 });
+      status = await github.waitForLiliaCodeTaskHandoff(draft.id, { attempts: 4, intervalMs: 250 });
       handoffStatus.value = status;
     }
     if (status.status === "failed" || status.status === "incompatible") {
@@ -195,7 +191,7 @@ async function openHandoffResult() {
   handoffOpenPending.value = true;
   handoffOpenError.value = null;
   try {
-    await openLiliaCodeTaskHandoffResult(status.handoffId);
+    await github.openLiliaCodeTaskHandoffResult(status.handoffId);
   } catch (reason) {
     handoffOpenError.value = cleanError(reason);
   } finally {
@@ -212,11 +208,9 @@ function handoffStatusText(status: LiliaCodeTaskHandoffStatus | null) {
 }
 
 watch(
-  () => [props.repoFullName, props.pull.number] as const,
+  reviewKey,
   () => {
-    reviewLoader.invalidate();
-    detail.value = null;
-    error.value = null;
+    reviewResource.invalidate();
     handoffDraft.value = null;
     handoffStatus.value = null;
     handoffError.value = null;

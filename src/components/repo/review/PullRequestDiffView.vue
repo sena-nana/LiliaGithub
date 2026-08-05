@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight, ExternalLink, MessageSquare } from "@lucide/vue";
 import { ref } from "vue";
-import { openUrl } from "../../../services/workspace/client";
+import { useWorkspace } from "../../../composables/useWorkspace";
 import type {
   CreatePullRequestLineCommentRequest,
   PullRequestChangedFile,
@@ -23,6 +23,7 @@ const props = defineProps<{
   busy: boolean;
   submitComment: (request: CreatePullRequestLineCommentRequest) => Promise<void>;
 }>();
+const workspace = useWorkspace();
 
 type CommentTarget = {
   path: string;
@@ -118,7 +119,7 @@ async function openChangedFile(file: PullRequestChangedFile) {
   if (!url) return;
   externalError.value = null;
   try {
-    await openUrl(url);
+    await workspace.openUrl(url);
   } catch (error) {
     externalError.value = codeReviewErrorMessage(error);
   }

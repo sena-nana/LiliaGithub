@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoDiscussionsPanel from "../src/components/repo/discussions/RepoDiscussionsPanel.vue";
 import { resetRepoDiscussionsStoresForTests } from "../src/components/repo/discussions/useRepoDiscussions";
+import {
+  createWorkspaceStoreFixture,
+  provideWorkspaceStoreFixture,
+} from "./fixtures/createWorkspaceStoreFixture";
 import type {
   GitHubRepositoryDiscussion,
   GitHubRepositoryDiscussionComment,
@@ -17,14 +21,16 @@ const api = vi.hoisted(() => ({
   createDiscussion: vi.fn(),
 }));
 
-vi.mock("../src/services/workspace/discussions/client", () => ({
-  getGitHubRepositoryDiscussionMetadata: api.getMetadata,
-  listGitHubRepositoryDiscussions: api.listDiscussions,
-  getGitHubRepositoryDiscussion: api.getDiscussion,
-  listGitHubRepositoryDiscussionComments: api.listComments,
-  listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
-  createGitHubRepositoryDiscussion: api.createDiscussion,
-}));
+function createDiscussionStoreFixture() {
+  return createWorkspaceStoreFixture({
+    getGitHubRepositoryDiscussionMetadata: api.getMetadata,
+    listGitHubRepositoryDiscussions: api.listDiscussions,
+    getGitHubRepositoryDiscussion: api.getDiscussion,
+    listGitHubRepositoryDiscussionComments: api.listComments,
+    listGitHubRepositoryDiscussionCommentReplies: api.listReplies,
+    createGitHubRepositoryDiscussion: api.createDiscussion,
+  });
+}
 
 const metadata: GitHubRepositoryDiscussionMetadata = {
   enabled: true,
@@ -98,12 +104,14 @@ describe("RepoDiscussionsPanel", () => {
         pageInfo: { endCursor: null, hasNextPage: false },
         totalCount: 1,
       });
+    const store = createDiscussionStoreFixture();
     const view = render(RepoDiscussionsPanel, {
       props: {
         repoFullName: "acme/repo",
         focusedDiscussionNumber: null,
         createView: false,
       },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     await fireEvent.click(await screen.findByRole("button", { name: /Rendered discussion/ }));
@@ -129,12 +137,14 @@ describe("RepoDiscussionsPanel", () => {
     const creatable = { ...metadata, creatableCategories: metadata.categories };
     api.getMetadata.mockResolvedValue(creatable);
     api.createDiscussion.mockResolvedValue(detail());
+    const store = createDiscussionStoreFixture();
     const view = render(RepoDiscussionsPanel, {
       props: {
         repoFullName: "acme/repo",
         focusedDiscussionNumber: null,
         createView: true,
       },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     await fireEvent.update(await screen.findByRole("textbox", { name: "标题" }), "  Rendered discussion  ");
@@ -153,12 +163,14 @@ describe("RepoDiscussionsPanel", () => {
   it("only offers answer selection for answerable discussion categories", async () => {
     const category = { ...metadata.categories[0]!, isAnswerable: false };
     api.getDiscussion.mockResolvedValue({ ...detail(), category });
+    const store = createDiscussionStoreFixture();
     const view = render(RepoDiscussionsPanel, {
       props: {
         repoFullName: "acme/repo",
         focusedDiscussionNumber: null,
         createView: false,
       },
+      global: { provide: provideWorkspaceStoreFixture(store) },
     });
 
     await fireEvent.click(await screen.findByRole("button", { name: /Rendered discussion/ }));

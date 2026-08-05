@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import ContextMenuHost from "../src/ui/contextMenuHost";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import {
   closeContextMenu,
   installContextMenu,
   openContextMenuAt,
   type ContextMenuItem,
   uninstallContextMenu,
-} from "../src/ui";
-import { SB_MENU_POP_TRANSITION_MS } from "../src/ui";
+} from "@lilia/ui/composables";
+import { SB_MENU_POP_TRANSITION_MS } from "@lilia/ui/composables";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 
 function renderWithTemplate(template: string, setup: () => Record<string, unknown>) {

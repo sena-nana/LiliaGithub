@@ -578,15 +578,17 @@ mod tests {
 
     #[test]
     fn remap_updates_membership_lists() {
-        let mut settings = WorkspaceSettings::default();
-        settings.managed_repo_ids = vec!["local:root/a/demo".into()];
-        settings.favorite_repo_ids = vec!["local:root/a/demo".into()];
-        settings.repo_groups = vec![WorkspaceRepoGroup {
-            id: "g1".into(),
-            name: "前端".into(),
-            organization_login: None,
-            repo_ids: vec!["local:root/a/demo".into()],
-        }];
+        let mut settings = WorkspaceSettings {
+            managed_repo_ids: vec!["local:root/a/demo".into()],
+            favorite_repo_ids: vec!["local:root/a/demo".into()],
+            repo_groups: vec![WorkspaceRepoGroup {
+                id: "g1".into(),
+                name: "前端".into(),
+                organization_login: None,
+                repo_ids: vec!["local:root/a/demo".into()],
+            }],
+            ..WorkspaceSettings::default()
+        };
         remap_repo_id_in_settings(
             &mut settings,
             "local:root/a/demo",

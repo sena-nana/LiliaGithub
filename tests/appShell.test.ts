@@ -6,13 +6,13 @@ import { LILIA_SETTINGS_MODEL, LILIA_UI_CONFIG, SIDEBAR_CONFIG } from "../src/co
 import {
   closeContextMenu,
   installContextMenu,
-  setLiliaUiConfig,
-  liliaSettingsKey,
-} from "../src/ui";
-import { useWorkspace } from "../src/composables/useWorkspace";
-import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
-import { refreshRepoContributions } from "../src/composables/workspace/repositories";
-import { REPO_LAUNCH_STATUS_EVENT, installLaunchStatusEvents } from "../src/composables/workspace/launchEvents";
+} from "@lilia/ui/composables";
+import { setLiliaUiConfig } from "@lilia/ui/shell";
+import { liliaSettingsKey } from "@lilia/ui/settings";
+import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
+import { createWorkspaceStore, workspaceStoreKey } from "../src/composables/workspace/store";
+import { createDefaultWorkspaceTransport } from "../src/services/workspace/client";
+import { createSessionContext, sessionContextKey } from "../src/composables/sessionContext";
 import {
   workspaceFallbackForTests,
   type GitHubBindingMetadata,
@@ -26,6 +26,10 @@ import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const SIDEBAR_REPO_SORT_STORAGE_KEY = "lilia-github.sidebar.repoSort.v1";
 const HOME_REPO_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const sessionContext = createSessionContext();
+const workspace = createWorkspaceStore({ transport: createDefaultWorkspaceTransport(), sessionContext });
+const { state, resetWorkspaceStateForTests, setRepoActionError, upsertRepo } = workspace.stateFeature;
+const { refreshRepoContributions, installLaunchStatusEvents } = workspace;
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -42,8 +46,11 @@ async function renderAppShell(initialRoute = "/") {
     setup() {
       let cleanup: (() => void) | null = null;
       onMounted(() => {
-        void installLaunchStatusEvents().then((installedCleanup) => {
-          cleanup = installedCleanup;
+        void Promise.all([
+          installLaunchStatusEvents(),
+          workspace.installRepoRefreshEvents(),
+        ]).then((installedCleanups) => {
+          cleanup = () => installedCleanups.forEach((installedCleanup) => installedCleanup());
         });
       });
       onUnmounted(() => {
@@ -57,7 +64,6 @@ async function renderAppShell(initialRoute = "/") {
     template: "<TestAppEffects /><AppShell />",
   });
   setLiliaUiConfig(LILIA_UI_CONFIG);
-  const workspace = useWorkspace();
   if (state.repos.length === 0) {
     await workspace.initialize();
   } else if (!workspace.isReady.value) {
@@ -98,6 +104,8 @@ async function renderAppShell(initialRoute = "/") {
       plugins: [router, liliaContextMenuPlugin],
       provide: {
         [liliaSettingsKey as symbol]: LILIA_SETTINGS_MODEL,
+        [workspaceStoreKey as symbol]: workspace,
+        [sessionContextKey as symbol]: sessionContext,
       },
     },
   });
@@ -245,6 +253,7 @@ function markWorkspaceReadyForManualRepos() {
     clientIdSource: "bundled",
     binding,
   };
+  state.bootstrapStatus = "ready";
 }
 
 function readDisplayedContributionTotal(view: AppShellView) {
@@ -329,6 +338,12 @@ async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, grou
 
 beforeEach(async () => {
   workspaceFallback = await workspaceFallbackForTests();
+  workspace.resetAuthRuntime();
+  workspace.resetRepositoryRuntimeForTests();
+  workspace.resetRepoRefreshRuntimeForTests();
+  workspace.clearGitHubRepoCache();
+  workspace.clearGitHubRepoOwnerCache();
+  workspace.clearGitHubRepoLicenseCache();
   resetWorkspaceStateForTests();
   closeContextMenu();
   installContextMenu();
@@ -387,8 +402,7 @@ describe("AppShell sidebar", () => {
 
   it("首页贡献热力图只跟随启动快照和手动刷新更新", async () => {
     const startupContributions = contributionResult(1);
-    const service = await import("../src/services/workspace");
-    await service.writeStartupContributions({
+    await workspace.github.client.writeStartupContributions({
       days: startupContributions.days,
       meta: startupContributions.meta,
     });
@@ -793,7 +807,6 @@ describe("AppShell sidebar", () => {
 
   it("远程仓库置顶后显示普通远程状态并可从侧栏移除", async () => {
     const view = await renderAppShell("/");
-    const workspace = useWorkspace();
 
     await workspace.setRemoteRepoFavorite({
       accountLogin: "lilia-user",
@@ -823,7 +836,6 @@ describe("AppShell sidebar", () => {
 
   it("本地与远程双来源置顶只显示一行并在取消时同时清理", async () => {
     const view = await renderAppShell("/");
-    const workspace = useWorkspace();
 
     await workspace.setLocalRepoFavorite("LiliaGithub", true);
     await workspace.setRemoteRepoFavorite({
@@ -984,7 +996,7 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await useWorkspace().rememberRemoteRepo({
+    await workspace.rememberRemoteRepo({
       accountLogin: "lilia-user",
       fullName: "sena-nana/RemoteOnly",
       name: "RemoteOnly",
@@ -1407,7 +1419,6 @@ describe("AppShell sidebar", () => {
       expect(repoStatusRowForText(view.container, "sena-nana/InstantSearchRepo")).toBeInTheDocument();
     });
 
-    const workspace = useWorkspace();
     const settings = await workspace.createRepoGroup("即时搜索");
     const groupId = settings.repoGroups.find((group) => group.name === "即时搜索")?.id;
     expect(groupId).toBeTruthy();
@@ -1438,10 +1449,9 @@ describe("AppShell sidebar", () => {
         nextPage: null,
       },
     ]);
-    const repositories = await import("../src/composables/workspace/repositories");
-    const firstClone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
-    const secondClone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
-    const cloneRepo = vi.spyOn(repositories, "cloneRepo")
+    const firstClone = deferred<Awaited<ReturnType<typeof workspace.cloneRepo>>>();
+    const secondClone = deferred<Awaited<ReturnType<typeof workspace.cloneRepo>>>();
+    const cloneRepo = vi.spyOn(workspace, "cloneRepo")
       .mockReturnValueOnce(firstClone.promise)
       .mockReturnValueOnce(secondClone.promise);
     const view = await renderAppShell("/");
@@ -1551,8 +1561,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
-    const repositories = await import("../src/composables/workspace/repositories");
-    const cloneRepo = vi.spyOn(repositories, "cloneRepo");
+    const cloneRepo = vi.spyOn(workspace, "cloneRepo");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -1619,13 +1628,12 @@ describe("AppShell sidebar", () => {
   });
 
   it("首页 URL 仓库范围覆盖账户默认值并使用账户排序", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubRepoPagesForTests([{
       items: [githubRepoSummary("lilia-user/Zeta"), githubRepoSummary("lilia-user/Alpha")],
       nextPage: null,
     }]);
-    const currentSettings = await service.getWorkspaceSettings();
-    await service.updateAccountPreferences({
+    const currentSettings = await workspace.github.client.getWorkspaceSettings();
+    await workspace.github.client.updateAccountPreferences({
       ...currentSettings.accountPreferences,
       repositoryScope: { kind: "personal", login: "lilia-user" },
       repositorySort: { key: "name", direction: "asc" },
@@ -1695,8 +1703,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
-    const repositories = await import("../src/composables/workspace/repositories");
-    const cloneRepo = vi.spyOn(repositories, "cloneRepo");
+    const cloneRepo = vi.spyOn(workspace, "cloneRepo");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
