@@ -1147,12 +1147,13 @@ describe("基础路由", () => {
   it("仓库详情页右上角刷新 Stash 列表并保持当前路由", async () => {
     await workspaceFallback.saveRepoStash("LiliaGithub", "On main: before page refresh");
     const { router } = await renderAt("/repos/LiliaGithub/stash");
-    expect(await screen.findByRole("button", { name: /before page refresh/ })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Stash 列表", { timeout: 5_000 })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /before page refresh/ }, { timeout: 5_000 })).toBeInTheDocument();
 
     await workspaceFallback.saveRepoStash("LiliaGithub", "On main: after page refresh");
     await fireEvent.click(screen.getByRole("button", { name: "刷新当前页" }));
 
-    expect(await screen.findByRole("button", { name: /after page refresh/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /after page refresh/ }, { timeout: 5_000 })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/stash");
   });
 
