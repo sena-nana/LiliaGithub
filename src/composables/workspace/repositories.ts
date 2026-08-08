@@ -25,6 +25,7 @@ import type {
   WorkspaceCloneRepoRequest,
   WorkspaceRepoPathMode,
   WorkspaceRepoRelocationResult,
+  WorkspaceRepoRefreshTrigger,
   BulkSyncPreview,
   BulkSyncResult,
   CommitDetail,
@@ -262,7 +263,7 @@ async function requestRepoStatusRefresh(
     detailScope: "detail",
     includeCommits: scope.includeCommits,
     includeBranches: scope.includeBranches,
-    trigger: options.immediate ? "foreground" : "watch",
+    trigger: options.immediate ? "manual" : "watch",
   });
   if (options.immediate) await waitForWorkspaceTask(taskId);
   return null;
@@ -418,7 +419,7 @@ async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
   try {
     await enqueueManagedRepoLocalRefreshes(
       repos.map((repo) => repo.id),
-      options.automatic ? "startup" : "manualList",
+      options.automatic ? "startup" : "manual",
     );
     return repos;
   } catch (err) {
@@ -427,7 +428,7 @@ async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
   }
 }
 
-async function enqueueManagedRepoLocalRefreshes(repoIds: string[], trigger: string) {
+async function enqueueManagedRepoLocalRefreshes(repoIds: string[], trigger: WorkspaceRepoRefreshTrigger) {
   if (!repoIds.length) return;
   const service = await loadWorkspaceService();
   const submissions = Array.from(new Set(repoIds)).map((repoId) =>

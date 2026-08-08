@@ -1355,6 +1355,13 @@ export type WorkspaceTaskKind =
 
 export type RepoRefreshMode = "local" | "remote";
 export type RepoRefreshDetailScope = "auto" | "summary" | "detail";
+export type WorkspaceRepoRefreshTrigger =
+  | "startup"
+  | "manual"
+  | "activeRepo"
+  | "autoSync"
+  | "watch"
+  | "reconcile";
 
 export interface WorkspaceRepoRefreshRequest {
   repoId: string;
@@ -1364,7 +1371,7 @@ export interface WorkspaceRepoRefreshRequest {
   detailScope?: RepoRefreshDetailScope;
   includeCommits?: boolean;
   includeBranches?: boolean;
-  trigger: string;
+  trigger: WorkspaceRepoRefreshTrigger;
 }
 
 export interface WorkspaceRepoRefreshedEvent {
