@@ -47,6 +47,7 @@ delegate_command!(async repos; fn repo_revert_commit(app: AppHandle, repo_id: St
 delegate_command!(async repos; fn repo_reset_to_commit(app: AppHandle, repo_id: String, hash: String, mode: Option<String>,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_accept_conflict_file(app: AppHandle, repo_id: String, path: String, side: String, stage: bool,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_resolve_conflict_file(app: AppHandle, repo_id: String, path: String, choices: Vec<RepoConflictChoice>, stage: bool,) -> Result<RepoSummary, String>);
+delegate_command!(async repos; fn repo_save_conflict_file(app: AppHandle, repo_id: String, path: String, content: String, expected_content: String,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_mark_file_resolved(app: AppHandle, repo_id: String, path: String,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_abort_conflict_operation(app: AppHandle, repo_id: String,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_continue_conflict_operation(app: AppHandle, repo_id: String,) -> Result<RepoSummary, String>);

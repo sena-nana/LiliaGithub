@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::bulk::repo_dirty_count;
+use crate::workspace::file_browser::MAX_FILE_PREVIEW_BYTES;
 use crate::workspace::github::{
     github_auth_header, normalize_github_repo_input, normalize_optional_string, token_for_binding,
 };
@@ -3550,6 +3551,27 @@ pub async fn repo_resolve_conflict_file(
     .await
 }
 
+pub async fn repo_save_conflict_file(
+    app: AppHandle,
+    repo_id: String,
+    path: String,
+    content: String,
+    expected_content: String,
+) -> Result<RepoSummary, String> {
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "保存冲突文件",
+        move || {
+            let (root, repo_path) = repo_root_and_path_by_id(&app, &repo_id)?;
+            save_conflict_file(&repo_path, &path, &content, &expected_content)?;
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
+    .await
+}
+
 pub async fn repo_mark_file_resolved(
     app: AppHandle,
     repo_id: String,
@@ -4022,6 +4044,119 @@ pub(super) fn safe_repo_file_path(repo_path: &Path, file_path: &str) -> Result<P
         return Err("文件路径必须位于仓库内".to_string());
     }
     Ok(repo_path.join(relative))
+}
+
+pub(super) fn save_conflict_file(
+    repo_path: &Path,
+    file_path: &str,
+    content: &str,
+    expected_content: &str,
+) -> Result<(), String> {
+    if content.len() > MAX_FILE_PREVIEW_BYTES as usize {
+        return Err(format!(
+            "冲突文件超过 {} MiB，无法在应用内保存",
+            MAX_FILE_PREVIEW_BYTES / 1024 / 1024
+        ));
+    }
+    if has_conflict_marker(content) {
+        return Err("文件仍包含冲突 marker，请先完整解决冲突".to_string());
+    }
+
+    let (relative_path, full_path) = validated_conflict_file_path(repo_path, file_path)?;
+    let conflicts = conflict_status_entries(&repo_status_entries(repo_path));
+    if !conflicts
+        .iter()
+        .any(|(_, path)| Path::new(path) == relative_path)
+    {
+        return Err(format!("文件已不在当前冲突列表中：{file_path}"));
+    }
+
+    let metadata = fs::symlink_metadata(&full_path)
+        .map_err(|err| format!("读取冲突文件信息失败：{}（{err}）", full_path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Err("不能在应用内编辑符号链接冲突".to_string());
+    }
+    if !metadata.file_type().is_file() {
+        return Err("只能在应用内编辑普通文件冲突".to_string());
+    }
+    if metadata.len() > MAX_FILE_PREVIEW_BYTES {
+        return Err(format!(
+            "冲突文件超过 {} MiB，无法在应用内保存",
+            MAX_FILE_PREVIEW_BYTES / 1024 / 1024
+        ));
+    }
+
+    let canonical_repo = fs::canonicalize(repo_path)
+        .map_err(|err| format!("解析仓库路径失败：{}（{err}）", repo_path.display()))?;
+    let canonical_file = fs::canonicalize(&full_path)
+        .map_err(|err| format!("解析冲突文件路径失败：{}（{err}）", full_path.display()))?;
+    if !canonical_file.starts_with(&canonical_repo) {
+        return Err("文件路径必须位于仓库内".to_string());
+    }
+
+    let original_bytes = fs::read(&full_path)
+        .map_err(|err| format!("读取冲突文件失败：{}（{err}）", full_path.display()))?;
+    let original_content = std::str::from_utf8(&original_bytes)
+        .map_err(|_| "冲突文件不是 UTF-8，无法在应用内编辑".to_string())?;
+    if original_content != expected_content {
+        return Err("冲突文件已被外部修改，请重新加载后再保存".to_string());
+    }
+
+    if let Err(write_err) = fs::write(&full_path, content.as_bytes()) {
+        return match fs::write(&full_path, &original_bytes) {
+            Ok(()) => Err(format!("写入冲突文件失败：{write_err}；已恢复原内容")),
+            Err(restore_err) => Err(format!(
+                "写入冲突文件失败：{write_err}；恢复原内容也失败：{restore_err}，请重新加载并检查文件"
+            )),
+        };
+    }
+
+    if let Err(stage_err) = git_command(repo_path, &["add", "--", file_path], None) {
+        return match fs::write(&full_path, &original_bytes) {
+            Ok(()) => Err(format!("暂存冲突文件失败：{stage_err}；已恢复原内容")),
+            Err(restore_err) => Err(format!(
+                "暂存冲突文件失败：{stage_err}；恢复原内容也失败：{restore_err}，请重新加载并检查文件"
+            )),
+        };
+    }
+
+    Ok(())
+}
+
+fn validated_conflict_file_path(
+    repo_path: &Path,
+    file_path: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    if file_path.is_empty() {
+        return Err("冲突文件路径不能为空".to_string());
+    }
+    let relative = Path::new(file_path);
+    if relative.is_absolute() {
+        return Err("文件路径必须位于仓库内".to_string());
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err("文件路径必须位于仓库内".to_string());
+        };
+        if name.to_string_lossy().eq_ignore_ascii_case(".git") {
+            return Err("不能编辑 Git 内部文件".to_string());
+        }
+        normalized.push(name);
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err("冲突文件路径不能为空".to_string());
+    }
+
+    let full_path = repo_path.join(&normalized);
+    Ok((normalized, full_path))
+}
+
+fn has_conflict_marker(content: &str) -> bool {
+    content.lines().any(|line| {
+        line.starts_with("<<<<<<<") || line.starts_with("=======") || line.starts_with(">>>>>>>")
+    })
 }
 
 pub(super) fn selected_repo_files(path: &Path, files: Vec<String>) -> Result<Vec<String>, String> {

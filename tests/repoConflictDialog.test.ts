@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import RepoConflictDialog from "../src/components/repo/RepoConflictDialog.vue";
 import type {
   RepoConflictFile,
   RepoConflictHunk,
   RepoConflictState,
+  RepoFilePreview,
 } from "../src/services/workspace";
 
 function conflictHunk(id: string, overrides: Partial<RepoConflictHunk> = {}): RepoConflictHunk {
@@ -40,13 +41,29 @@ function conflictState(overrides: Partial<RepoConflictState> = {}): RepoConflict
   };
 }
 
-function renderDialog(conflicts: RepoConflictState, overrides: { actionRunning?: boolean; error?: string | null } = {}) {
+function textPreview(path: string, content = ""): RepoFilePreview {
+  return {
+    path,
+    name: path.split("/").at(-1) ?? path,
+    previewKind: "text",
+    content,
+    size: new TextEncoder().encode(content).length,
+    truncated: false,
+  };
+}
+
+function renderDialog(conflicts: RepoConflictState, overrides: {
+  actionRunning?: boolean;
+  error?: string | null;
+  loadFileContent?: (path: string) => Promise<RepoFilePreview>;
+} = {}) {
   return render(RepoConflictDialog, {
     props: {
       open: true,
       conflicts,
       actionRunning: overrides.actionRunning ?? false,
       error: overrides.error ?? null,
+      loadFileContent: overrides.loadFileContent ?? ((path) => Promise.resolve(textPreview(path))),
     },
     global: { stubs: { transition: false } },
   });
@@ -132,16 +149,85 @@ describe("RepoConflictDialog", () => {
       ],
     }));
 
-    expect(screen.getByText("该文件无法作为文本读取，请使用整文件操作或在外部处理。")).toBeInTheDocument();
+    expect(screen.getByText("二进制文件不可预览")).toBeInTheDocument();
+    expect(agentTarget("repo.conflicts.mode.edit")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "解决并暂存" })).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "已在外部处理，标记解决" }));
+    await fireEvent.click(screen.getByRole("button", { name: "标记已解决" }));
     expect(view.emitted("markResolved")).toEqual([[binaryPath]]);
 
     await fireEvent.click(agentTarget(fileAgentId(markerlessPath)));
-    expect(screen.getByText("未找到可分段处理的冲突标记，请使用整文件操作或在外部处理。")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "解决并暂存" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "整文件采用 ours" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "整文件采用 theirs" })).toBeEnabled();
+
+    expect(await screen.findByRole("textbox", { name: "冲突文件编辑结果" })).toBeInTheDocument();
+    await fireEvent.click(agentTarget(fileAgentId(binaryPath)));
+    expect(agentTarget("repo.conflicts.mode.diff")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("textbox", { name: "冲突文件编辑结果" })).not.toBeInTheDocument();
+  });
+
+  it("loads a full draft, applies selected hunks, and saves only after all markers are removed", async () => {
+    const path = "src/main.ts";
+    const first = conflictHunk("hunk-1", { oursLines: ["const one = 'ours';"], theirsLines: ["const one = 'theirs';"] });
+    const second = conflictHunk("hunk-2", { oursLines: ["const two = 'ours';"], theirsLines: ["const two = 'theirs';"] });
+    const content = [
+      "<<<<<<< HEAD",
+      ...first.oursLines,
+      "=======",
+      ...first.theirsLines,
+      ">>>>>>> topic",
+      "<<<<<<< HEAD",
+      ...second.oursLines,
+      "=======",
+      ...second.theirsLines,
+      ">>>>>>> topic",
+      "",
+    ].join("\n");
+    const loadFileContent = vi.fn(async () => textPreview(path, content));
+    const view = renderDialog(conflictState({ files: [conflictFile(path, { hunks: [first, second] })] }), { loadFileContent });
+
+    await fireEvent.click(agentTarget(hunkAgentId(path, "hunk-1", "ours")));
+    await fireEvent.click(agentTarget("repo.conflicts.mode.edit"));
+    const editor = await screen.findByRole("textbox", { name: "冲突文件编辑结果" });
+    expect(loadFileContent).toHaveBeenCalledWith(path);
+    expect((editor as HTMLTextAreaElement).value).toContain("const one = 'ours';");
+    expect((editor as HTMLTextAreaElement).value).not.toContain("const one = 'theirs';");
+    expect((editor as HTMLTextAreaElement).value).toContain("<<<<<<< HEAD\nconst two");
+    expect(agentTarget("repo.conflicts.editor.save")).toBeDisabled();
+
+    await fireEvent.update(editor, "const one = 'ours';\nconst two = 'custom';\n");
+    expect(agentTarget("repo.conflicts.mode.diff")).toBeDisabled();
+    await fireEvent.click(agentTarget("repo.conflicts.editor.save"));
+    expect(view.emitted("saveFile")).toEqual([[
+      { path, content: "const one = 'ours';\nconst two = 'custom';\n", expectedContent: content },
+    ]]);
+  });
+
+  it("preserves drafts across files and requires an explicit discard before closing", async () => {
+    const firstPath = "src/first.ts";
+    const secondPath = "src/second.ts";
+    const view = renderDialog(conflictState({ files: [
+      conflictFile(firstPath, { hunks: [] }),
+      conflictFile(secondPath, { hunks: [] }),
+    ] }), {
+      loadFileContent: async (path) => textPreview(path, `content:${path}\n`),
+    });
+
+    const editor = await screen.findByRole("textbox", { name: "冲突文件编辑结果" });
+    await fireEvent.update(editor, "first draft\n");
+    await fireEvent.click(agentTarget("repo.conflicts.editor.reload"));
+    expect(screen.getByRole("button", { name: "确认重新读取" })).toBeEnabled();
+    expect(editor).toHaveValue("first draft\n");
+    await fireEvent.click(agentTarget(fileAgentId(secondPath)));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "冲突文件编辑结果" })).toHaveValue(`content:${secondPath}\n`));
+    await fireEvent.click(agentTarget(fileAgentId(firstPath)));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "冲突文件编辑结果" })).toHaveValue("first draft\n"));
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭冲突处理" }));
+    expect(view.emitted("close")).toBeUndefined();
+    expect(screen.getByRole("button", { name: "放弃并关闭" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "放弃并关闭" }));
+    expect(view.emitted("close")).toEqual([[]]);
   });
 
   it.each([
@@ -168,7 +254,7 @@ describe("RepoConflictDialog", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("暂存冲突文件失败");
     expect(screen.getByRole("button", { name: "关闭冲突处理" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "关闭" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "终止合并" })).toBeDisabled();
     await fireEvent.keyDown(dialog, { key: "Escape" });
     await fireEvent.click(dialog);
@@ -186,7 +272,13 @@ describe("RepoConflictDialog", () => {
     entry.focus();
     const conflicts = conflictState({ files: [conflictFile("src/main.ts")] });
     const view = render(RepoConflictDialog, {
-      props: { open: false, conflicts, actionRunning: false, error: null },
+      props: {
+        open: false,
+        conflicts,
+        actionRunning: false,
+        error: null,
+        loadFileContent: (path) => Promise.resolve(textPreview(path)),
+      },
       global: { stubs: { transition: false } },
     });
 

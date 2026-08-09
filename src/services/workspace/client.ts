@@ -1573,7 +1573,9 @@ function getRepoFilePreview(
   if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef, options);
   const args = { repoId, path };
   const cacheArgs = { ...args, repoRef: repoRef ?? null };
-  return cachedCall("repo_get_file_preview", args, cacheArgs);
+  return options.forceRefresh
+    ? call("repo_get_file_preview", args)
+    : cachedCall("repo_get_file_preview", args, cacheArgs);
 }
 
 function deleteRepoFile(repoId: string, path: string): Promise<RepoSummary> {
@@ -1819,6 +1821,15 @@ function resolveConflictFile(
   stage = true,
 ): Promise<RepoSummary> {
   return call("repo_resolve_conflict_file", { repoId, path, choices, stage });
+}
+
+function saveConflictFile(
+  repoId: string,
+  path: string,
+  content: string,
+  expectedContent: string,
+): Promise<RepoSummary> {
+  return call("repo_save_conflict_file", { repoId, path, content, expectedContent });
 }
 
 function markFileResolved(repoId: string, path: string): Promise<RepoSummary> {
@@ -2210,6 +2221,7 @@ async function waitForLiliaCodeTaskHandoff(
     getRepoConflicts,
     acceptConflictFile,
     resolveConflictFile,
+    saveConflictFile,
     markFileResolved,
     abortConflictOperation,
     continueConflictOperation,
