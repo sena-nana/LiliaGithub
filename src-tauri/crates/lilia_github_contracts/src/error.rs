@@ -83,6 +83,8 @@ impl AppError {
             .to_string();
         let http_status = legacy_http_status(&message);
         let category = match (code.as_str(), http_status) {
+            ("github_network_error", _) => AppErrorCategory::Network,
+            ("github_response_invalid", _) => AppErrorCategory::Unknown,
             ("github_authentication_required", _) | (_, Some(401)) => {
                 AppErrorCategory::Authentication
             }
@@ -220,6 +222,25 @@ mod tests {
         assert_eq!(error.category, AppErrorCategory::Cancelled);
         assert!(!error.retryable);
         assert_eq!(error.message, "已取消选择仓库");
+    }
+
+    #[test]
+    fn github_response_errors_keep_retry_semantics() {
+        let network = AppError::from_legacy(
+            "github_network_error：读取 GitHub 数据失败：读取 GitHub 响应失败，请检查网络或代理后重试"
+                .to_string(),
+        );
+        assert_eq!(network.code, "github_network_error");
+        assert_eq!(network.category, AppErrorCategory::Network);
+        assert!(network.retryable);
+
+        let invalid = AppError::from_legacy(
+            "github_response_invalid：读取 GitHub 数据失败：GitHub 返回的数据格式无效，请稍后重试"
+                .to_string(),
+        );
+        assert_eq!(invalid.code, "github_response_invalid");
+        assert_eq!(invalid.category, AppErrorCategory::Unknown);
+        assert!(!invalid.retryable);
     }
 
     #[test]

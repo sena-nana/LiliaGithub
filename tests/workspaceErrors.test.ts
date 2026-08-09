@@ -63,4 +63,28 @@ describe("workspace command errors", () => {
       category: "cancelled",
     });
   });
+
+  it("preserves GitHub response error recovery semantics across the command boundary", () => {
+    const network = normalizeWorkspaceCommandError({
+      code: "github_network_error",
+      message: "读取 GitHub 响应失败，请检查网络或代理后重试",
+    });
+    expect(network).toMatchObject({
+      code: "github_network_error",
+      category: "network",
+      retryable: true,
+    });
+    expect(network.message).not.toMatch(/request or response body error|error decoding response body/i);
+
+    const invalid = normalizeWorkspaceCommandError({
+      code: "github_response_invalid",
+      message: "GitHub 返回的数据格式无效，请稍后重试",
+    });
+    expect(invalid).toMatchObject({
+      code: "github_response_invalid",
+      category: "unknown",
+      retryable: false,
+    });
+    expect(invalid.message).not.toMatch(/request or response body error|error decoding response body/i);
+  });
 });
