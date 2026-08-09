@@ -7955,13 +7955,23 @@ function fallbackSyncOperationResult(
   conflicts: RepoConflictState = { operation: "none", files: [], allResolved: true },
 ): RepoSyncOperationResult {
   const status = fallbackOperationStatus(steps, conflicts);
-  const message = status === "success"
+  const fallbackMessage = status === "success"
     ? "完成"
     : status === "partial"
       ? "部分远端操作失败"
       : status === "conflicts"
         ? "合并产生冲突，请处理后继续"
         : "远端操作失败";
+  const failures = status === "error" || status === "partial"
+    ? steps.filter((step) => step.status === "error")
+    : [];
+  const firstFailure = failures[0];
+  const failureMessage = firstFailure
+    ? `${firstFailure.remote.trim() ? `${firstFailure.remote}：` : ""}${firstFailure.message}`
+    : null;
+  const message = failureMessage && failures.length > 1
+    ? `${failureMessage}（另有 ${failures.length - 1} 项失败）`
+    : failureMessage ?? fallbackMessage;
   return { status, message, summary: cloneRepoSummary(summary), conflicts, steps };
 }
 

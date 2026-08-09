@@ -51,7 +51,7 @@ describe("repo remote sync fallback", () => {
     expect(saved.remotes.map((remote) => remote.name)).toEqual(["origin", "mirror"]);
   });
 
-  it("returns partial push results and can retry only the failed remote", async () => {
+  it("returns actionable multi-remote push results and retries only the failed remote", async () => {
     const repo = configureMultiRemoteRepo();
     await setRepoRemoteSyncPolicy(repo.id, {
       primaryRemote: "origin",
@@ -64,6 +64,7 @@ describe("repo remote sync fallback", () => {
 
     const partial = await pushRepo(repo.id);
     expect(partial.status).toBe("partial");
+    expect(partial.message).toBe("mirror：mirror unavailable");
     expect(partial.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ remote: "origin", operation: "push", status: "success" }),
       expect.objectContaining({ remote: "mirror", operation: "push", status: "error" }),
@@ -72,7 +73,21 @@ describe("repo remote sync fallback", () => {
     setFallbackRemoteOperationErrorOverrideForTests(null);
     const retried = await pushRepo(repo.id, ["mirror"]);
     expect(retried.status).toBe("success");
+    expect(retried.message).toBe("完成");
     expect(retried.steps.map((step) => step.remote)).toEqual(["mirror"]);
+
+    setFallbackRemoteOperationErrorOverrideForTests((_repoId, remote, operation) =>
+      operation === "push"
+        ? remote === "origin"
+          ? "failed to push some refs: non-fast-forward"
+          : "permission denied"
+        : null
+    );
+
+    const failed = await pushRepo(repo.id);
+    expect(failed.status).toBe("error");
+    expect(failed.message).toBe("origin：failed to push some refs: non-fast-forward（另有 1 项失败）");
+    expect(failed.steps.filter((step) => step.status === "error")).toHaveLength(2);
   });
 
   it("does not modify local sync state when any configured fetch fails", async () => {
