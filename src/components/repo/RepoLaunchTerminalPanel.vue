@@ -113,8 +113,8 @@ async function scrollTerminalToEnd(force = false) {
       data-agent-id="repo.launch.terminal"
       @scroll="updateTerminalFollowState"
     >
-      <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
-      <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
+      <div v-if="launchError" class="project-terminal__line project-terminal__line--error is-selectable">{{ launchError }}</div>
+      <pre v-if="launchLogs.length" class="project-terminal__output is-selectable"><code v-html="terminalHtml"></code></pre>
       <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
     </div>
   </section>
@@ -170,6 +170,11 @@ async function scrollTerminalToEnd(force = false) {
 
 .project-terminal__output code {
   font: inherit;
+}
+
+.project-terminal__output :deep(*) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 :deep(.launch-log) {

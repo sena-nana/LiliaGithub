@@ -577,7 +577,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article ref="articleEl" class="readme-render" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
+  <article ref="articleEl" class="readme-render is-selectable" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
   <Teleport to="body">
     <div
       v-if="linkToolbar"
@@ -601,6 +601,11 @@ onBeforeUnmount(() => {
   min-width: 0;
   color: var(--text);
   line-height: 1.65;
+}
+
+.readme-render :deep(*) {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .readme-render :deep(h1),

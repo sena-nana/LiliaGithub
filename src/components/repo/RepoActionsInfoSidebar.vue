@@ -382,7 +382,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                 :images="{}"
               />
               <img v-else-if="artifactPreview?.previewKind === 'image' && artifactPreview.dataUrl" :src="artifactPreview.dataUrl" :alt="artifactPreview.name" />
-              <pre v-else-if="artifactPreview?.previewKind === 'text'">{{ artifactPreview.content }}</pre>
+              <pre v-else-if="artifactPreview?.previewKind === 'text'" class="is-selectable">{{ artifactPreview.content }}</pre>
               <p v-else-if="artifactPreview?.previewKind === 'tooLarge'" class="muted actions-empty">文件超过 1 MB，已跳过内置预览。</p>
               <p v-else-if="artifactPreview" class="muted actions-empty">二进制文件不可预览。</p>
               <p v-else class="muted actions-empty">选择 artifact 文件预览内容。</p>

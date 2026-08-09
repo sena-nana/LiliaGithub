@@ -164,7 +164,7 @@ async function openChangedFile(file: PullRequestChangedFile) {
         <div v-else-if="mode === 'unified'" class="unified-diff" role="table" :aria-label="`${file.filename} unified diff`">
           <div v-for="row in rows(file)" :key="row.key" class="unified-row" :class="`is-${row.kind}`" role="row">
             <template v-if="row.kind === 'hunk' || row.kind === 'meta'">
-              <code class="unified-row__hunk">{{ row.content }}</code>
+              <code class="unified-row__hunk is-selectable">{{ row.content }}</code>
             </template>
             <template v-else>
               <button type="button" class="diff-comment" :disabled="busy" :aria-label="`评论 ${file.filename} 第 ${row.newLine ?? row.oldLine} 行`" :data-agent-id="unifiedCommentAgentId(file, row)" @click="openUnifiedComment(file, row)">
@@ -172,24 +172,24 @@ async function openChangedFile(file: PullRequestChangedFile) {
               </button>
               <span class="diff-line">{{ row.oldLine ?? '' }}</span>
               <span class="diff-line">{{ row.newLine ?? '' }}</span>
-              <code><span class="diff-prefix">{{ row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '-' : ' ' }}</span>{{ row.content }}</code>
+              <code class="is-selectable"><span class="diff-prefix is-selectable">{{ row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '-' : ' ' }}</span>{{ row.content }}</code>
             </template>
           </div>
         </div>
 
         <div v-else class="split-diff" role="table" :aria-label="`${file.filename} split diff`">
           <div v-for="row in toSplitDiffRows(rows(file))" :key="row.key" class="split-row" role="row">
-            <code v-if="row.hunk != null" class="split-row__hunk">{{ row.hunk }}</code>
+            <code v-if="row.hunk != null" class="split-row__hunk is-selectable">{{ row.hunk }}</code>
             <template v-else>
               <div class="split-cell" :class="row.left ? `is-${row.left.kind}` : ''">
                 <button v-if="row.left && row.left.kind !== 'empty'" type="button" class="diff-comment" :disabled="busy" :data-agent-id="splitCommentAgentId(file, row.left)" @click="openSplitComment(file, row.left)"><MessageSquare :size="12" aria-hidden="true" /></button>
                 <span class="diff-line">{{ row.left?.line ?? '' }}</span>
-                <code>{{ row.left?.content ?? '' }}</code>
+                <code class="is-selectable">{{ row.left?.content ?? '' }}</code>
               </div>
               <div class="split-cell" :class="row.right ? `is-${row.right.kind}` : ''">
                 <button v-if="row.right && row.right.kind !== 'empty'" type="button" class="diff-comment" :disabled="busy" :data-agent-id="splitCommentAgentId(file, row.right)" @click="openSplitComment(file, row.right)"><MessageSquare :size="12" aria-hidden="true" /></button>
                 <span class="diff-line">{{ row.right?.line ?? '' }}</span>
-                <code>{{ row.right?.content ?? '' }}</code>
+                <code class="is-selectable">{{ row.right?.content ?? '' }}</code>
               </div>
             </template>
           </div>

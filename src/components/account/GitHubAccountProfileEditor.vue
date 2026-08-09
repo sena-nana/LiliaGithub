@@ -343,7 +343,7 @@ watch(
           </div>
           <div v-if="workspace.deviceFlow?.value" class="profile-editor__device-flow">
             <span>设备码</span>
-            <code data-agent-id="profile.authorization.code">{{ workspace.deviceFlow.value.userCode }}</code>
+            <code class="is-selectable" data-agent-id="profile.authorization.code">{{ workspace.deviceFlow.value.userCode }}</code>
             <small v-if="workspace.authRemainingText?.value">剩余 {{ workspace.authRemainingText.value }}</small>
           </div>
           <UiButton

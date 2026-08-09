@@ -254,7 +254,7 @@ async function rerunJob(job: GitHubWorkflowJob) {
       <div v-if="selectedJobLog" class="actions-log-sections">
         <div v-if="selectedJobErrorExcerpt" class="actions-error-excerpt">
           <strong>错误摘要</strong>
-          <pre>{{ selectedJobErrorExcerpt }}</pre>
+          <pre class="is-selectable">{{ selectedJobErrorExcerpt }}</pre>
         </div>
         <p
           v-else-if="failureSummary.failedJobs.some((job) => job.id === selectedJob?.id)"
@@ -269,7 +269,7 @@ async function rerunJob(job: GitHubWorkflowJob) {
         >
           <strong>{{ section.matched ? section.step.name : "完整 job 日志" }}</strong>
           <small v-if="!section.matched">日志未按 step 分组。</small>
-          <pre>{{ section.content || "该 step 没有日志输出。" }}</pre>
+          <pre class="is-selectable">{{ section.content || "该 step 没有日志输出。" }}</pre>
         </article>
       </div>
     </article>
