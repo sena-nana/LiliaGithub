@@ -950,6 +950,13 @@ const workspaceMockHandlers = {
     const stage = commandArgs.stage;
     return (await workspaceFallbackModule()).resolveConflictFile(repoId, path, choices, stage);
   },
+  repo_save_conflict_file: async (commandArgs) => {
+    const repoId = commandArgs.repoId;
+    const path = commandArgs.path;
+    const content = commandArgs.content;
+    const expectedContent = commandArgs.expectedContent;
+    return (await workspaceFallbackModule()).saveConflictFile(repoId, path, content, expectedContent);
+  },
   repo_mark_file_resolved: async (commandArgs) => {
     const repoId = commandArgs.repoId;
     const path = commandArgs.path;

@@ -562,6 +562,10 @@ export interface WorkspaceCommandContracts {
     RepoFileArg & { choices: RepoConflictChoice[]; stage: boolean },
     RepoSummary
   >;
+  repo_save_conflict_file: CommandContract<
+    RepoFileArg & { content: string; expectedContent: string },
+    RepoSummary
+  >;
   repo_mark_file_resolved: CommandContract<RepoFileArg, RepoSummary>;
   repo_abort_conflict_operation: CommandContract<RepoArg, RepoSummary>;
   repo_continue_conflict_operation: CommandContract<RepoArg, RepoSummary>;

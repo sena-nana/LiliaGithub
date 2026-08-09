@@ -105,7 +105,9 @@ const {
   openConflictDialog,
   closeConflictDialog,
   openConflictDialogFromSyncResult,
+  loadConflictFileContent,
   resolveConflictFile,
+  saveConflictFile,
   acceptConflictFile,
   markConflictResolved,
   continueConflictOperation,
@@ -382,8 +384,10 @@ async function refreshCurrentPage() {
       :conflicts="conflicts"
       :action-running="actionRunning"
       :error="actionError"
+      :load-file-content="loadConflictFileContent"
       @close="closeConflictDialog"
       @resolve-file="resolveConflictFile"
+      @save-file="saveConflictFile"
       @accept-file="acceptConflictFile"
       @mark-resolved="markConflictResolved"
       @continue="continueConflictOperation"

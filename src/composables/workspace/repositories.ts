@@ -1343,6 +1343,19 @@ async function resolveConflictFile(
   await applyRepoMutation(repoId, () => service.resolveConflictFile(repoId, path, choices, stage));
 }
 
+async function saveConflictFile(
+  repoId: string,
+  path: string,
+  content: string,
+  expectedContent: string,
+) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(
+    repoId,
+    () => service.saveConflictFile(repoId, path, content, expectedContent),
+  );
+}
+
 async function markConflictFileResolved(repoId: string, path: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.markFileResolved(repoId, path));
@@ -1418,7 +1431,7 @@ return {
   getRemoteSyncConfig, setRemoteSyncPolicy, useDefaultTokenAuthForRepo, checkout,
   createBranch, renameBranch, deleteBranch, setUpstream, listStashes, saveStash,
   applyStash, popStash, dropStash, listRemotes, cherryPickCommit, revertCommit,
-  resetToCommit, acceptConflictFile, resolveConflictFile, markConflictFileResolved,
+  resetToCommit, acceptConflictFile, resolveConflictFile, saveConflictFile, markConflictFileResolved,
   abortConflictOperation, continueConflictOperation, getRepoCommitDetail,
   getRepoStashDetail, getGitHubRepoManagement, listGitHubBranches,
   listGitHubRepoCommits, deleteGitHubBranch,

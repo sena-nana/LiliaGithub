@@ -193,6 +193,7 @@ export const WORKSPACE_COMMAND_MANIFEST = {
   "repo_reset_to_commit": { command: "repo_reset_to_commit", domain: "repo" },
   "repo_accept_conflict_file": { command: "repo_accept_conflict_file", domain: "repo" },
   "repo_resolve_conflict_file": { command: "repo_resolve_conflict_file", domain: "repo" },
+  "repo_save_conflict_file": { command: "repo_save_conflict_file", domain: "repo" },
   "repo_mark_file_resolved": { command: "repo_mark_file_resolved", domain: "repo" },
   "repo_abort_conflict_operation": { command: "repo_abort_conflict_operation", domain: "repo" },
   "repo_continue_conflict_operation": { command: "repo_continue_conflict_operation", domain: "repo" },

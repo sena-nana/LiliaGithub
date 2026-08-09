@@ -70,7 +70,7 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
 <template>
   <div v-if="mode === 'hunks'" class="diff-code diff-code--hunks is-selectable">
     <template v-for="hunk in hunks" :key="`${filePath}:${hunk.header}`">
-      <div class="diff-code__hunk" role="row">
+      <div v-if="hunk.header" class="diff-code__hunk" role="row">
         <span class="diff-code__hunk-header">{{ hunk.header }}</span>
       </div>
       <div

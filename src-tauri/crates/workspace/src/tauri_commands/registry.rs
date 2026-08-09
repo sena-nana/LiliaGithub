@@ -231,6 +231,7 @@ workspace_command_registry! {
         repos::repo_reset_to_commit,
         repos::repo_accept_conflict_file,
         repos::repo_resolve_conflict_file,
+        repos::repo_save_conflict_file,
         repos::repo_mark_file_resolved,
         repos::repo_abort_conflict_operation,
         repos::repo_continue_conflict_operation
@@ -266,7 +267,7 @@ mod tests {
             .map(|entry| entry.command)
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(commands.len(), 203);
+        assert_eq!(commands.len(), 204);
         assert_eq!(unique.len(), commands.len());
         assert!(commands.iter().all(|entry| {
             matches!(

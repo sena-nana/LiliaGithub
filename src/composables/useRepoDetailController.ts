@@ -17,6 +17,7 @@ import type {
   RepoChange,
   RepoConflictChoice,
   RepoConflictState,
+  RepoFilePreview,
   RepoRemoteSyncConfig,
   RepoRemoteSyncPolicy,
   RepoSummary,
@@ -1012,6 +1013,31 @@ export function useRepoDetailController() {
     );
   }
 
+  async function loadConflictFileContent(path: string): Promise<RepoFilePreview> {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) throw new Error("未选择仓库");
+    const service = await workspace.github.service();
+    const preview = await service.getRepoFilePreview(
+      targetRepoId,
+      path,
+      undefined,
+      { forceRefresh: true },
+    );
+    if (repoId.value !== targetRepoId) throw new Error("仓库已切换，请重新打开冲突处理");
+    return preview;
+  }
+
+  async function saveConflictFile(payload: { path: string; content: string; expectedContent: string }) {
+    await runAction(
+      () => workspace.saveConflictFile(
+        repoId.value,
+        payload.path,
+        payload.content,
+        payload.expectedContent,
+      ),
+    );
+  }
+
   async function acceptConflictFile(payload: { path: string; side: RepoConflictChoice["side"] }) {
     await runAction(
       () => workspace.acceptConflictFile(repoId.value, payload.path, payload.side, true),
@@ -1410,7 +1436,9 @@ export function useRepoDetailController() {
       openConflictDialog,
       closeConflictDialog,
       openConflictDialogFromSyncResult,
+      loadConflictFileContent,
       resolveConflictFile,
+      saveConflictFile,
       acceptConflictFile,
       markConflictResolved,
       continueConflictOperation,

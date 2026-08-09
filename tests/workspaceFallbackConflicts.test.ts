@@ -8,6 +8,7 @@ const {
   getRepoConflicts,
   markFileResolved,
   resolveConflictFile,
+  saveConflictFile,
 } = createWorkspaceClient(createDefaultWorkspaceTransport());
 import { conflictState, repoSummary } from "./fixtures/workspace";
 
@@ -109,6 +110,47 @@ describe("workspace fallback conflicts", () => {
       operation: "none",
       files: [],
       allResolved: true,
+    });
+  });
+
+  it("保存完整冲突结果时校验原内容并同步预览与暂存状态", async () => {
+    const repoId = "LiliaGithub";
+    const path = "src/merged.ts";
+    const original = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/main\n";
+    workspaceFallback.setFallbackRepoOverridesForTests({
+      [repoId]: repoSummary(repoId, { conflictCount: 1 }),
+    });
+    workspaceFallback.setFallbackConflictOverrideForTests((candidate) => candidate === repoId
+      ? conflictState({ operation: "merge", files: [conflictFile(path, "hunk-1")], allResolved: false })
+      : null);
+    workspaceFallback.setFallbackRepoFilePreviewsForTests({
+      [repoId]: {
+        [path]: {
+          path,
+          name: "merged.ts",
+          previewKind: "text",
+          content: original,
+          dataUrl: null,
+          images: {},
+          size: original.length,
+          mimeType: "text/typescript",
+          truncated: false,
+        },
+      },
+    });
+
+    await expect(saveConflictFile(repoId, path, "merged\n", "stale\n"))
+      .rejects.toThrow("文件已在外部变化");
+    await expect(saveConflictFile(repoId, path, original, original))
+      .rejects.toThrow("仍包含未解决的冲突标记");
+
+    await expect(saveConflictFile(repoId, path, "merged\n", original)).resolves.toMatchObject({
+      conflictCount: 0,
+      stagedCount: 1,
+    });
+    await expect(workspaceFallback.getRepoFilePreview(repoId, path)).resolves.toMatchObject({
+      content: "merged\n",
+      size: 7,
     });
   });
 

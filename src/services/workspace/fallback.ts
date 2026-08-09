@@ -2197,6 +2197,24 @@ function createFallbackGitHubRepoFiles(): Record<string, Record<string, RepoFile
   );
 }
 
+const FALLBACK_CONFLICT_EDITOR_CONTENT = [
+  "const draft = message.value;",
+  "<<<<<<< HEAD",
+  "const mode = 'local';",
+  "await sendLocalMessage(draft);",
+  "=======",
+  "const mode = 'remote';",
+  "await sendRemoteMessage(draft);",
+  ">>>>>>> origin/main",
+  "return mode;",
+  "<<<<<<< HEAD",
+  "return retryOriginalContext(event);",
+  "=======",
+  "return retryLatestDraft(event);",
+  ">>>>>>> origin/main",
+  "",
+].join("\n");
+
 function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
   return {
     LiliaGithub: {
@@ -2282,6 +2300,15 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
         images: {},
         size: 32,
         mimeType: "text/markdown",
+        truncated: false,
+      },
+      "src/pages/TaskDetail.vue": {
+        path: "src/pages/TaskDetail.vue",
+        name: "TaskDetail.vue",
+        previewKind: "text",
+        content: FALLBACK_CONFLICT_EDITOR_CONTENT,
+        size: new TextEncoder().encode(FALLBACK_CONFLICT_EDITOR_CONTENT).byteLength,
+        mimeType: "text/plain",
         truncated: false,
       },
     },
@@ -8530,6 +8557,37 @@ export function resolveConflictFile(
   return call("repo_resolve_conflict_file", { repoId, path, choices, stage }, () =>
     resolveFallbackConflictFile(repoId, path, stage),
   );
+}
+
+export function saveConflictFile(
+  repoId: string,
+  path: string,
+  content: string,
+  expectedContent: string,
+): Promise<RepoSummary> {
+  return call("repo_save_conflict_file", { repoId, path, content, expectedContent }, () => {
+    const conflicts = fallbackConflictState(repoId);
+    const conflict = conflicts.files.find((file) => file.path === path);
+    if (!conflict) throw new Error(`未找到冲突文件：${path}`);
+    const preview = fallbackRepoFilePreviews[repoId]?.[path];
+    if (!preview || (preview.previewKind !== "text" && preview.previewKind !== "markdown") || preview.content == null) {
+      throw new Error(`冲突文件不可作为文本编辑：${path}`);
+    }
+    if (preview.content !== expectedContent) {
+      throw new Error("文件已在外部变化，请重新加载后再保存");
+    }
+    const size = new TextEncoder().encode(content).byteLength;
+    if (size > 1024 * 1024) throw new Error("冲突文件超过 1 MiB，无法在应用内保存");
+    if (/^(?:<<<<<<<|=======|>>>>>>>)/m.test(content)) {
+      throw new Error("合并结果仍包含未解决的冲突标记");
+    }
+    fallbackRepoFilePreviews[repoId][path] = {
+      ...preview,
+      content,
+      size,
+    };
+    return resolveFallbackConflictFile(repoId, path, true);
+  });
 }
 
 export function markFileResolved(repoId: string, path: string): Promise<RepoSummary> {

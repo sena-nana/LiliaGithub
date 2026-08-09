@@ -109,6 +109,7 @@ const service = {
   deleteBranch: vi.fn(),
   acceptConflictFile: vi.fn(),
   resolveConflictFile: vi.fn(),
+  saveConflictFile: vi.fn(),
   markFileResolved: vi.fn(),
   abortConflictOperation: vi.fn(),
   continueConflictOperation: vi.fn(),
@@ -140,6 +141,7 @@ const {
   requestRepoStatusRefresh,
   refreshWorkspaceTasks,
   resolveConflictFile,
+  saveConflictFile,
   resetRepositoryRuntimeForTests,
   discardChanges,
   stage,
@@ -1693,6 +1695,7 @@ describe("workspace incremental refresh", () => {
     });
     service.acceptConflictFile.mockResolvedValue(updated);
     service.resolveConflictFile.mockResolvedValue(updated);
+    service.saveConflictFile.mockResolvedValue(updated);
     service.markFileResolved.mockResolvedValue(updated);
     service.abortConflictOperation.mockResolvedValue(updated);
     service.continueConflictOperation.mockResolvedValue(updated);
@@ -1700,13 +1703,14 @@ describe("workspace incremental refresh", () => {
     await mergePull(initial.id);
     await acceptConflictFile(initial.id, "src/main.ts", "ours", true);
     await resolveConflictFile(initial.id, "src/main.ts", [{ hunkId: "hunk-1", side: "ours" }], true);
+    await saveConflictFile(initial.id, "src/main.ts", "merged\n", "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main\n");
     await markConflictFileResolved(initial.id, "src/main.ts");
     await continueConflictOperation(initial.id);
     await abortConflictOperation(initial.id);
 
     expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoDetail).not.toHaveBeenCalled();
-    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(6);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(7);
     expect(state.repos).toEqual([updated]);
   });
 });

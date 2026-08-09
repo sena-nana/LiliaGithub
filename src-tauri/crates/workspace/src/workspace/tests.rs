@@ -62,14 +62,14 @@ use super::repos::{
     managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
     normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
     parse_status_snapshot, plan_workspace_clone, prepare_pull_local_changes,
-    remove_created_empty_directories, rename_branch_at, repo_branches, repo_changes, repo_has_head,
-    repo_head_language_stats, repo_history, repo_id, repo_status_entries, resolve_conflict_content,
-    resolve_remote_sync_config, resolve_repo_worktree, restore_pull_local_changes,
-    run_configured_pull_with_config, run_multi_remote_push, sanitize_clone_path_segment,
-    selected_repo_files, should_retry_clone_with_system_git, should_skip_language_path,
-    status_pair, summarize_repo, summarize_workspace_repo, sync_result,
-    upsert_workspace_repo_binding, validate_clone_directory_name, CloneTargetDisposition,
-    RepoStatusEntry,
+    remove_created_empty_directories, rename_branch_at, repo_branches, repo_changes,
+    repo_conflicts, repo_has_head, repo_head_language_stats, repo_history, repo_id,
+    repo_status_entries, resolve_conflict_content, resolve_remote_sync_config,
+    resolve_repo_worktree, restore_pull_local_changes, run_configured_pull_with_config,
+    run_multi_remote_push, sanitize_clone_path_segment, save_conflict_file, selected_repo_files,
+    should_retry_clone_with_system_git, should_skip_language_path, status_pair, summarize_repo,
+    summarize_workspace_repo, sync_result, upsert_workspace_repo_binding,
+    validate_clone_directory_name, CloneTargetDisposition, RepoStatusEntry,
 };
 #[cfg(target_os = "windows")]
 use super::repos::{validate_clone_target_length, MAX_PORTABLE_CLONE_TARGET_UTF16};
@@ -389,6 +389,36 @@ fn init_git_repo(path: &Path) {
     run_git(path, &["init"]);
     run_git(path, &["config", "user.email", "test@example.com"]);
     run_git(path, &["config", "user.name", "Test User"]);
+}
+
+fn init_merge_conflict_repo(name: &str) -> PathBuf {
+    let repo = temp_dir(name);
+    init_git_repo(&repo);
+    fs::write(repo.join("one.txt"), "base one\n").unwrap();
+    fs::write(repo.join("two.txt"), "base two\n").unwrap();
+    fs::write(repo.join("safe.txt"), "unchanged\n").unwrap();
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-m", "base"]);
+    run_git(&repo, &["branch", "-M", "main"]);
+
+    run_git(&repo, &["checkout", "-b", "feature"]);
+    fs::write(repo.join("one.txt"), "feature one\n").unwrap();
+    fs::write(repo.join("two.txt"), "feature two\n").unwrap();
+    run_git(&repo, &["commit", "-am", "feature"]);
+
+    run_git(&repo, &["checkout", "main"]);
+    fs::write(repo.join("one.txt"), "main one\n").unwrap();
+    fs::write(repo.join("two.txt"), "main two\n").unwrap();
+    run_git(&repo, &["commit", "-am", "main"]);
+
+    let output = Command::new("git")
+        .args(["merge", "--no-ff", "feature"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "merge should create conflicts");
+    assert_eq!(repo_conflicts(&repo).files.len(), 2);
+    repo
 }
 
 #[test]
@@ -3418,6 +3448,126 @@ fn resolves_conflict_content_from_hunk_choices() {
     assert!(!resolved.contains("<<<<<<<"));
     assert!(!resolved.contains("======="));
     assert!(!resolved.contains(">>>>>>>"));
+}
+
+#[test]
+fn saves_and_stages_conflict_files_before_completing_merge() {
+    let repo = init_merge_conflict_repo("save-conflict-merge");
+    let one_original = fs::read_to_string(repo.join("one.txt")).unwrap();
+    let two_original = fs::read_to_string(repo.join("two.txt")).unwrap();
+
+    save_conflict_file(&repo, "one.txt", "custom one\n", &one_original).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(repo.join("one.txt")).unwrap(),
+        "custom one\n"
+    );
+    assert!(git_stdout(&repo, &["ls-files", "-u", "--", "one.txt"]).is_empty());
+    assert!(!git_stdout(&repo, &["ls-files", "-u", "--", "two.txt"]).is_empty());
+    assert_eq!(repo_conflicts(&repo).files.len(), 1);
+
+    save_conflict_file(&repo, "two.txt", "custom two\n", &two_original).unwrap();
+    assert!(repo_conflicts(&repo).files.is_empty());
+    run_git(&repo, &["commit", "--no-edit"]);
+
+    assert_eq!(
+        git_stdout(&repo, &["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split_whitespace()
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn rejects_stale_unsafe_non_text_and_unresolved_conflict_file_edits() {
+    let repo = init_merge_conflict_repo("save-conflict-rejections");
+    let original = fs::read_to_string(repo.join("one.txt")).unwrap();
+
+    let stale = save_conflict_file(&repo, "one.txt", "resolved\n", "stale\n").unwrap_err();
+    assert!(stale.contains("外部修改"));
+    assert_eq!(fs::read_to_string(repo.join("one.txt")).unwrap(), original);
+
+    assert!(
+        save_conflict_file(&repo, "../one.txt", "resolved\n", &original)
+            .unwrap_err()
+            .contains("仓库内")
+    );
+    assert!(
+        save_conflict_file(&repo, ".git/MERGE_HEAD", "resolved\n", "")
+            .unwrap_err()
+            .contains("Git 内部文件")
+    );
+    assert!(
+        save_conflict_file(&repo, "safe.txt", "resolved\n", "unchanged\n")
+            .unwrap_err()
+            .contains("冲突列表")
+    );
+
+    for unresolved in [
+        "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n",
+        "resolved\n=======\n",
+    ] {
+        assert!(save_conflict_file(&repo, "one.txt", unresolved, &original)
+            .unwrap_err()
+            .contains("冲突 marker"));
+    }
+
+    fs::write(repo.join("one.txt"), [0xff, 0xfe, 0xfd]).unwrap();
+    assert!(save_conflict_file(&repo, "one.txt", "resolved\n", "")
+        .unwrap_err()
+        .contains("不是 UTF-8"));
+
+    let large = vec![b'x'; MAX_FILE_PREVIEW_BYTES as usize + 1];
+    fs::write(repo.join("one.txt"), large).unwrap();
+    assert!(save_conflict_file(&repo, "one.txt", "resolved\n", "")
+        .unwrap_err()
+        .contains("超过 1 MiB"));
+}
+
+#[test]
+fn restores_conflict_file_content_when_staging_fails() {
+    let repo = init_merge_conflict_repo("save-conflict-stage-rollback");
+    let original = fs::read_to_string(repo.join("one.txt")).unwrap();
+    let index_lock = repo.join(".git").join("index.lock");
+    fs::write(&index_lock, "locked").unwrap();
+
+    let error = save_conflict_file(&repo, "one.txt", "resolved\n", &original).unwrap_err();
+
+    assert!(error.contains("暂存冲突文件失败"));
+    assert!(error.contains("已恢复原内容"));
+    assert_eq!(fs::read_to_string(repo.join("one.txt")).unwrap(), original);
+    fs::remove_file(index_lock).unwrap();
+    assert!(!git_stdout(&repo, &["ls-files", "-u", "--", "one.txt"]).is_empty());
+}
+
+#[test]
+fn rejects_symlink_conflict_file() {
+    let repo = init_merge_conflict_repo("save-conflict-symlink");
+    let outside = repo.parent().unwrap().join(format!(
+        "lilia-github-save-conflict-symlink-target-{}",
+        now_millis()
+    ));
+    fs::write(&outside, "outside\n").unwrap();
+    fs::remove_file(repo.join("one.txt")).unwrap();
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, repo.join("one.txt")).unwrap();
+    #[cfg(windows)]
+    if let Err(err) = std::os::windows::fs::symlink_file(&outside, repo.join("one.txt")) {
+        if err.kind() == std::io::ErrorKind::PermissionDenied || err.raw_os_error() == Some(1314) {
+            fs::remove_file(outside).unwrap();
+            return;
+        }
+        panic!("create symlink failed: {err}");
+    }
+
+    assert!(
+        save_conflict_file(&repo, "one.txt", "resolved\n", "outside\n")
+            .unwrap_err()
+            .contains("符号链接")
+    );
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "outside\n");
+    fs::remove_file(outside).unwrap();
 }
 
 #[test]
