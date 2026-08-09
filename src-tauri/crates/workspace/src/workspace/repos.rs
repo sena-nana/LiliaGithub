@@ -3874,8 +3874,7 @@ pub(super) fn conflict_operation(path: &Path) -> RepoConflictOperation {
         RepoConflictOperation::Merge
     } else if git_state_file_exists(path, "CHERRY_PICK_HEAD") {
         RepoConflictOperation::CherryPick
-    } else if git_state_file_exists(path, "REBASE_HEAD")
-        || git_state_file_exists(path, "rebase-merge")
+    } else if git_state_file_exists(path, "rebase-merge")
         || git_state_file_exists(path, "rebase-apply")
     {
         RepoConflictOperation::Rebase
@@ -5382,6 +5381,30 @@ fn operation_status(steps: &[RepoRemoteOperationStep], conflicts: bool) -> Strin
     .to_string()
 }
 
+fn sync_failure_message(
+    status: &str,
+    steps: &[RepoRemoteOperationStep],
+    fallback: String,
+) -> String {
+    if !matches!(status, "error" | "partial") {
+        return fallback;
+    }
+    let mut failures = steps.iter().filter(|step| step.status == "error");
+    let Some(first) = failures.next() else {
+        return fallback;
+    };
+    let mut message = if first.remote.trim().is_empty() {
+        first.message.clone()
+    } else {
+        format!("{}：{}", first.remote, first.message)
+    };
+    let remaining = failures.count();
+    if remaining > 0 {
+        message.push_str(&format!("（另有 {remaining} 项失败）"));
+    }
+    message
+}
+
 pub(super) fn sync_result(
     root: &Path,
     path: &Path,
@@ -5389,9 +5412,11 @@ pub(super) fn sync_result(
     message: impl Into<String>,
 ) -> RepoSyncOperationResult {
     let conflicts = repo_conflicts(path);
+    let status = operation_status(&steps, !conflicts.files.is_empty());
+    let message = sync_failure_message(&status, &steps, message.into());
     RepoSyncOperationResult {
-        status: operation_status(&steps, !conflicts.files.is_empty()),
-        message: message.into(),
+        status,
+        message,
         summary: summarize_repo(root, path),
         conflicts,
         steps,

@@ -97,10 +97,10 @@ use lilia_github_contracts::workspace::{
     GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest,
     LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
     RepoConflictChoice, RepoConflictChoiceSide, RepoConflictOperation, RepoPullLocalChangesMode,
-    RepoRemoteBranchState, RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree,
-    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneTarget,
-    WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding, WorkspaceSettings,
-    WorkspaceStartupCache,
+    RepoRemoteBranchState, RepoRemoteOperationStep, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
+    RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
+    WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding,
+    WorkspaceSettings, WorkspaceStartupCache,
 };
 use lilia_github_github::{GitHubIssueCacheQuery, GitHubPullRequestCacheQuery};
 use std::collections::{HashMap, HashSet};
@@ -813,6 +813,8 @@ fn multi_remote_push_continues_after_non_fast_forward_failure() {
     let result = sync_result(&root, &repo, steps, "push");
 
     assert_eq!(result.status, "partial");
+    assert!(result.message.starts_with("primary："));
+    assert!(result.message.contains("failed to push some refs"));
     assert!(result
         .steps
         .iter()
@@ -3611,7 +3613,7 @@ fn rejects_missing_conflict_operations() {
 }
 
 #[test]
-fn repo_summary_exposes_active_conflict_operation_without_conflict_files() {
+fn repo_summary_exposes_only_active_conflict_operations_without_conflict_files() {
     let root = temp_dir("summary-conflict-operation");
     let repo = root.join("repo");
     init_git_repo(&repo);
@@ -3630,12 +3632,64 @@ fn repo_summary_exposes_active_conflict_operation_without_conflict_files() {
         fs::remove_file(repo.join(".git").join(marker)).unwrap();
     }
 
-    fs::create_dir_all(repo.join(".git").join("rebase-merge")).unwrap();
-    assert_eq!(conflict_operation(&repo), RepoConflictOperation::Rebase);
+    fs::write(repo.join(".git").join("REBASE_HEAD"), format!("{head}\n")).unwrap();
+    assert_eq!(conflict_operation(&repo), RepoConflictOperation::None);
     assert_eq!(
         summarize_repo(&root, &repo).conflict_operation,
-        RepoConflictOperation::Rebase
+        RepoConflictOperation::None
     );
+    fs::remove_file(repo.join(".git").join("REBASE_HEAD")).unwrap();
+
+    for marker in ["rebase-merge", "rebase-apply"] {
+        let state_dir = repo.join(".git").join(marker);
+        fs::create_dir_all(&state_dir).unwrap();
+        assert_eq!(conflict_operation(&repo), RepoConflictOperation::Rebase);
+        assert_eq!(
+            summarize_repo(&root, &repo).conflict_operation,
+            RepoConflictOperation::Rebase
+        );
+        fs::remove_dir(state_dir).unwrap();
+    }
+}
+
+#[test]
+fn sync_result_promotes_all_remote_failures_and_preserves_success_message() {
+    let root = temp_dir("sync-result-message");
+    let repo = root.join("repo");
+    init_git_repo(&repo);
+    let failure = |remote: &str, message: &str| RepoRemoteOperationStep {
+        remote: remote.to_string(),
+        operation: "push".to_string(),
+        status: "error".to_string(),
+        message: message.to_string(),
+        target_branch: Some("main".to_string()),
+    };
+    let success = RepoRemoteOperationStep {
+        remote: "origin".to_string(),
+        operation: "push".to_string(),
+        status: "success".to_string(),
+        message: "推送完成".to_string(),
+        target_branch: Some("main".to_string()),
+    };
+
+    let failed = sync_result(
+        &root,
+        &repo,
+        vec![
+            failure("origin", "failed to push some refs"),
+            failure("mirror", "permission denied"),
+        ],
+        "推送已执行",
+    );
+    assert_eq!(failed.status, "error");
+    assert_eq!(
+        failed.message,
+        "origin：failed to push some refs（另有 1 项失败）"
+    );
+
+    let succeeded = sync_result(&root, &repo, vec![success], "推送已执行");
+    assert_eq!(succeeded.status, "success");
+    assert_eq!(succeeded.message, "推送已执行");
 }
 
 #[test]
