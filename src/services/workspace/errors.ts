@@ -135,6 +135,8 @@ function categoryForLegacy(code: string | null, httpStatus: number | null, messa
 }
 
 function categoryFor(code: string | null, httpStatus: number | null): AppErrorCategory {
+  if (code === "github_network_error") return "network";
+  if (code === "github_response_invalid") return "unknown";
   if (code === "operation_cancelled") return "cancelled";
   if (code === "workspace_store_corrupt") return "validation";
   if (code?.startsWith("workspace_store_")) return "persistence";

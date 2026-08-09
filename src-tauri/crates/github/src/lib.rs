@@ -12,7 +12,8 @@ pub const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-pub const GITHUB_JSON_TIMEOUT: Duration = Duration::from_secs(8);
+pub const GITHUB_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+pub const GITHUB_JSON_TIMEOUT: Duration = Duration::from_secs(30);
 pub const GITHUB_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct GitHubApiClient {
@@ -25,12 +26,14 @@ impl GitHubApiClient {
         Ok(Self {
             json: Some(
                 reqwest::blocking::Client::builder()
+                    .connect_timeout(GITHUB_CONNECT_TIMEOUT)
                     .timeout(GITHUB_JSON_TIMEOUT)
                     .build()
                     .map_err(|error| format!("构造 GitHub JSON 客户端失败：{error}"))?,
             ),
             transfer: Some(
                 reqwest::blocking::Client::builder()
+                    .connect_timeout(GITHUB_CONNECT_TIMEOUT)
                     .timeout(GITHUB_TRANSFER_TIMEOUT)
                     .build()
                     .map_err(|error| format!("构造 GitHub 传输客户端失败：{error}"))?,

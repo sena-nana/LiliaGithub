@@ -15,6 +15,7 @@ use keyring::{Entry, Error as KeyringError};
 use reqwest::blocking::{Body, Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub(super) use lilia_github_github::{
@@ -1590,9 +1591,7 @@ fn github_create_repo_from_response(
             organization_owner,
         ));
     }
-    response
-        .json::<GitHubRepoResponse>()
-        .map_err(|error| format!("{prefix}：解析响应失败：{error}"))
+    github_decode_json(prefix, response)
 }
 
 pub(super) fn github_branch_protection_from_response(
@@ -1600,14 +1599,10 @@ pub(super) fn github_branch_protection_from_response(
     response: Response,
 ) -> Result<Option<serde_json::Value>, String> {
     let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("{prefix}：读取响应失败：{error}"))?;
     if status.is_success() {
-        return serde_json::from_str(&body)
-            .map(Some)
-            .map_err(|error| format!("{prefix}：解析响应失败：{error}"));
+        return github_decode_json(prefix, response).map(Some);
     }
+    let body = response.text().unwrap_or_default();
     if status == StatusCode::NOT_FOUND {
         let not_protected = serde_json::from_str::<GitHubErrorResponse>(&body)
             .ok()
@@ -1624,16 +1619,173 @@ pub(super) fn github_binding_expired_status(status: reqwest::StatusCode) -> bool
     status == reqwest::StatusCode::UNAUTHORIZED
 }
 
-pub(super) fn github_json<T: for<'de> Deserialize<'de>>(
+fn github_transport_error(prefix: &str, error: &reqwest::Error) -> String {
+    let message = if error.is_timeout() {
+        "GitHub 请求超时，请检查网络或代理后重试"
+    } else if error.is_body() {
+        "读取 GitHub 响应失败，请检查网络或代理后重试"
+    } else if error.is_connect() {
+        "连接 GitHub 失败，请检查网络或代理后重试"
+    } else {
+        "GitHub 网络请求失败，请检查网络或代理后重试"
+    };
+    format!("github_network_error：{prefix}：{message}")
+}
+
+fn github_send_request(prefix: &str, request: RequestBuilder) -> Result<Response, String> {
+    request
+        .send()
+        .map_err(|error| github_transport_error(prefix, &error))
+}
+
+fn github_decode_json<T: DeserializeOwned>(prefix: &str, response: Response) -> Result<T, String> {
+    let body = response
+        .bytes()
+        .map_err(|error| github_transport_error(prefix, &error))?;
+    serde_json::from_slice(&body).map_err(|_| {
+        format!("github_response_invalid：{prefix}：GitHub 返回的数据格式无效，请稍后重试")
+    })
+}
+
+pub(super) fn github_json<T: DeserializeOwned>(
     prefix: &str,
     response: Response,
 ) -> Result<T, String> {
     if !response.status().is_success() {
         return Err(github_http_error(prefix, response));
     }
-    response
-        .json::<T>()
-        .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
+    github_decode_json(prefix, response)
+}
+
+#[cfg(test)]
+mod github_response_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    fn response_from_server(
+        timeout: Duration,
+        responder: impl FnOnce(&mut TcpStream) + Send + 'static,
+    ) -> (Response, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            responder(&mut stream);
+        });
+        let response = Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .build()
+            .expect("build test client")
+            .get(format!("http://{address}/response"))
+            .send()
+            .expect("receive response headers");
+        (response, server)
+    }
+
+    fn write_response(stream: &mut TcpStream, body: &[u8], content_length: usize) {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write response headers");
+        stream.write_all(body).expect("write response body");
+    }
+
+    fn assert_stable_network_error(error: &str) {
+        assert!(error.starts_with("github_network_error："), "{error}");
+        assert!(error.contains("请检查网络或代理后重试"), "{error}");
+        assert!(!error.contains("request or response body error"), "{error}");
+        assert!(!error.contains("error decoding response body"), "{error}");
+    }
+
+    #[test]
+    fn github_json_decodes_complete_response() {
+        let body = br#"{"ok":true}"#;
+        let (response, server) = response_from_server(Duration::from_secs(1), move |stream| {
+            write_response(stream, body, body.len());
+        });
+
+        let result = github_json::<serde_json::Value>("读取测试数据失败", response);
+        server.join().expect("test server completes");
+        let value = result.expect("decode complete response");
+
+        assert_eq!(value, serde_json::json!({ "ok": true }));
+    }
+
+    #[test]
+    fn github_json_rejects_invalid_json_without_exposing_body() {
+        let body = b"not-json";
+        let (response, server) = response_from_server(Duration::from_secs(1), move |stream| {
+            write_response(stream, body, body.len());
+        });
+
+        let result = github_json::<serde_json::Value>("读取测试数据失败", response);
+        server.join().expect("test server completes");
+        let error = result.expect_err("invalid JSON should fail");
+
+        assert!(error.starts_with("github_response_invalid："), "{error}");
+        assert!(error.contains("GitHub 返回的数据格式无效"), "{error}");
+        assert!(!error.contains("not-json"), "{error}");
+        assert!(!error.contains("error decoding response body"), "{error}");
+    }
+
+    #[test]
+    fn github_json_rejects_response_model_mismatch() {
+        let body = br#"{"ok":true}"#;
+        let (response, server) = response_from_server(Duration::from_secs(1), move |stream| {
+            write_response(stream, body, body.len());
+        });
+
+        let result = github_json::<Vec<String>>("读取测试数据失败", response);
+        server.join().expect("test server completes");
+        let error = result.expect_err("response model mismatch should fail");
+
+        assert!(error.starts_with("github_response_invalid："), "{error}");
+        assert!(!error.contains(r#"{"ok":true}"#), "{error}");
+    }
+
+    #[test]
+    fn github_json_classifies_truncated_body_as_network_error() {
+        let body = br#"{"ok":"#;
+        let (response, server) = response_from_server(Duration::from_secs(1), move |stream| {
+            write_response(stream, body, body.len() + 16);
+        });
+
+        let result = github_json::<serde_json::Value>("读取测试数据失败", response);
+        server.join().expect("test server completes");
+        let error = result.expect_err("truncated response should fail");
+
+        assert_stable_network_error(&error);
+    }
+
+    #[test]
+    fn github_json_classifies_body_timeout_as_network_error() {
+        let (release_body, wait_for_release) = mpsc::channel();
+        let (response, server) = response_from_server(Duration::from_millis(500), move |stream| {
+            write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n"
+                )
+                .expect("write response headers");
+            stream.flush().expect("flush response headers");
+            let _ = wait_for_release.recv_timeout(Duration::from_secs(2));
+            let _ = stream.write_all(br#"{"ok":true}"#);
+        });
+
+        let result = github_json::<serde_json::Value>("读取测试数据失败", response);
+        let _ = release_body.send(());
+        server.join().expect("test server completes");
+        let error = result.expect_err("slow response body should time out");
+
+        assert_stable_network_error(&error);
+    }
 }
 
 pub(super) fn github_graphql_errors_require_read_project(errors: &[GitHubGraphQlError]) -> bool {
@@ -2228,10 +2380,7 @@ pub(super) fn github_send(
     prefix: &str,
     request: GitHubRequestBuilder,
 ) -> Result<Response, String> {
-    let response = request
-        .builder
-        .send()
-        .map_err(|e| format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}"))?;
+    let response = github_send_request(prefix, request.builder)?;
     if github_binding_expired_status(response.status()) {
         if let Some(session) = request.session {
             expire_github_session_if_current(app, &session)?;
@@ -4832,17 +4981,12 @@ pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlow
                 return Err("GitHub Client ID 未配置".to_string());
             };
             let client = build_client(&app)?;
-            let response =
+            let response = github_send_request(
+                "启动 GitHub 设备授权失败",
                 github_oauth_headers(client.post("https://github.com/login/device/code"))
-                    .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
-                    .send()
-                    .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
-            if !response.status().is_success() {
-                return Err(github_http_error("启动 GitHub 设备授权失败", response));
-            }
-            let body = response
-                .json::<DeviceCodeResponse>()
-                .map_err(|e| format!("解析 GitHub 设备授权响应失败：{e}"))?;
+                    .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)]),
+            )?;
+            let body = github_json::<DeviceCodeResponse>("启动 GitHub 设备授权失败", response)?;
             Ok(GitHubDeviceFlowStart {
                 device_code: body.device_code,
                 user_code: body.user_code,
@@ -4869,36 +5013,24 @@ pub async fn github_poll_device_flow(
                 return Err("GitHub Client ID 未配置".to_string());
             };
             let client = build_client(&app)?;
-            let response =
+            let response = github_send_request(
+                "轮询 GitHub 授权失败",
                 github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
                     .form(&[
                         ("client_id", client_id),
                         ("device_code", device_code.trim()),
                         ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                    ])
-                    .send()
-                    .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
-            if !response.status().is_success() {
-                return Err(github_http_error("轮询 GitHub 授权失败", response));
-            }
-            let body = response
-                .json::<TokenResponse>()
-                .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
+                    ]),
+            )?;
+            let body = github_json::<TokenResponse>("轮询 GitHub 授权失败", response)?;
             if let Some(token) = body.access_token {
                 let user_response = github_send(
                     &app,
                     "读取 GitHub 账号信息失败",
                     github_unbound_token_headers(client.get("https://api.github.com/user"), &token),
                 )?;
-                if !user_response.status().is_success() {
-                    return Err(format!(
-                        "读取 GitHub 账号信息失败：HTTP {}",
-                        user_response.status()
-                    ));
-                }
-                let user = user_response
-                    .json::<GitHubUserResponse>()
-                    .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
+                let user =
+                    github_json::<GitHubUserResponse>("读取 GitHub 账号信息失败", user_response)?;
                 let binding = GitHubBindingMetadata {
                     login: user.login,
                     avatar_url: user.avatar_url,
@@ -5079,8 +5211,7 @@ fn github_organization_member_view_available(
     if !response.status().is_success() {
         return false;
     }
-    response
-        .json::<GitHubOrgMembershipResponse>()
+    github_decode_json::<GitHubOrgMembershipResponse>("读取 GitHub 组织成员身份失败", response)
         .ok()
         .is_some_and(|membership| membership.state.eq_ignore_ascii_case("active"))
 }
@@ -5356,7 +5487,9 @@ fn github_readme_image_data_url(
     if !response.status().is_success() {
         return None;
     }
-    let file = response.json::<GitHubContentFileResponse>().ok()?;
+    let file =
+        github_decode_json::<GitHubContentFileResponse>("读取 GitHub README 图片失败", response)
+            .ok()?;
     github_file_preview_from_content("读取 GitHub README 图片失败", file)
         .ok()?
         .data_url
@@ -5405,7 +5538,10 @@ fn github_readme_section(
         if !response.status().is_success() {
             return github_readme_unavailable(unavailable_message);
         }
-        let file = match response.json::<GitHubContentFileResponse>() {
+        let file = match github_decode_json::<GitHubContentFileResponse>(
+            "读取 GitHub README 失败",
+            response,
+        ) {
             Ok(file) => file,
             Err(_) => return github_readme_unavailable(unavailable_message),
         };
@@ -5528,7 +5664,10 @@ fn github_organization_members(
             error: Some("暂时无法读取组织成员".to_string()),
         };
     }
-    let members = match response.json::<Vec<GitHubOrganizationMemberResponse>>() {
+    let members = match github_decode_json::<Vec<GitHubOrganizationMemberResponse>>(
+        "读取 GitHub 组织成员失败",
+        response,
+    ) {
         Ok(members) => members,
         Err(_) => {
             return GitHubOrganizationMembersSection {
@@ -6756,6 +6895,18 @@ mod repository_scope_tests {
             github_http_error_from_parts("读取失败", StatusCode::FORBIDDEN, body, None, true,)
                 .starts_with("github_rate_limited：")
         );
+        assert!(
+            github_http_error_from_parts("读取失败", StatusCode::NOT_FOUND, body, None, false,)
+                .starts_with("github_repository_not_accessible：")
+        );
+        assert!(github_http_error_from_parts(
+            "读取失败",
+            StatusCode::TOO_MANY_REQUESTS,
+            body,
+            None,
+            true,
+        )
+        .starts_with("github_rate_limited："));
     }
 
     #[test]
@@ -7174,16 +7325,10 @@ fn github_repo_settings_path_url(repo_full_name: &str, path: &str) -> Result<Str
 }
 
 fn github_json_value(prefix: &str, response: Response) -> Result<serde_json::Value, String> {
-    let status = response.status();
-    if !status.is_success() {
-        return Err(github_http_error(prefix, response));
-    }
-    if status == StatusCode::NO_CONTENT {
+    if response.status() == StatusCode::NO_CONTENT {
         return Ok(serde_json::json!({ "status": "ok" }));
     }
-    response
-        .json::<serde_json::Value>()
-        .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
+    github_json(prefix, response)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -9070,7 +9215,7 @@ pub async fn github_get_workflow_job_log(
             )?;
             let content = response
                 .text()
-                .map_err(|e| format!("读取 GitHub Actions 日志失败：读取响应失败：{e}"))?;
+                .map_err(|error| github_transport_error("读取 GitHub Actions 日志失败", &error))?;
             Ok(GitHubWorkflowJobLog { job_id, content })
         },
     )
