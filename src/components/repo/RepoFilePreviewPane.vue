@@ -69,7 +69,7 @@ async function scrollToTargetLine() {
     <pre
       v-else-if="preview.previewKind === 'text'"
       ref="codeScroller"
-      class="files-main__code"
+      class="files-main__code is-selectable"
       :class="isCodePreview ? 'files-main__code--numbered' : 'files-main__code--plain'"
     ><code><span
       v-for="line in textPreviewLines"
@@ -191,6 +191,11 @@ async function scrollToTargetLine() {
   font: inherit;
 }
 
+.files-main__code :deep(*) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .files-main__code--plain {
   padding: 16px;
   white-space: pre-wrap;
@@ -228,6 +233,7 @@ async function scrollToTargetLine() {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  -webkit-user-select: none;
   user-select: none;
 }
 

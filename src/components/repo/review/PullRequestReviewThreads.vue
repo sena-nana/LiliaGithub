@@ -79,7 +79,7 @@ async function submitReply(thread: PullRequestReviewThread) {
         </div>
         <span>{{ thread.isResolved ? "已解决" : thread.isOutdated ? "代码已更新" : "待处理" }}</span>
       </header>
-      <pre v-if="thread.diffHunk" class="review-thread__diff">{{ thread.diffHunk }}</pre>
+      <pre v-if="thread.diffHunk" class="review-thread__diff is-selectable">{{ thread.diffHunk }}</pre>
       <ol class="review-thread__comments">
         <li v-for="comment in thread.comments" :key="comment.id">
           <header><strong>{{ comment.author }}</strong><time :datetime="comment.createdAt">{{ formatDate(comment.createdAt) }}</time></header>

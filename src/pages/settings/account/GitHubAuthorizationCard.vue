@@ -72,7 +72,7 @@ watch(() => workspace.githubBinding.value, (binding) => {
       <UiButton size="sm" agent-id="settings.account.github.complete-authorization" @click="startBinding">补全授权</UiButton>
     </SettingsRow>
     <SettingsRow v-if="workspace.deviceFlow.value" label="设备码" :hint="workspace.authRemainingText.value ? `剩余 ${workspace.authRemainingText.value}` : undefined">
-      <code class="github-card__device-code">{{ workspace.deviceFlow.value.userCode }}</code>
+      <code class="github-card__device-code is-selectable">{{ workspace.deviceFlow.value.userCode }}</code>
     </SettingsRow>
     <p v-if="workspace.state.authNotice" class="github-card__notice" role="status">{{ workspace.state.authNotice }}</p>
     <p v-if="authError" class="github-card__error" role="alert">{{ authError }}</p>

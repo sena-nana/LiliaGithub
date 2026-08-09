@@ -2275,7 +2275,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             </p>
             <div v-if="workspace.deviceFlow.value" class="auth-flow">
               <p class="setup-code">
-                设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
+                设备码 <code class="is-selectable">{{ workspace.deviceFlow.value.userCode }}</code>
               </p>
               <p v-if="workspace.state.authNotice" class="auth-flow__notice">
                 {{ workspace.state.authNotice }}

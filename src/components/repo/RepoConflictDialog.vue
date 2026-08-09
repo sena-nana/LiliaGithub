@@ -277,7 +277,7 @@ function sideLines(hunk: DeepReadonly<RepoConflictHunk>, side: ConflictSide) {
                     {{ focusedChoices[hunk.id] === side ? "已选择" : "采用此版本" }}
                   </button>
                 </div>
-                <pre><code>{{ sideLines(hunk, side).join("\n") || " " }}</code></pre>
+                <pre><code class="is-selectable">{{ sideLines(hunk, side).join("\n") || " " }}</code></pre>
               </section>
             </div>
           </article>
