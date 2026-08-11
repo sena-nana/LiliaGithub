@@ -134,6 +134,7 @@ function fileTitle(file: RepoDiffWorkspaceFile) {
             :hunks="activeFile.hunks"
             :patch="activeFile.patch ?? ''"
             mode="hunks"
+            :fill="fill"
           />
           <DiffCodeRenderer
             v-else-if="activeFile.patch"
@@ -377,6 +378,7 @@ function fileTitle(file: RepoDiffWorkspaceFile) {
 .repo-diff-workspace--fill .commit-diff-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   overflow: hidden;
 }
 

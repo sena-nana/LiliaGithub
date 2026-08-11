@@ -68,7 +68,7 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
 </script>
 
 <template>
-  <div v-if="mode === 'hunks'" class="diff-code diff-code--hunks is-selectable">
+  <div v-if="mode === 'hunks'" class="diff-code diff-code--hunks is-selectable" :class="{ 'diff-code--fill': fill }">
     <template v-for="hunk in hunks" :key="`${filePath}:${hunk.header}`">
       <div v-if="hunk.header" class="diff-code__hunk" role="row">
         <span class="diff-code__hunk-header">{{ hunk.header }}</span>
@@ -199,12 +199,14 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
   white-space: pre;
 }
 
-.diff-code--raw.diff-code--fill {
+.diff-code--fill {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   max-width: 100%;
   height: 100%;
+  overflow: auto;
 }
 
 .diff-code--raw code {
