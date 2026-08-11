@@ -168,6 +168,7 @@ function fileTitle(file: RepoDiffWorkspaceFile) {
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   border-right: 1px solid var(--border-soft);
 }
