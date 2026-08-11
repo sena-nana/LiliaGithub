@@ -395,7 +395,7 @@ function submitCommit(pushAfter: boolean) {
 
 .changes-sidebar {
   display: grid;
-  grid-template-rows: minmax(120px, 1fr) minmax(120px, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   height: 100%;
