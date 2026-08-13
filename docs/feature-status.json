@@ -301,6 +301,14 @@
             "en": "Launch history and failure diagnostics.",
             "zh-CN": "启动历史和失败诊断。"
           }
+        },
+        {
+          "id": "launch-tray",
+          "complete": true,
+          "text": {
+            "en": "Tray menu quick launch for running and recent project scripts.",
+            "zh-CN": "托盘菜单显示正在运行和最近启动的项目脚本，可快速停止或再次运行。"
+          }
         }
       ]
     },

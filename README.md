@@ -115,6 +115,7 @@ The list below is generated from the project's canonical feature-status data. On
 - [x] Saved quick launch configuration per repository.
 - [x] Launch running-state polling and recent output logs.
 - [x] Launch history and failure diagnostics.
+- [x] Tray menu quick launch for running and recent project scripts.
 
 ### Desktop Experience
 

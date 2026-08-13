@@ -1,4 +1,5 @@
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +13,27 @@ pub fn run() {
                         .show_window_label("显示主窗口")
                         .quit_label("退出"),
                 )
+                .tray_extra_menu(|app| {
+                    let context =
+                        lilia_github_workspace::tauri_commands::workspace_context(app.clone());
+                    lilia_github_workspace::launch_tray_menu_nodes(&context)
+                        .into_iter()
+                        .map(to_plugin_tray_node)
+                        .collect()
+                })
+                .on_tray_extra_menu(|app, id| {
+                    let app = app.clone();
+                    let id = id.to_string();
+                    tauri::async_runtime::spawn(async move {
+                        let context =
+                            lilia_github_workspace::tauri_commands::workspace_context(app.clone());
+                        if let Err(error) =
+                            lilia_github_workspace::handle_launch_tray_event(context, &id).await
+                        {
+                            app.dialog().message(error).title("快速启动").show(|_| {});
+                        }
+                    });
+                })
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
@@ -30,6 +52,19 @@ pub fn run() {
                 .shutdown();
         }
     });
+}
+
+fn to_plugin_tray_node(
+    node: lilia_github_workspace::LaunchTrayMenuNode,
+) -> tauri_plugin_lilia::TrayMenuNode {
+    match node {
+        lilia_github_workspace::LaunchTrayMenuNode::Separator => {
+            tauri_plugin_lilia::TrayMenuNode::Separator
+        }
+        lilia_github_workspace::LaunchTrayMenuNode::Item { id, label } => {
+            tauri_plugin_lilia::TrayMenuNode::item(id, label)
+        }
+    }
 }
 
 fn handle_invoke<R: tauri::Runtime>(invoke: tauri::ipc::Invoke<R>) -> bool {

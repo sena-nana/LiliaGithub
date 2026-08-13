@@ -1800,7 +1800,7 @@ fn volume_file_system(path: &Path) -> Result<String, String> {
     Ok(String::from_utf16_lossy(&file_system[..length]))
 }
 
-pub(super) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     repo_root_and_path_by_id(app, id).map(|(_, path)| path)
 }
 

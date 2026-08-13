@@ -135,7 +135,7 @@ struct TauriWorkspaceRuntime<R: Runtime> {
     parent_window_label: Option<String>,
 }
 
-fn workspace_context<R: Runtime>(app: AppHandle<R>) -> WorkspaceContext {
+pub fn workspace_context<R: Runtime>(app: AppHandle<R>) -> WorkspaceContext {
     let app_state = app.state::<WorkspaceAppState>().inner().clone();
     WorkspaceContext::with_app_state(
         Arc::new(TauriWorkspaceRuntime {
