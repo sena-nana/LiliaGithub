@@ -43,8 +43,10 @@ use super::github::{
     GITHUB_REPO_SCOPE, GITHUB_SCOPE,
 };
 use super::launch::{
-    clear_launch_logs, infer_launch_candidates, infer_launch_config, push_launch_log,
-    repo_get_launch_logs, LaunchOutputParser,
+    clear_launch_logs, complete_launch_status, current_launch_status, idle_launch_status,
+    infer_launch_candidates, infer_launch_config, push_launch_log, remember_launch_start,
+    repo_get_launch_logs, repo_list_launch_history, set_launch_status_for_tests,
+    LaunchOutputParser,
 };
 #[cfg(target_os = "macos")]
 use super::launch::{macos_launch_process, resolve_macos_launch_shell, stop_launch_process_tree};
@@ -95,12 +97,13 @@ use lilia_github_contracts::workspace::{
     GitHubOrganizationProfileView, GitHubOwnerKind, GitHubProjectCache, GitHubPullRequest,
     GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
     GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest,
-    LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
-    RepoConflictChoice, RepoConflictChoiceSide, RepoConflictOperation, RepoPullLocalChangesMode,
-    RepoRemoteBranchState, RepoRemoteOperationStep, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
-    RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
-    WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding,
-    WorkspaceSettings, WorkspaceStartupCache,
+    LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, ProjectLaunchState,
+    ProjectLaunchStatus, RemoteRepoShortcut, RepoConflictChoice, RepoConflictChoiceSide,
+    RepoConflictOperation, RepoPullLocalChangesMode, RepoRemoteBranchState,
+    RepoRemoteOperationStep, RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree,
+    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneTarget,
+    WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding, WorkspaceSettings,
+    WorkspaceStartupCache,
 };
 use lilia_github_github::{GitHubIssueCacheQuery, GitHubPullRequestCacheQuery};
 use std::collections::{HashMap, HashSet};
@@ -170,6 +173,7 @@ impl WorkspaceRuntime for NoopWorkspaceRuntime {
 #[derive(Default)]
 struct SettingsStoreRuntime {
     values: Mutex<HashMap<(String, String), serde_json::Value>>,
+    events: Mutex<Vec<serde_json::Value>>,
 }
 
 impl WorkspaceRuntime for SettingsStoreRuntime {
@@ -227,9 +231,98 @@ impl WorkspaceRuntime for SettingsStoreRuntime {
         Ok(())
     }
 
-    fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
+    fn emit(&self, _event: &str, payload: serde_json::Value) -> Result<(), String> {
+        self.events.lock().unwrap().push(payload);
         Ok(())
     }
+}
+
+fn launch_effect_counts(
+    app: &WorkspaceContext,
+    runtime: &SettingsStoreRuntime,
+    repo_id: &str,
+) -> (usize, usize, usize) {
+    (
+        repo_get_launch_logs(app.clone(), repo_id.to_string(), None)
+            .unwrap()
+            .len(),
+        repo_list_launch_history(app.clone(), repo_id.to_string())
+            .unwrap()
+            .len(),
+        runtime.events.lock().unwrap().len(),
+    )
+}
+
+#[test]
+fn launch_stop_returns_canonical_status_after_watcher_completion() {
+    let runtime = Arc::new(SettingsStoreRuntime::default());
+    let app = WorkspaceContext::new(runtime.clone());
+    let repo_id = "repo-a";
+    let pid = 41;
+    set_launch_status_for_tests(
+        &app,
+        ProjectLaunchStatus {
+            state: ProjectLaunchState::Running,
+            pid: Some(pid),
+            command: Some("yarn dev".to_string()),
+            started_at: Some(1),
+            ..idle_launch_status(repo_id)
+        },
+    );
+    remember_launch_start(&app, repo_id, "yarn dev", Path::new(".")).unwrap();
+
+    complete_launch_status(
+        &app,
+        repo_id,
+        pid,
+        ProjectLaunchState::Exited,
+        Some(143),
+        None,
+        "watcher completion".to_string(),
+    )
+    .unwrap();
+    let effect_counts = launch_effect_counts(&app, &runtime, repo_id);
+    assert_eq!(effect_counts, (1, 1, 1));
+    let history = repo_list_launch_history(app.clone(), repo_id.to_string()).unwrap();
+    assert_eq!(history[0].state, ProjectLaunchState::Exited);
+
+    let _ = complete_launch_status(
+        &app,
+        repo_id,
+        pid,
+        ProjectLaunchState::Exited,
+        Some(0),
+        None,
+        "stop completion".to_string(),
+    );
+    let stop_status = current_launch_status(&app, repo_id);
+    assert_eq!(stop_status.state, ProjectLaunchState::Exited);
+    assert_eq!(stop_status.exit_code, Some(143));
+    assert_eq!(launch_effect_counts(&app, &runtime, repo_id), effect_counts);
+
+    set_launch_status_for_tests(
+        &app,
+        ProjectLaunchStatus {
+            state: ProjectLaunchState::Running,
+            pid: Some(pid + 1),
+            started_at: Some(2),
+            exit_code: None,
+            ..stop_status
+        },
+    );
+    let _ = complete_launch_status(
+        &app,
+        repo_id,
+        pid,
+        ProjectLaunchState::Exited,
+        Some(0),
+        None,
+        "stale completion".to_string(),
+    );
+    let stale_status = current_launch_status(&app, repo_id);
+    assert_eq!(stale_status.state, ProjectLaunchState::Running);
+    assert_eq!(stale_status.pid, Some(pid + 1));
+    assert_eq!(launch_effect_counts(&app, &runtime, repo_id), effect_counts);
 }
 
 fn temp_dir(name: &str) -> PathBuf {
