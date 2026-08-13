@@ -63,6 +63,24 @@ impl LaunchRuntimeState {
             .unwrap_or_else(|error| error.into_inner())
             .clear();
     }
+
+    pub(crate) fn running_launch_statuses(&self) -> Vec<ProjectLaunchStatus> {
+        let mut statuses = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .values()
+            .filter(|entry| entry.status.state == ProjectLaunchState::Running)
+            .map(|entry| entry.status.clone())
+            .collect::<Vec<_>>();
+        statuses.sort_by(|left, right| {
+            right
+                .started_at
+                .cmp(&left.started_at)
+                .then_with(|| left.repo_id.cmp(&right.repo_id))
+        });
+        statuses
+    }
 }
 
 #[cfg(test)]
@@ -197,7 +215,7 @@ pub(super) fn clear_launch_logs(app: &AppHandle, repo_id: &str) {
         .remove(repo_id);
 }
 
-pub(super) fn load_launch_history(
+pub(crate) fn load_launch_history(
     app: &AppHandle,
 ) -> HashMap<String, Vec<ProjectLaunchHistoryEntry>> {
     app.store(STORE_FILE)
