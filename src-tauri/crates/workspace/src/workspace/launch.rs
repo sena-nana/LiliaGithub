@@ -144,6 +144,16 @@ pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
     }
 }
 
+pub(super) fn current_launch_status(app: &AppHandle, repo_id: &str) -> ProjectLaunchStatus {
+    app.launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(repo_id)
+        .map(|entry| entry.status.clone())
+        .unwrap_or_else(|| idle_launch_status(repo_id))
+}
+
 pub(super) fn push_launch_log(
     app: &AppHandle,
     repo_id: &str,
@@ -286,22 +296,20 @@ pub(super) fn complete_launch_status(
     error: Option<String>,
     log_line: String,
 ) -> Option<ProjectLaunchStatus> {
-    let status = {
-        let mut runtime = app
-            .launch_runtime()
-            .entries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let entry = runtime.get_mut(repo_id)?;
-        if entry.status.state != ProjectLaunchState::Running || entry.status.pid != Some(pid) {
-            return None;
-        }
-        entry.status.state = state;
-        entry.status.pid = None;
-        entry.status.exit_code = exit_code;
-        entry.status.error = error.clone();
-        entry.status.clone()
-    };
+    let mut runtime = app
+        .launch_runtime()
+        .entries
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let entry = runtime.get_mut(repo_id)?;
+    if entry.status.state != ProjectLaunchState::Running || entry.status.pid != Some(pid) {
+        return None;
+    }
+    entry.status.state = state;
+    entry.status.pid = None;
+    entry.status.exit_code = exit_code;
+    entry.status.error = error.clone();
+    let status = entry.status.clone();
 
     push_launch_log(app, repo_id, "system", log_line);
     let _ = finish_launch_history(app, repo_id, state, exit_code, error);
@@ -912,15 +920,7 @@ pub fn repo_get_launch_status(
     app: AppHandle,
     repo_id: String,
 ) -> Result<ProjectLaunchStatus, String> {
-    let runtime = app
-        .launch_runtime()
-        .entries
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let Some(entry) = runtime.get(&repo_id) else {
-        return Ok(idle_launch_status(&repo_id));
-    };
-    Ok(entry.status.clone())
+    Ok(current_launch_status(&app, &repo_id))
 }
 
 pub fn repo_get_launch_logs(
@@ -1033,17 +1033,7 @@ fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
 }
 
 fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
-    let current = {
-        let runtime = app
-            .launch_runtime()
-            .entries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        runtime
-            .get(&repo_id)
-            .map(|entry| entry.status.clone())
-            .unwrap_or_else(|| idle_launch_status(&repo_id))
-    };
+    let current = current_launch_status(&app, &repo_id);
     if current.state != ProjectLaunchState::Running {
         return Ok(current);
     }
@@ -1051,7 +1041,7 @@ fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchS
         return Ok(current);
     };
     stop_launch_process_tree(pid)?;
-    Ok(complete_launch_status(
+    let _ = complete_launch_status(
         &app,
         &repo_id,
         pid,
@@ -1059,8 +1049,8 @@ fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchS
         Some(0),
         None,
         "已停止快速启动进程".to_string(),
-    )
-    .unwrap_or(current))
+    );
+    Ok(current_launch_status(&app, &repo_id))
 }
 
 async fn run_launch_control(
