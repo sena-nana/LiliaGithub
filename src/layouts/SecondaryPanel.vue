@@ -22,8 +22,7 @@ import type { RepoSyncIssueDisplay } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
-import { LiliaSidebarNavRow } from "@lilia/ui/shell/sidebar";
-import { LiliaSidebarFrame } from "@lilia/ui/shell";
+import { NanaSidebarFrame, NanaSidebarRow } from "@nanaui/nanavue-components";
 import { SidebarCollapse, UiButton, UiDialog } from "@lilia/ui";
 import {
   openContextMenuAt,
@@ -878,21 +877,19 @@ async function deleteGroup(group: { id: string }) {
 </script>
 
 <template>
-  <LiliaSidebarFrame
+  <NanaSidebarFrame
     agent-id="sidebar"
-    :surface-mode="props.surfaceMode"
-    :backdrop-effect="props.backdropEffect"
-    :surface-level="props.surfaceLevel"
-    :surface-boundary="props.surfaceBoundary"
   >
     <template #top>
       <div class="sb-section">
         <nav class="sb-tree" aria-label="主导航">
-          <LiliaSidebarNavRow
+          <NanaSidebarRow
             v-for="item in SIDEBAR_NAV"
             :key="item.label"
-            :item="item"
+            :label="item.label"
+            :active="route.path === router.resolve(item.to).path"
             :agent-id="`sidebar.nav.${item.label}`"
+            @select="router.push(item.to)"
           />
         </nav>
       </div>
@@ -1103,7 +1100,7 @@ async function deleteGroup(group: { id: string }) {
         @authorize-organizations="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
       />
     </template>
-  </LiliaSidebarFrame>
+  </NanaSidebarFrame>
 
   <UiDialog
     :open="movePathDialogOpen"
@@ -1171,6 +1168,7 @@ async function deleteGroup(group: { id: string }) {
 
 <style scoped>
 .sidebar-sections {
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
 }
