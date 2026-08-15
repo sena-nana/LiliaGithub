@@ -1,3 +1,5 @@
+import { splitGitProcessMessage } from "../../utils/operationProcess";
+
 export type AppErrorCategory =
   | "authentication"
   | "authorization"
@@ -83,6 +85,14 @@ export function isWorkspaceCommandCancelled(error: unknown): boolean {
 }
 
 export function errorMessage(error: unknown): string {
+  return splitGitProcessMessage(rawErrorText(error)).message;
+}
+
+export function errorProcessLog(error: unknown): string | null {
+  return splitGitProcessMessage(rawErrorText(error)).process;
+}
+
+function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (isRecord(error) && typeof error.message === "string") return error.message;
   return String(error).replace(/^Error:\s*/, "").trim();

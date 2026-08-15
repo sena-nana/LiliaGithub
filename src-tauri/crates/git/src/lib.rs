@@ -33,11 +33,123 @@ fn configure_background_command(command: &mut Command) {
     }
 }
 
+pub const GIT_PROCESS_MARKER: &str = "\n<!--lilia-git-process-->\n";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitCommandError {
+    pub message: String,
+    pub command: String,
+    pub output: String,
+}
+
+impl GitCommandError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            message: message.clone(),
+            command: String::new(),
+            output: message,
+        }
+    }
+
+    pub fn from_output(args: &[&str], stdout: &str, stderr: &str, exit: i32) -> Self {
+        let command = format_git_invocation(args);
+        let stdout = stdout.trim();
+        let stderr = stderr.trim();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        let message = if detail.is_empty() {
+            format!("{command} 失败：exit {exit}")
+        } else {
+            detail.to_string()
+        };
+        Self {
+            message,
+            command,
+            output: format_git_output(stdout, stderr, exit),
+        }
+    }
+
+    pub fn from_spawn(args: &[&str], error: impl std::fmt::Display) -> Self {
+        let command = format_git_invocation(args);
+        let message = format!("无法启动 git（请确认 git 在 PATH 中）：{error}");
+        Self {
+            output: format!("{command}\n{message}"),
+            command,
+            message,
+        }
+    }
+
+    pub fn with_mapped_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    pub fn process_log(&self) -> String {
+        if self.output.is_empty() {
+            self.command.clone()
+        } else if self.command.is_empty() {
+            self.output.clone()
+        } else if self.output.starts_with(&self.command) {
+            self.output.clone()
+        } else {
+            format!("{}\n{}", self.command, self.output)
+        }
+    }
+
+    pub fn into_encoded_string(self) -> String {
+        let process = self.process_log();
+        if process.is_empty() || process == self.message {
+            self.message
+        } else {
+            format!("{}{}{}", self.message, GIT_PROCESS_MARKER, process)
+        }
+    }
+}
+
+impl std::fmt::Display for GitCommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<GitCommandError> for String {
+    fn from(value: GitCommandError) -> Self {
+        value.message
+    }
+}
+
+fn format_git_invocation(args: &[&str]) -> String {
+    std::iter::once("git")
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_git_output(stdout: &str, stderr: &str, exit: i32) -> String {
+    let mut parts = Vec::new();
+    if !stdout.is_empty() {
+        parts.push(stdout.to_string());
+    }
+    if !stderr.is_empty() {
+        parts.push(stderr.to_string());
+    }
+    parts.push(format!("exit {exit}"));
+    parts.join("\n")
+}
+
 pub fn git_command(
     repo_path: &Path,
     args: &[&str],
     auth_header: Option<&str>,
 ) -> Result<String, String> {
+    git_command_detailed(repo_path, args, auth_header).map_err(String::from)
+}
+
+pub fn git_command_detailed(
+    repo_path: &Path,
+    args: &[&str],
+    auth_header: Option<&str>,
+) -> Result<String, GitCommandError> {
     let mut command = Command::new("git");
     command
         .args(args)
@@ -54,20 +166,14 @@ pub fn git_command(
     }
     let output = command
         .output()
-        .map_err(|e| format!("无法启动 git（请确认 git 在 PATH 中）：{e}"))?;
+        .map_err(|error| GitCommandError::from_spawn(args, error))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        return Err(if detail.is_empty() {
-            format!(
-                "git {:?} 失败：exit {}",
-                args,
-                output.status.code().unwrap_or(-1)
-            )
-        } else {
-            detail
-        });
+        return Err(GitCommandError::from_output(
+            args,
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+            output.status.code().unwrap_or(-1),
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -139,31 +245,45 @@ pub fn map_named_remote_git_error(path: &Path, remote: &str, error: String) -> S
         .unwrap_or(error)
 }
 
+fn map_remote_git_error_detailed(path: &Path, error: GitCommandError) -> GitCommandError {
+    let mapped = map_remote_git_error(path, error.message.clone());
+    error.with_mapped_message(mapped)
+}
+
+fn map_named_remote_git_error_detailed(
+    path: &Path,
+    remote: &str,
+    error: GitCommandError,
+) -> GitCommandError {
+    let mapped = map_named_remote_git_error(path, remote, error.message.clone());
+    error.with_mapped_message(mapped)
+}
+
 pub fn current_upstream_remote(path: &Path) -> Option<String> {
     let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
     git_config_value(path, &format!("branch.{branch}.remote"))
 }
 
 pub fn run_pull(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
-    git_command(path, &["pull", "--ff-only"], auth_header)
+    git_command_detailed(path, &["pull", "--ff-only"], auth_header)
         .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+        .map_err(|error| map_remote_git_error_detailed(path, error).into())
 }
 
 pub fn run_fetch(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
-    git_command(path, &["fetch"], auth_header)
+    git_command_detailed(path, &["fetch"], auth_header)
         .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+        .map_err(|error| map_remote_git_error_detailed(path, error).into())
 }
 
 pub fn run_fetch_remote(
     path: &Path,
     remote: &str,
     auth_header: Option<&str>,
-) -> Result<(), String> {
-    git_command(path, &["fetch", "--", remote], auth_header)
+) -> Result<(), GitCommandError> {
+    git_command_detailed(path, &["fetch", "--", remote], auth_header)
         .map(|_| ())
-        .map_err(|error| map_named_remote_git_error(path, remote, error))
+        .map_err(|error| map_named_remote_git_error_detailed(path, remote, error))
 }
 
 pub fn run_push(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
@@ -198,16 +318,16 @@ pub fn run_push_remote(
     target_branch: &str,
     set_upstream: bool,
     auth_header: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), GitCommandError> {
     let refspec = format!("HEAD:refs/heads/{target_branch}");
     let mut args = vec!["push"];
     if set_upstream {
         args.push("--set-upstream");
     }
     args.extend(["--", remote, refspec.as_str()]);
-    git_command(path, &args, auth_header)
+    git_command_detailed(path, &args, auth_header)
         .map(|_| ())
-        .map_err(|error| map_named_remote_git_error(path, remote, error))
+        .map_err(|error| map_named_remote_git_error_detailed(path, remote, error))
 }
 
 fn git_config_value(path: &Path, key: &str) -> Option<String> {
@@ -648,6 +768,26 @@ mod tests {
             run_test_git(&mirror, &["rev-parse", "refs/heads/main"]),
             head
         );
+    }
+
+    #[test]
+    fn git_command_error_keeps_original_output_when_message_is_rewritten() {
+        let error = GitCommandError::from_output(
+            &["fetch", "--", "origin"],
+            "",
+            "fatal: repository not found",
+            128,
+        )
+        .with_mapped_message("无法访问 GitHub 仓库 example/repo：仓库不存在。");
+
+        assert_eq!(error.message, "无法访问 GitHub 仓库 example/repo：仓库不存在。");
+        assert_eq!(error.command, "git fetch -- origin");
+        assert!(error.output.contains("fatal: repository not found"));
+        assert!(error.output.contains("exit 128"));
+        let encoded = error.clone().into_encoded_string();
+        assert!(encoded.contains("无法访问 GitHub 仓库 example/repo"));
+        assert!(encoded.contains("git fetch -- origin"));
+        assert!(encoded.contains("fatal: repository not found"));
     }
 
     #[test]

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  errorMessage,
+  errorProcessLog,
   isWorkspaceCommandCancelled,
   normalizeWorkspaceCommandError,
   workspaceErrorCategory,
   workspaceErrorCode,
 } from "../src/services/workspace/errors";
+import { GIT_PROCESS_MARKER } from "../src/utils/operationProcess";
 import {
   isConfirmedMissingResource,
   isGitHubBindingExpiredError,
@@ -86,5 +89,11 @@ describe("workspace command errors", () => {
       retryable: false,
     });
     expect(invalid.message).not.toMatch(/request or response body error|error decoding response body/i);
+  });
+
+  it("keeps git process output out of the displayed error message", () => {
+    const raw = `fatal: repository not found${GIT_PROCESS_MARKER}git clone https://github.com/example/repo.git\nfatal: repository not found\nexit 128`;
+    expect(errorMessage(raw)).toBe("fatal: repository not found");
+    expect(errorProcessLog(raw)).toContain("git clone https://github.com/example/repo.git");
   });
 });

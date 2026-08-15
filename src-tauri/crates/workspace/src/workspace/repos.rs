@@ -27,6 +27,7 @@ use crate::workspace::settings::{
 #[cfg(test)]
 use crate::workspace::settings::{prune_deleted_repo_settings, repo_path_from_id};
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
+use lilia_github_git::GitCommandError;
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoCommitResult, RepoConflictChoice, RepoConflictFile,
@@ -243,11 +244,11 @@ pub(super) fn git_command(
     repo_path: &Path,
     args: &[&str],
     auth_header: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, GitCommandError> {
     run_git_command(repo_path, args, auth_header, false)
 }
 
-fn git_observe_command(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+fn git_observe_command(repo_path: &Path, args: &[&str]) -> Result<String, GitCommandError> {
     run_git_command(repo_path, args, None, true)
 }
 
@@ -256,7 +257,7 @@ fn run_git_command(
     args: &[&str],
     auth_header: Option<&str>,
     disable_optional_locks: bool,
-) -> Result<String, String> {
+) -> Result<String, GitCommandError> {
     let mut command = Command::new("git");
     command
         .args(args)
@@ -276,20 +277,14 @@ fn run_git_command(
     }
     let output = command
         .output()
-        .map_err(|e| format!("无法启动 git（请确认 git 在 PATH 中）：{e}"))?;
+        .map_err(|error| GitCommandError::from_spawn(args, error))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        return Err(if detail.is_empty() {
-            format!(
-                "git {:?} 失败：exit {}",
-                args,
-                output.status.code().unwrap_or(-1)
-            )
-        } else {
-            detail
-        });
+        return Err(GitCommandError::from_output(
+            args,
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+            output.status.code().unwrap_or(-1),
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -1314,6 +1309,34 @@ pub(super) fn should_retry_clone_with_system_git(remote: &str, error: &str) -> b
         && (error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库"))
 }
 
+fn map_clone_git_error(remote: &str, error: GitCommandError) -> String {
+    let mapped = normalize_git_remote_error(remote, error.message.clone());
+    error.with_mapped_message(mapped).into_encoded_string()
+}
+
+fn git_failure_step(
+    remote: impl Into<String>,
+    operation: &str,
+    status: &str,
+    message: impl Into<String>,
+    target_branch: Option<String>,
+    error: GitCommandError,
+) -> RepoRemoteOperationStep {
+    RepoRemoteOperationStep {
+        remote: remote.into(),
+        operation: operation.to_string(),
+        status: status.to_string(),
+        message: message.into(),
+        target_branch,
+        command: optional_git_field(error.command),
+        output: optional_git_field(error.output),
+    }
+}
+
+fn optional_git_field(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
 pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> Result<bool, String> {
     let Ok(root) = workspace_root_for_path(app, path) else {
         return Ok(false);
@@ -2276,7 +2299,7 @@ pub async fn workspace_clone_repo(
                         &["clone", remote.as_str(), target_text.as_str()],
                         auth,
                     )
-                    .map_err(|error| normalize_git_remote_error(&remote, error))
+                    .map_err(|error| map_clone_git_error(&remote, error))
                 };
                 if let Err(error) = run_clone(auth_header.as_deref()) {
                     let final_error = if should_retry_clone_with_system_git(&remote, &error) {
@@ -2300,7 +2323,7 @@ pub async fn workspace_clone_repo(
                 let fetch_origin = |auth: Option<&str>| {
                     git_command(&target, &["fetch", "--", "origin"], auth)
                         .map(|_| ())
-                        .map_err(|error| normalize_git_remote_error(&remote, error))
+                        .map_err(|error| map_clone_git_error(&remote, error))
                 };
                 if let Err(error) = fetch_origin(auth_header.as_deref()) {
                     if should_retry_clone_with_system_git(&remote, &error) {
@@ -2774,6 +2797,7 @@ pub(super) fn run_configured_pull_with_config(
             status: "success".to_string(),
             message: "已建立本地分支并检出远端内容".to_string(),
             target_branch: Some(target.branch.clone()),
+            ..Default::default()
         });
         PullLocalChanges { stash_ref: None }
     };
@@ -2796,6 +2820,7 @@ pub(super) fn run_configured_pull_with_config(
                 status: "skipped".to_string(),
                 message: "远端不存在对应分支，已跳过".to_string(),
                 target_branch: Some(target),
+                ..Default::default()
             });
             continue;
         }
@@ -2811,21 +2836,23 @@ pub(super) fn run_configured_pull_with_config(
                 status: "success".to_string(),
                 message: "合并完成".to_string(),
                 target_branch: Some(target),
+                ..Default::default()
             }),
-            Err(message) => {
+            Err(error) => {
                 let conflicts = repo_conflicts(path);
                 let has_conflicts = !conflicts.files.is_empty();
-                steps.push(RepoRemoteOperationStep {
+                steps.push(git_failure_step(
                     remote,
-                    operation: "merge".to_string(),
-                    status: if has_conflicts { "conflicts" } else { "error" }.to_string(),
-                    message: if has_conflicts {
+                    "merge",
+                    if has_conflicts { "conflicts" } else { "error" },
+                    if has_conflicts {
                         "合并产生冲突，请处理后继续".to_string()
                     } else {
-                        message
+                        error.message.clone()
                     },
-                    target_branch: Some(target),
-                });
+                    Some(target),
+                    error,
+                ));
                 if !has_conflicts {
                     if let Err(error) = restore_pull_local_changes(path, local_changes.clone()) {
                         steps.push(RepoRemoteOperationStep {
@@ -2834,6 +2861,7 @@ pub(super) fn run_configured_pull_with_config(
                             status: "error".to_string(),
                             message: error,
                             target_branch: None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -2862,6 +2890,7 @@ pub(super) fn run_configured_pull_with_config(
             .to_string(),
             message: error,
             target_branch: None,
+            ..Default::default()
         });
         return Ok(sync_result(
             root,
@@ -2909,6 +2938,7 @@ pub async fn repo_commit(
                             status: "error".to_string(),
                             message: message.clone(),
                             target_branch: None,
+                            ..Default::default()
                         }],
                         message,
                     ),
@@ -3683,7 +3713,7 @@ pub(super) fn run_repo_operation_with_conflicts(
         Err(err) => {
             let conflicts = repo_conflicts(path);
             if conflicts.files.is_empty() {
-                Err(err)
+                Err(err.into_encoded_string())
             } else {
                 Ok(RepoOperationResult {
                     status: "conflicts".to_string(),
@@ -4967,7 +4997,7 @@ pub(super) fn merge_branch_at(
             let conflicts = repo_conflicts(path);
             let summary = summarize_repo(root, path);
             if conflicts.files.is_empty() {
-                Err(err)
+                Err(err.into_encoded_string())
             } else {
                 Ok(RepoMergePullResult {
                     status: "conflicts".to_string(),
@@ -5335,8 +5365,8 @@ pub(super) fn ensure_repo_has_no_conflicts(
     Ok(())
 }
 
-pub(super) fn run_fetch_remote(app: &AppHandle, path: &Path, remote: &str) -> Result<(), String> {
-    let auth = git_auth_for_repo(app, path)?;
+pub(super) fn run_fetch_remote(app: &AppHandle, path: &Path, remote: &str) -> Result<(), GitCommandError> {
+    let auth = git_auth_for_repo(app, path).map_err(GitCommandError::from_message)?;
     lilia_github_git::run_fetch_remote(path, remote, auth.as_deref())
 }
 
@@ -5347,11 +5377,13 @@ fn run_push_remote_once(
     target_branch: &str,
     set_upstream: bool,
     system_git: bool,
-) -> Result<(), String> {
+) -> Result<(), GitCommandError> {
     let auth = if system_git {
         None
     } else {
-        token_for_binding(app).map(|token| token.map(|value| github_auth_header(&value)))?
+        token_for_binding(app)
+            .map(|token| token.map(|value| github_auth_header(&value)))
+            .map_err(GitCommandError::from_message)?
     };
     lilia_github_git::run_push_remote(path, remote, target_branch, set_upstream, auth.as_deref())
 }
@@ -5447,14 +5479,9 @@ fn run_multi_remote_fetch(
             status: "success".to_string(),
             message: "抓取完成".to_string(),
             target_branch: None,
+            ..Default::default()
         },
-        Err(message) => RepoRemoteOperationStep {
-            remote,
-            operation: "fetch".to_string(),
-            status: "error".to_string(),
-            message,
-            target_branch: None,
-        },
+        Err(error) => git_failure_step(remote, "fetch", "error", error.message.clone(), None, error),
     })
     .collect()
 }
@@ -5511,15 +5538,17 @@ pub(super) fn run_multi_remote_push(
                     status: "success".to_string(),
                     message: "推送完成".to_string(),
                     target_branch: Some(target),
+                    ..Default::default()
                 });
             }
-            Err(message) => steps.push(RepoRemoteOperationStep {
+            Err(error) => steps.push(git_failure_step(
                 remote,
-                operation: "push".to_string(),
-                status: "error".to_string(),
-                message,
-                target_branch: Some(target),
-            }),
+                "push",
+                "error",
+                error.message.clone(),
+                Some(target),
+                error,
+            )),
         }
     }
     Ok(steps)

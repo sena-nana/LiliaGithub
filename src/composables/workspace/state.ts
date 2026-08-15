@@ -15,12 +15,14 @@ import type {
   RepoDetailPatch,
   RepoSummary,
   RepoSyncOperationResult,
+  RepoRemoteOperationStep,
   WorkspaceTask,
   WorkspaceSettings,
   WorkspaceBootstrap,
   NamedWorkspace,
 } from "../../services/workspace";
 import { normalizeWorkspaceTasks } from "../../services/workspace/taskRetention";
+import { formatOperationProcess, splitGitProcessMessage } from "../../utils/operationProcess";
 import type { SessionContext } from "../sessionContext";
 
 export interface WorkspaceState {
@@ -84,6 +86,7 @@ export interface RepoSyncIssueDisplay {
   retryable: boolean;
   retrying: boolean;
   updatedAt: number;
+  process?: string | null;
 }
 
 export interface GitHubContributionsState {
@@ -566,15 +569,29 @@ function syncErrorDetailsByRepoId() {
 function createRepoSyncIssue(
   label: string,
   error: RepoActionErrorState,
-  options: { retryable?: boolean; retrying?: boolean } = {},
+  options: {
+    retryable?: boolean;
+    retrying?: boolean;
+    steps?: RepoRemoteOperationStep[];
+  } = {},
 ): RepoSyncIssueDisplay {
+  const split = splitGitProcessMessage(error.message);
   return {
     label,
-    message: error.message,
+    message: split.message,
     retryable: options.retryable ?? false,
     retrying: options.retrying ?? false,
     updatedAt: error.updatedAt,
+    process: formatOperationProcess(options.steps, split.process) || null,
   };
+}
+
+function stepsForRepo(repoId: string): RepoRemoteOperationStep[] | undefined {
+  const recent = state.recentSync?.results.find((item) => item.repoId === repoId);
+  if (recent?.steps?.length) return recent.steps;
+  const recorded = state.repoSyncResults[repoId];
+  if (recorded?.steps?.length) return recorded.steps;
+  return undefined;
 }
 
 function repoSyncIssuesByRepoId() {
@@ -587,11 +604,14 @@ function repoSyncIssuesByRepoId() {
       issues.set(repoId, createRepoSyncIssue("最近同步失败", error, {
         retryable: result?.status !== "conflicts",
         retrying: retryingRepoIds.has(repoId),
+        steps: result?.steps ?? stepsForRepo(repoId),
       }));
     }
   } else {
     for (const [repoId, error] of syncErrorDetailsByRepoId()) {
-      issues.set(repoId, createRepoSyncIssue("同步失败", error));
+      issues.set(repoId, createRepoSyncIssue("同步失败", error, {
+        steps: stepsForRepo(repoId),
+      }));
     }
   }
 
@@ -599,7 +619,11 @@ function repoSyncIssuesByRepoId() {
     if (error && !issues.has(repoId) && !shouldSuppressRepoActionError(repoId, error)) {
       issues.set(
         repoId,
-        createRepoSyncIssue(error.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败", error),
+        createRepoSyncIssue(
+          error.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败",
+          error,
+          { steps: stepsForRepo(repoId) },
+        ),
       );
     }
   }
