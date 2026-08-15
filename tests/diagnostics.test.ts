@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recoveryGuidanceForMessage } from "../src/utils/recoveryGuidance";
+import { formatOperationProcess, GIT_PROCESS_MARKER, splitGitProcessMessage } from "../src/utils/operationProcess";
 import { errorExcerptFromLog, workflowFailureSummary } from "../src/utils/workflowDiagnostics";
 import type { GitHubWorkflowJob } from "../src/services/workspace/types";
 
@@ -48,12 +49,33 @@ describe("diagnostics helpers", () => {
 
     for (const [message, title] of cases) {
       const guidance = recoveryGuidanceForMessage(message);
-      expect(guidance.title).toBe(title);
-      expect(guidance.summary).not.toBe("");
-      expect(guidance.steps.length).toBeGreaterThan(1);
+      expect(guidance?.title).toBe(title);
+      expect(guidance?.summary).not.toBe("");
+      expect(guidance?.steps.length).toBeGreaterThan(1);
     }
 
-    expect(recoveryGuidanceForMessage("unknown failure").title).toBe("查看错误并重试");
+    expect(recoveryGuidanceForMessage("unknown failure")).toBeNull();
+  });
+
+  it("从同步步骤和 git 输出拼出完整运行过程", () => {
+    const split = splitGitProcessMessage(`无法认证 GitHub 仓库 example/repo${GIT_PROCESS_MARKER}git fetch -- origin\nfatal: Authentication failed\nexit 128`);
+    expect(split.message).toBe("无法认证 GitHub 仓库 example/repo");
+    expect(split.process).toContain("git fetch -- origin");
+    expect(split.process).toContain("fatal: Authentication failed");
+
+    const process = formatOperationProcess([
+      {
+        remote: "origin",
+        operation: "fetch",
+        status: "error",
+        message: "无法认证 GitHub 仓库 example/repo",
+        command: "git fetch -- origin",
+        output: "fatal: Authentication failed\nexit 128",
+      },
+    ]);
+    expect(process).toContain("抓取 · origin");
+    expect(process).toContain("git fetch -- origin");
+    expect(process).toContain("fatal: Authentication failed");
   });
 
   it("聚合失败 workflow step 并截取错误日志附近内容", () => {

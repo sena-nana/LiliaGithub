@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { FolderInput, LoaderCircle, Lock, Search, Sparkles } from "@lucide/vue";
 import { Dropdown } from "@lilia/ui/search";
 import { UiDialog } from "@lilia/ui";
+import RepoOperationProcessDialog from "../repo/RepoOperationProcessDialog.vue";
 import type {
   GitHubBindingStatus,
   GitHubRepoOwner,
@@ -34,6 +35,7 @@ const props = defineProps<{
   busy: boolean;
   canSubmit: boolean;
   error: string | null;
+  process?: string | null;
   bindingExpired: boolean;
   gitHubBound: boolean;
   bindingStatus: GitHubBindingStatus | null;
@@ -85,6 +87,7 @@ const emit = defineEmits<{
 }>();
 
 const cloneInput = ref<HTMLInputElement | null>(null);
+const processOpen = ref(false);
 const defaultOrganizationGroup = computed(() =>
   organizationGroup(props.repoGroups, props.defaultOrganizationLogin)
 );
@@ -319,6 +322,16 @@ watch(() => props.gitHubBound, focusCloneInput);
       <div v-if="error" class="clone-dialog__error-row">
         <p class="clone-dialog__error">{{ error }}</p>
         <button
+          v-if="process"
+          type="button"
+          class="ghost"
+          data-agent-id="clone-repo.error.process"
+          :disabled="busy"
+          @click="processOpen = true"
+        >
+          查看运行过程
+        </button>
+        <button
           v-if="bindingExpired"
           type="button"
           class="ghost"
@@ -337,6 +350,12 @@ watch(() => props.gitHubBound, focusCloneInput);
       </div>
     </form>
   </UiDialog>
+  <RepoOperationProcessDialog
+    :open="processOpen"
+    :process="process ?? ''"
+    agent-id="clone-repo.error.process-dialog"
+    @close="processOpen = false"
+  />
 </template>
 
 <style scoped>

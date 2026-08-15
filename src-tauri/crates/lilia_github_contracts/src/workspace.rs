@@ -1428,6 +1428,10 @@ pub struct RepoRemoteOperationStep {
     pub message: String,
     #[serde(default)]
     pub target_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

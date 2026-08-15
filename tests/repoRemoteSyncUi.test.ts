@@ -85,6 +85,31 @@ describe("remote sync UI", () => {
     expect(view.emitted("retryPush")?.[0]).toEqual([["mirror"]]);
   });
 
+  it("opens the original git process from a failed sync result", async () => {
+    const result: RepoSyncOperationResult = {
+      status: "error",
+      message: "origin：fatal: unable to access 'https://github.com/example/repo.git/'",
+      summary: repoSummary("repo-a"),
+      conflicts: conflictState(),
+      steps: [{
+        remote: "origin",
+        operation: "fetch",
+        status: "error",
+        message: "fatal: unable to access 'https://github.com/example/repo.git/'",
+        command: "git fetch -- origin",
+        output: "fatal: unable to access 'https://github.com/example/repo.git/'\nexit 128",
+      }],
+    };
+    render(RepoSyncResultDialog, {
+      props: { result, retrying: false },
+      global: { stubs: { transition: false } },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "查看运行过程" }));
+    const dialog = screen.getByRole("dialog", { name: "运行过程" });
+    expect(dialog).toHaveTextContent("git fetch -- origin");
+    expect(dialog).toHaveTextContent("fatal: unable to access");
+  });
+
   it("offers the conflict resolver for conflict results", async () => {
     const result: RepoSyncOperationResult = {
       status: "conflicts",
