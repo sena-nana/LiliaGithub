@@ -2,6 +2,7 @@
 import { useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import type { SurfaceProps } from "@lilia/ui-contract";
+import { resolveSurfaceAttributes } from "@lilia/ui-foundation/surface";
 import {
   ArrowDownAZ,
   ChevronRight,
@@ -62,6 +63,7 @@ const props = withDefaults(defineProps<SurfaceProps>(), {
   surfaceLevel: "base",
   surfaceBoundary: true,
 });
+const surfaceAttributes = computed(() => resolveSurfaceAttributes(props));
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -878,6 +880,7 @@ async function deleteGroup(group: { id: string }) {
 
 <template>
   <NanaSidebarFrame
+    v-bind="surfaceAttributes"
     agent-id="sidebar"
   >
     <template #top>
@@ -887,9 +890,9 @@ async function deleteGroup(group: { id: string }) {
             v-for="item in SIDEBAR_NAV"
             :key="item.label"
             :label="item.label"
-            :active="route.path === router.resolve(item.to).path"
+            :active="route.path === router.resolve(item.to ?? '/').path"
             :agent-id="`sidebar.nav.${item.label}`"
-            @select="router.push(item.to)"
+            @select="item.to ? router.push(item.to) : undefined"
           />
         </nav>
       </div>

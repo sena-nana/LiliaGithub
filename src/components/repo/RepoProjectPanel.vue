@@ -881,7 +881,7 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
     key: string,
     title: string,
     message: string | null | undefined,
-    options: Pick<ProjectSidebarError, "retry" | "retrying" | "process"> = {},
+    options: Partial<Pick<ProjectSidebarError, "retry" | "retrying" | "process">> = {},
   ) => {
     if (!message) return;
     const split = splitGitProcessMessage(message);
@@ -898,7 +898,7 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
     addError("repo-sync", props.repoSyncIssue.label, props.repoSyncIssue.message, {
       retry: props.repoSyncIssue.retryable ? "sync" : undefined,
       retrying: props.repoSyncIssue.retrying,
-      process: props.repoSyncIssue.process ?? null,
+      process: props.repoSyncIssue.process ?? "",
     });
   }
   if (props.actionError !== props.repoSyncIssue?.message) {
