@@ -95,7 +95,7 @@ export function isFastForwardPullFailure(message: string | null | undefined): bo
   return /Not possible to fast-forward|Diverging branches|无法快进/i.test(message?.trim() ?? "");
 }
 
-export function recoveryGuidanceForMessage(message: unknown): RecoveryGuidance {
+export function recoveryGuidanceForMessage(message: unknown): RecoveryGuidance | null {
   const category = workspaceErrorCategory(message);
   if (category === "authentication" || category === "authorization") return AUTH_GUIDANCE;
   if (category === "not-found") return REMOTE_NOT_FOUND_GUIDANCE;
@@ -103,10 +103,5 @@ export function recoveryGuidanceForMessage(message: unknown): RecoveryGuidance {
   for (const rule of guidanceRules) {
     if (rule.match.test(normalized)) return rule.guidance;
   }
-  return {
-    title: "查看错误并重试",
-    tone: "info",
-    summary: "当前错误无法自动归类，需要根据错误文本决定下一步。",
-    steps: ["展开失败仓库查看完整错误", "刷新仓库状态", "确认问题已处理后重试操作"],
-  };
+  return null;
 }

@@ -1619,6 +1619,32 @@ describe("RepoProjectPanel", () => {
     expect(within(errorCard).getByRole("button", { name: "重试" })).toBeDisabled();
   });
 
+  it("未归类的拉取失败直接显示原始报错并可以查看运行过程", async () => {
+    const message = "fatal: unable to access 'https://github.com/example/repo.git/'";
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/local-repo",
+      activeGitTab: "changes",
+      repoSyncIssue: {
+        label: "最近同步失败",
+        message,
+        retryable: true,
+        retrying: false,
+        updatedAt: 1,
+        process: `git fetch -- origin\n${message}\nexit 128`,
+      },
+    });
+
+    const errorCard = view.getByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent(message);
+    expect(errorCard).not.toHaveTextContent("无法归类");
+    expect(errorCard).not.toHaveTextContent("无法自动归类");
+    expect(errorCard).not.toHaveTextContent("查看错误并重试");
+    await fireEvent.click(within(errorCard).getByRole("button", { name: "查看运行过程" }));
+    const dialog = await view.findByRole("dialog", { name: "运行过程" });
+    expect(dialog).toHaveTextContent("git fetch -- origin");
+    expect(dialog).toHaveTextContent(message);
+  });
+
   it("仓库描述标签超过两行时显示展开和收起按钮", async () => {
     vi.mocked(getGitHubRepoManagement).mockResolvedValue({
       ...githubSettings,

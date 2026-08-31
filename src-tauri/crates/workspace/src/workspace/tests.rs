@@ -3757,6 +3757,7 @@ fn sync_result_promotes_all_remote_failures_and_preserves_success_message() {
         status: "error".to_string(),
         message: message.to_string(),
         target_branch: Some("main".to_string()),
+        ..Default::default()
     };
     let success = RepoRemoteOperationStep {
         remote: "origin".to_string(),
@@ -3764,6 +3765,7 @@ fn sync_result_promotes_all_remote_failures_and_preserves_success_message() {
         status: "success".to_string(),
         message: "推送完成".to_string(),
         target_branch: Some("main".to_string()),
+        ..Default::default()
     };
 
     let failed = sync_result(
