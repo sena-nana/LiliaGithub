@@ -1,0 +1,795 @@
+/* Lilia token subset for Nana blitz — aligned with compiled `@lilia/theme`. */
+:root, html, [data-theme="light"] {
+  color-scheme: light;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  --bg: #ffffff;
+  --bg-elev: #f3f4f6;
+  --bg-subtle: #f7f8fa;
+  --bg-hover: #ebedf0;
+  --bg-active: #dfe2e7;
+  --border: #e3e5e8;
+  --border-soft: #eef0f3;
+  --border-strong: #cbcfd5;
+  --text: #1a1a1f;
+  --text-muted: #5a616e;
+  --text-faint: #9ca3af;
+  --accent: #4991d7;
+  --accent-strong: #2c7ed6;
+  --accent-soft: rgba(73, 145, 215, 0.1);
+  --accent-text: #ffffff;
+  --ok: #107e39;
+  --warn: #b8771c;
+  --err: #c93c3c;
+  --ok-soft: rgba(29, 133, 64, 0.1);
+  --warn-soft: rgba(184, 119, 28, 0.12);
+  --err-soft: rgba(201, 60, 60, 0.1);
+  --panel: var(--bg-elev);
+  --surface: var(--bg);
+  --surface-raised: var(--bg-elev);
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius: 16px;
+  --radius-pill: 999px;
+  --sidebar-width: 220px;
+  --titlebar-height: 36px;
+  --app-corner-radius: 16px;
+  --lilia-surface-fill-base: var(--bg);
+  --lilia-surface-fill-raised: var(--bg-elev);
+  --lilia-surface-fill: var(--lilia-surface-fill-raised);
+  --lilia-sidebar-surface: var(--bg-elev);
+  --lilia-titlebar-surface: var(--bg-elev);
+  --lilia-region-surface: var(--bg);
+  --lilia-color-state-hover-solid: #ebedf0;
+  --lilia-color-state-pressed-solid: #dfe2e7;
+  --lilia-color-state-selected-solid: #e2e2e2;
+  --lilia-color-state-selected-hover-solid: #e8e8e8;
+  --lilia-color-state-selected-pressed-solid: #dfdfdf;
+  --lilia-state-layer-hover: var(--lilia-color-state-hover-solid);
+  --lilia-state-layer-selected: var(--lilia-color-state-selected-solid);
+  --lilia-state-layer-selected-hover: var(--lilia-color-state-selected-hover-solid);
+  --lilia-state-layer-selected-pressed: var(--lilia-color-state-selected-pressed-solid);
+  --lilia-state-layer-pressed: var(--lilia-color-state-pressed-solid);
+  --lilia-state-foreground-selected: var(--text);
+  --shadow: #111827;
+}
+
+html[data-theme="dark"], [data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181818;
+  --bg-elev: #202020;
+  --bg-subtle: #1c1c1c;
+  --bg-hover: #2d2d2d;
+  --bg-active: #353535;
+  --border: #2a2a2a;
+  --border-soft: #232323;
+  --border-strong: #3a3a3a;
+  --text: #dddddd;
+  --text-muted: #a3a3a3;
+  --text-faint: #5a5a5a;
+  --accent: #7bb9f0;
+  --accent-strong: #4991d7;
+  --accent-soft: rgba(123, 185, 240, 0.14);
+  --accent-text: #0d1622;
+  --ok: #3fb950;
+  --warn: #d4a85b;
+  --err: #f47174;
+  --ok-soft: rgba(63, 185, 80, 0.14);
+  --warn-soft: rgba(212, 168, 91, 0.14);
+  --err-soft: rgba(244, 113, 116, 0.14);
+  --panel: var(--bg-elev);
+  --surface: var(--bg);
+  --surface-raised: var(--bg-elev);
+  --lilia-color-state-hover-solid: #2d2d2d;
+  --lilia-color-state-pressed-solid: #353535;
+  --lilia-color-state-selected-solid: #353535;
+  --lilia-color-state-selected-hover-solid: #3c3c3c;
+  --lilia-color-state-selected-pressed-solid: #2f2f2f;
+  --lilia-state-layer-hover: var(--lilia-color-state-hover-solid);
+  --lilia-state-layer-selected: var(--lilia-color-state-selected-solid);
+  --lilia-state-layer-selected-hover: var(--lilia-color-state-selected-hover-solid);
+  --lilia-state-layer-selected-pressed: var(--lilia-color-state-selected-pressed-solid);
+  --lilia-state-layer-pressed: var(--lilia-color-state-pressed-solid);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.lilia-app-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  background: var(--bg);
+}
+
+.lilia-titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-height);
+  padding: 0 12px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border-soft);
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.lilia-titlebar__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lilia-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.lilia-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  max-width: var(--sidebar-width);
+  background: var(--lilia-sidebar-surface);
+  border-right: 1px solid var(--border-soft);
+  padding: 10px 8px 10px 12px;
+  gap: 14px;
+  box-sizing: border-box;
+}
+
+.lilia-sidebar--collapsed {
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
+}
+
+.lilia-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lilia-sidebar__item {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.lilia-sidebar__item.is-active {
+  background: var(--lilia-state-layer-selected);
+  color: var(--lilia-state-foreground-selected);
+}
+
+.lilia-sidebar__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+  flex: 0 0 auto;
+}
+
+.secondary-panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--lilia-sidebar-surface);
+  border-right: 1px solid var(--border-soft);
+  padding: 10px 8px 10px 12px;
+  gap: 14px;
+  box-sizing: border-box;
+}
+
+.sb-tree__row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.sb-tree__row.is-active {
+  background: var(--lilia-state-layer-selected);
+  color: var(--lilia-state-foreground-selected);
+}
+
+.lilia-card, .card, .ui-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.lilia-chip, .chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.lilia-chip.is-active, .chip.is-active {
+  background: var(--lilia-state-layer-selected);
+  border-color: var(--border);
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+/*
+ * NanaUI Vue control styles — Issue #5.
+ *
+ * Color / radius tokens MUST come from the host `lilia-tokens.css`
+ * (`@lilia/theme` hex subset). Fallbacks below match that file so a missing
+ * inject still does not invent a second accent (#3867ff banned).
+ *
+ * Radius policy (documented in docs/performance/2026-08-06-nanavue-lilia-mapping.md):
+ *   - Vue / Blitz host → Lilia CSS scale (--radius-sm ≈ 12px)
+ *   - Iced Gallery → UI_METRICS (radius_sm = 6, radius_md = 10)
+ */
+
+.nana-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 12px);
+  font: inherit;
+  cursor: pointer;
+  color: var(--text, #1a1a1f);
+  background: transparent;
+}
+.nana-btn--sm { min-height: 24px; padding: 0 8px; font-size: 12px; }
+.nana-btn--md { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.nana-btn--lg { min-height: 36px; padding: 0 14px; font-size: 14px; }
+.nana-btn--ghost { background: transparent; }
+.nana-btn--subtle {
+  background: var(--bg-subtle, #f7f8fa);
+  border-color: var(--border-soft, #eef0f3);
+}
+.nana-btn--selected {
+  background: var(--lilia-state-layer-selected, var(--bg-active, #dfe2e7));
+}
+.nana-btn--primary {
+  background: var(--accent, #4991d7);
+  color: var(--accent-text, #ffffff);
+}
+.nana-btn--warning {
+  background: var(--warn-soft, rgba(184, 119, 28, 0.12));
+  color: var(--warn, #b8771c);
+}
+.nana-btn--danger { color: var(--err, #c93c3c); background: transparent; }
+.nana-btn--text { color: var(--accent, #4991d7); background: transparent; }
+.nana-btn.is-disabled { opacity: 0.45; cursor: default; }
+.nana-btn__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+
+.nana-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  margin: 0;
+  border: 1px solid var(--border, #e3e5e8);
+  border-radius: var(--radius-sm, 12px);
+  background: var(--bg-elev, #f3f4f6);
+  color: var(--text, #1a1a1f);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nana-chip.is-selected {
+  background: var(--accent-soft, rgba(73, 145, 215, 0.1));
+  border-color: var(--accent, #4991d7);
+  color: var(--accent-strong, #2c7ed6);
+  font-weight: 600;
+}
+.nana-chip.is-disabled { opacity: 0.45; cursor: default; }
+
+.nana-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.nana-appearance-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.nana-appearance-panel__desc {
+  font-size: 12px;
+  color: var(--text-muted, #5a616e);
+}
+.nana-appearance-panel__muted {
+  color: var(--text-muted, #5a616e);
+  font-size: 13px;
+}
+
+/* SettingsPage / Card / Row — peers of Lilia settings + Rust SettingsRow/Card */
+.nana-settings-page,
+.settings-page.nana-settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px 24px 24px;
+  color: var(--text, #1a1a1f);
+}
+.nana-settings-page__header h1,
+.nana-settings-page .page-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.nana-settings-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft, #eef0f3);
+  border-radius: var(--radius-md, 16px);
+  background: var(--bg-elev, #f3f4f6);
+}
+.nana-settings-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted, #5a616e);
+}
+.nana-settings-card__body {
+  display: grid;
+  min-width: 0;
+}
+
+.nana-settings-row,
+.settings-row.nana-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 0;
+}
+.nana-settings-row--divided,
+.settings-row.nana-settings-row--divided {
+  border-bottom: 1px solid var(--divider-soft, var(--border-soft, #eef0f3));
+}
+.nana-settings-row.is-first {
+  padding-top: 4px;
+}
+.nana-settings-row.is-last {
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+.nana-settings-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.nana-settings-row__label,
+.settings-row.nana-settings-row .settings-row__label {
+  min-width: 0;
+  flex: 1 1 220px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #1a1a1f);
+}
+.nana-settings-row__hint,
+.settings-row.nana-settings-row .settings-row__hint {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted, #5a616e);
+}
+.nana-settings-row__control,
+.settings-row.nana-settings-row .settings-row__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+.nana-settings-row__control--loose {
+  column-gap: 14px;
+}
+
+/* Switch — peer of Rust toggler / Lilia UiSwitch (token accent, no #3867ff) */
+.nana-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.nana-switch--control-end {
+  justify-content: space-between;
+}
+.nana-switch--control-end .nana-switch__track {
+  order: 2;
+}
+.nana-switch--control-end .nana-switch__text {
+  order: 1;
+}
+.nana-switch__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+}
+.nana-switch__track {
+  position: relative;
+  display: inline-block;
+  width: 30px;
+  height: 16px;
+  flex: 0 0 30px;
+  border: 1px solid var(--border-strong, #cbcfd5);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-hover, #ebedf0);
+}
+.nana-switch__track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--text-faint, #9ca3af);
+}
+.nana-switch.is-on .nana-switch__track,
+.nana-switch__input:checked + .nana-switch__track {
+  border-color: var(--accent, #4991d7);
+  background: var(--accent, #4991d7);
+}
+.nana-switch.is-on .nana-switch__track::after,
+.nana-switch__input:checked + .nana-switch__track::after {
+  transform: translateX(14px);
+  background: var(--accent-text, #ffffff);
+}
+.nana-switch.is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.nana-switch.is-invalid .nana-switch__track {
+  border-color: var(--err, #c93c3c);
+}
+.nana-switch__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.nana-switch__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #1a1a1f);
+}
+.nana-switch__hint {
+  font-size: 12px;
+  color: var(--text-muted, #5a616e);
+}
+
+/* RangeField — peer of Rust RangeField / Lilia UiRangeField */
+.nana-range-field {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 140px;
+  min-height: 30px;
+  --nana-range-track-size: 8px;
+  --nana-range-thumb-size: 14px;
+}
+.nana-range-field:not(:has(.nana-range-field__output)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.nana-range-field__track {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: var(--nana-range-thumb-size);
+  cursor: pointer;
+}
+.nana-range-field__rail {
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: var(--nana-range-track-size);
+  transform: translateY(-50%);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-hover, #ebedf0);
+}
+.nana-range-field__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--nana-range-progress, 0%);
+  border-radius: inherit;
+  background: var(--accent, #4991d7);
+}
+.nana-range-field__thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--nana-range-progress, 0%);
+  width: var(--nana-range-thumb-size);
+  height: var(--nana-range-thumb-size);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--accent, #4991d7);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.nana-range-field__track:hover .nana-range-field__thumb {
+  background: var(--accent-strong, #2c7ed6);
+}
+.nana-range-field.is-disabled {
+  opacity: 0.5;
+}
+.nana-range-field.is-disabled .nana-range-field__track {
+  cursor: default;
+}
+.nana-range-field__output {
+  min-width: 44px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--accent, #4991d7);
+}
+
+.nana-workspace-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg, #ffffff);
+  color: var(--text, #1a1a1f);
+}
+.nana-workspace-shell__titlebar {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-soft, #eef0f3);
+  font-size: 13px;
+  font-weight: 600;
+}
+.nana-workspace-shell__body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width, 220px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+.nana-workspace-shell.is-collapsed .nana-workspace-shell__body,
+.nana-workspace-shell__body:has(.nana-workspace-shell__sidebar.is-collapsed) {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+.nana-workspace-shell__sidebar {
+  min-width: 0;
+  border-right: 1px solid var(--border-soft, #eef0f3);
+  background: var(--bg-elev, #f3f4f6);
+  padding: 8px;
+}
+.nana-workspace-shell__sidebar.is-collapsed {
+  padding: 6px;
+}
+.nana-workspace-shell__primary {
+  min-width: 0;
+  padding: 16px;
+}
+
+/* SidebarFrame — mirrors Rust SidebarFrame + Lilia secondary-panel geometry */
+.nana-sidebar-frame,
+.secondary-panel.nana-sidebar-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px 8px 10px 12px;
+  gap: 14px;
+  overflow: hidden;
+  background: var(--lilia-sidebar-surface, var(--bg-elev, #f3f4f6));
+  color: var(--text, #1a1a1f);
+}
+.nana-sidebar-frame__top,
+.nana-sidebar-frame__footer,
+.secondary-panel__top,
+.secondary-panel__footer {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.nana-sidebar-frame__body,
+.secondary-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+.nana-sidebar-frame__body > .sidebar-sections,
+.secondary-panel__body > .sidebar-sections,
+.sidebar-sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.nana-sidebar-nav {
+  display: grid;
+  gap: 4px;
+}
+.nana-sidebar-nav__item,
+.nana-sidebar-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 12px);
+  background: transparent;
+  text-align: left;
+  color: var(--text-muted, #5a616e);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.nana-sidebar-nav__item:hover,
+.nana-sidebar-row:hover {
+  background: var(--lilia-state-layer-hover, var(--bg-hover, #ebedf0));
+}
+.nana-sidebar-nav__item.is-active,
+.nana-sidebar-row.is-active {
+  background: var(--lilia-state-layer-selected, #e2e2e2);
+  color: var(--lilia-state-foreground-selected, var(--text, #1a1a1f));
+  font-weight: 600;
+}
+.nana-sidebar-row.is-muted {
+  color: var(--text-faint, #9ca3af);
+}
+.nana-sidebar-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nana-sidebar-row__leading,
+.nana-sidebar-row__trailing {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* SegmentedControl — mirrors Rust SegmentedControl surface */
+.nana-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px;
+  border-radius: var(--radius-sm, 12px);
+  background: var(--bg-subtle, #f7f8fa);
+  border: 1px solid var(--border-soft, #eef0f3);
+}
+.nana-segmented__item {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: calc(var(--radius-sm, 12px) - 2px);
+  background: transparent;
+  color: var(--text-muted, #5a616e);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.nana-segmented__item.is-active {
+  background: var(--bg-elev, #f3f4f6);
+  color: var(--text, #1a1a1f);
+  font-weight: 600;
+}
+.nana-segmented__item.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Tabs — mirrors Rust Tabs (no segmented border) */
+.nana-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.nana-tabs--fill {
+  width: 100%;
+}
+.nana-tabs--fill .nana-tabs__item {
+  flex: 1 1 0;
+}
+.nana-tabs__item {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm, 12px);
+  background: transparent;
+  color: var(--text-muted, #5a616e);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.nana-tabs__item.is-active {
+  background: var(--lilia-state-layer-selected, #e2e2e2);
+  color: var(--text, #1a1a1f);
+  font-weight: 600;
+}
+.nana-tabs__item.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
