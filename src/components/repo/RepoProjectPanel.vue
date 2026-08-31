@@ -35,6 +35,7 @@ import {
 import { SettingsRow, UiDialog, UiSelect, UiSwitch } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoNotificationPreferencesCard from "./RepoNotificationPreferencesCard.vue";
+import RepoOperationProcessDialog from "./RepoOperationProcessDialog.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
   blankPullRequestPanelFilters,
@@ -84,6 +85,7 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
+import { splitGitProcessMessage } from "../../utils/operationProcess";
 import { workspaceErrorCategory } from "../../services/workspace/errors";
 import { isConfirmedMissingResource, isGitHubBindingExpiredError } from "../../utils/githubErrors";
 import {
@@ -183,7 +185,8 @@ type ProjectSidebarError = {
   message: string;
   retry?: "sync";
   retrying?: boolean;
-  guidance: RecoveryGuidance;
+  guidance: RecoveryGuidance | null;
+  process: string;
 };
 type IssuePanelFilters = RepoIssueFilters;
 type ActionPanelFilters = RepoActionFilters;
@@ -352,6 +355,7 @@ const deleteError = ref<string | null>(null);
 const archiveDialogOpen = ref(false);
 const archiveConfirmInput = ref("");
 const archiveError = ref<string | null>(null);
+const errorProcessLog = ref<string | null>(null);
 const settingsLoaded = ref(false);
 const settingsBranches = ref<BranchSummary[]>([]);
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
@@ -877,21 +881,24 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
     key: string,
     title: string,
     message: string | null | undefined,
-    options: Pick<ProjectSidebarError, "retry" | "retrying"> = {},
+    options: Pick<ProjectSidebarError, "retry" | "retrying" | "process"> = {},
   ) => {
     if (!message) return;
+    const split = splitGitProcessMessage(message);
     errors.push({
       key,
       title,
-      message,
+      message: split.message,
       ...options,
-      guidance: recoveryGuidanceForMessage(message),
+      guidance: recoveryGuidanceForMessage(split.message),
+      process: options.process ?? split.process ?? "",
     });
   };
   if (props.repoSyncIssue) {
     addError("repo-sync", props.repoSyncIssue.label, props.repoSyncIssue.message, {
       retry: props.repoSyncIssue.retryable ? "sync" : undefined,
       retrying: props.repoSyncIssue.retrying,
+      process: props.repoSyncIssue.process ?? null,
     });
   }
   if (props.actionError !== props.repoSyncIssue?.message) {
@@ -4130,9 +4137,18 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <div>
               <strong>{{ error.title }}</strong>
               <p>{{ error.message }}</p>
-              <p class="project-sidebar-error-card__guidance">
+              <p v-if="error.guidance" class="project-sidebar-error-card__guidance">
                 状态：{{ error.guidance.title }}。原因：{{ error.guidance.summary }}。下一步：{{ error.guidance.steps.join(" / ") }}
               </p>
+              <button
+                v-if="error.process"
+                type="button"
+                class="ghost project-sidebar-error-card__process"
+                data-agent-id="repo.project.error.process"
+                @click="errorProcessLog = error.process"
+              >
+                查看运行过程
+              </button>
             </div>
             <button
               v-if="error.retry === 'sync'"
@@ -4441,6 +4457,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </aside>
       </LiliaInspector>
     </LiliaWorkspace>
+    <RepoOperationProcessDialog
+      :open="Boolean(errorProcessLog)"
+      :process="errorProcessLog ?? ''"
+      agent-id="repo.project.error.process-dialog"
+      @close="errorProcessLog = null"
+    />
   </section>
 </template>
 
@@ -4729,6 +4751,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-sidebar-error-card__guidance {
   color: var(--text-muted) !important;
   font-weight: 500;
+}
+
+.project-sidebar-error-card__process {
+  margin-top: 6px;
+  height: 26px;
+  padding: 0 8px;
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .project-sidebar-error-card__retry {

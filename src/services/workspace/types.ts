@@ -1166,6 +1166,8 @@ export interface RepoRemoteOperationStep {
   status: RepoRemoteOperationStatus;
   message: string;
   targetBranch?: string | null;
+  command?: string | null;
+  output?: string | null;
 }
 
 export interface RepoSyncOperationResult {

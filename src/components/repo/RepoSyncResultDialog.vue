@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { AlertCircle, CheckCircle2, GitMerge, LoaderCircle, XCircle } from "@lucide/vue";
 import type { RepoRemoteOperationStep, RepoSyncOperationResult } from "../../services/workspace";
 import { isFastForwardPullFailure } from "../../utils/recoveryGuidance";
+import { formatOperationProcess } from "../../utils/operationProcess";
 import RepoSyncDialogShell from "./RepoSyncDialogShell.vue";
+import RepoOperationProcessDialog from "./RepoOperationProcessDialog.vue";
 
 const props = defineProps<{
   result: RepoSyncOperationResult | null;
@@ -55,6 +57,9 @@ function statusLabel(status: RepoRemoteOperationStep["status"]) {
 function stepAgentId(step: RepoRemoteOperationStep) {
   return `repo.remote-sync.result.${step.operation}.${encodeURIComponent(step.remote || "local")}`;
 }
+
+const processOpen = ref(false);
+const process = computed(() => formatOperationProcess(props.result?.steps));
 </script>
 
 <template>
@@ -98,6 +103,16 @@ function stepAgentId(step: RepoRemoteOperationStep) {
             <template v-if="result">
             <button type="button" class="ghost" data-agent-id="repo.remote-sync.result.close" :disabled="retrying" @click="emit('close')">关闭</button>
             <button
+              v-if="process"
+              type="button"
+              class="ghost"
+              data-agent-id="repo.remote-sync.result.view-process"
+              :disabled="retrying"
+              @click="processOpen = true"
+            >
+              查看运行过程
+            </button>
+            <button
               v-if="failedPushRemotes.length"
               type="button"
               class="primary"
@@ -134,6 +149,12 @@ function stepAgentId(step: RepoRemoteOperationStep) {
             </template>
           </template>
   </RepoSyncDialogShell>
+  <RepoOperationProcessDialog
+    :open="processOpen"
+    :process="process"
+    agent-id="repo.remote-sync.process-dialog"
+    @close="processOpen = false"
+  />
 </template>
 
 <style scoped>

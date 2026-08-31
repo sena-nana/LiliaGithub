@@ -14,6 +14,7 @@ import {
   type WorkspaceRepoPlacement,
 } from "../services/workspace";
 import { isGitHubBindingExpiredError } from "../utils/githubErrors";
+import { errorProcessLog } from "../services/workspace/errors";
 import {
   ALL_GITHUB_REPOSITORIES,
   githubOrganizationAccessLimited,
@@ -63,8 +64,11 @@ function dedupeCloneRepos(items: GitHubRepoSummary[]) {
   return next;
 }
 
-function cloneErrorMessage(err: unknown) {
-  return githubUserFacingError(err);
+function splitCloneError(error: unknown): { message: string; process: string | null } {
+  return {
+    message: githubUserFacingError(error),
+    process: errorProcessLog(error),
+  };
 }
 
 export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
@@ -83,6 +87,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneTouchedDirectory = ref(false);
   const cloneBusy = ref(false);
   const cloneError = ref<string | null>(null);
+  const cloneProcess = ref<string | null>(null);
   const cloneBindingStatus = ref<GitHubBindingStatus | null>(null);
   const cloneRepoItems = ref<GitHubRepoSummary[]>([]);
   const cloneRepoOwners = ref<GitHubRepoOwner[]>([]);
@@ -178,13 +183,24 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneSelectedRepo.value = null;
   }
 
+  function setCloneError(error: unknown | null) {
+    if (error == null) {
+      cloneError.value = null;
+      cloneProcess.value = null;
+      return;
+    }
+    const next = splitCloneError(error);
+    cloneError.value = next.message;
+    cloneProcess.value = next.process;
+  }
+
   function showCloneRepoLoadError(err: unknown) {
     const expired = isGitHubBindingExpiredError(err);
     cloneRepoLoadError.value = expired
       ? "GitHub 绑定已失效，请重新绑定后再加载账号仓库。"
       : `仓库列表加载失败：${githubUserFacingError(err)}`;
     if (expired) {
-      cloneError.value = "GitHub 绑定已失效，请重新绑定。";
+      setCloneError("GitHub 绑定已失效，请重新绑定。");
     }
     cloneRepoItems.value = [];
     cloneNextRepoPage.value = null;
@@ -320,6 +336,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneDirectoryName.value = "";
     cloneTouchedDirectory.value = false;
     cloneError.value = null;
+    cloneProcess.value = null;
     cloneBindingStatus.value = null;
     cloneRepoItems.value = [];
     cloneRepoOwners.value = [];
@@ -358,7 +375,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
         }
       } catch (err) {
         if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
-        cloneError.value = String(err);
+        setCloneError(err);
       }
     });
   }
@@ -372,6 +389,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoOwnersLoader.invalidate();
     cloneOpen.value = false;
     cloneError.value = null;
+    cloneProcess.value = null;
     cloneRepoLoading.value = false;
     cloneRepoLoadingMore.value = false;
     cloneRepoOwnersLoading.value = false;
@@ -381,6 +399,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     if (!canSubmitClone.value) return;
     cloneBusy.value = true;
     cloneError.value = null;
+    cloneProcess.value = null;
     try {
       const selected = cloneSelectedRepo.value;
       const directGitHubRepo = cloneDirectGitHubRepo.value;
@@ -427,7 +446,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       if (isGitHubBindingExpiredError(err)) {
         showCloneRepoLoadError(err);
       } else {
-        cloneError.value = cloneErrorMessage(err);
+        setCloneError(err);
       }
     } finally {
       cloneBusy.value = false;
@@ -520,6 +539,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     busy: cloneBusy.value,
     canSubmit: canSubmitClone.value,
     error: cloneError.value,
+    process: cloneProcess.value,
     bindingExpired: cloneBindingExpired.value,
     gitHubBound: cloneGitHubBound.value,
     bindingStatus: cloneBindingStatus.value,
