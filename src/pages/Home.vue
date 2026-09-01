@@ -33,7 +33,6 @@ import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { cloneAccountPreferences, useAccountPreferences } from "../composables/useAccountPreferences";
 import { Dropdown } from "@lilia/ui/search";
 import { UiDialog } from "@lilia/ui";
-import { NanaSegmented } from "@nanaui/nanavue-components";
 import {
   openContextMenuAt,
   type ContextMenuItem,
@@ -611,10 +610,6 @@ const activeCodeOverview = computed(() =>
 function selectLanguageChartMode(mode: LanguageChartMode) {
   hoveredCodeSlice.value = null;
   languageChartMode.value = mode;
-}
-
-function onLanguageChartModeChange(value: unknown) {
-  selectLanguageChartMode(String(value) === "project" ? "project" : "language");
 }
 
 const localRepoByGitHubFullName = computed(() =>
@@ -2522,25 +2517,24 @@ function bulkOperationDescription(operation: BulkOperation) {
               </p>
             </div>
             <div class="language-actions">
-              <NanaSegmented
-                class="language-tabs"
-                aria-label="代码占比模式"
-                data-agent-id="home.language.mode"
-                :model-value="languageChartMode"
-                :options="[
-                  {
-                    value: 'language',
-                    label: '按编程语言',
-                    agentId: 'home.language.mode.language',
-                  },
-                  {
-                    value: 'project',
-                    label: '按项目',
-                    agentId: 'home.language.mode.project',
-                  },
-                ]"
-                @update:model-value="onLanguageChartModeChange"
-              />
+              <div class="language-tabs" aria-label="代码占比模式">
+                <button
+                  type="button"
+                  data-agent-id="home.language.mode.language"
+                  :class="{ 'is-active': languageChartMode === 'language' }"
+                  @click="selectLanguageChartMode('language')"
+                >
+                  按编程语言
+                </button>
+                <button
+                  type="button"
+                  data-agent-id="home.language.mode.project"
+                  :class="{ 'is-active': languageChartMode === 'project' }"
+                  @click="selectLanguageChartMode('project')"
+                >
+                  按项目
+                </button>
+              </div>
             </div>
           </div>
           <p v-if="!activeCodeOverview.slices.length" class="language-empty">暂无语言数据</p>
