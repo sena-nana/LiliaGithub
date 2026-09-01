@@ -21,7 +21,6 @@
     "dev": "lilia-build dev",
     "prebuild": "yarn about:licenses",
     "build": "lilia-build build",
-    "build:nana": "node scripts/build-nana-iife.mjs",
     "test": "lilia-build test",
     "docs:dev": "lilia-build docs dev",
     "docs:build": "lilia-build docs build",

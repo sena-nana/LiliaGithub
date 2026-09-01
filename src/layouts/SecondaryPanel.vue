@@ -2,7 +2,6 @@
 import { useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import type { SurfaceProps } from "@lilia/ui-contract";
-import { resolveSurfaceAttributes } from "@lilia/ui-foundation/surface";
 import {
   ArrowDownAZ,
   ChevronRight,
@@ -23,7 +22,8 @@ import type { RepoSyncIssueDisplay } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
-import { NanaSidebarFrame, NanaSidebarRow } from "@nanaui/nanavue-components";
+import { LiliaSidebarNavRow } from "@lilia/ui/shell/sidebar";
+import { LiliaSidebarFrame } from "@lilia/ui/shell";
 import { SidebarCollapse, UiButton, UiDialog } from "@lilia/ui";
 import {
   openContextMenuAt,
@@ -63,7 +63,6 @@ const props = withDefaults(defineProps<SurfaceProps>(), {
   surfaceLevel: "base",
   surfaceBoundary: true,
 });
-const surfaceAttributes = computed(() => resolveSurfaceAttributes(props));
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -879,20 +878,21 @@ async function deleteGroup(group: { id: string }) {
 </script>
 
 <template>
-  <NanaSidebarFrame
-    v-bind="surfaceAttributes"
+  <LiliaSidebarFrame
     agent-id="sidebar"
+    :surface-mode="props.surfaceMode"
+    :backdrop-effect="props.backdropEffect"
+    :surface-level="props.surfaceLevel"
+    :surface-boundary="props.surfaceBoundary"
   >
     <template #top>
       <div class="sb-section">
         <nav class="sb-tree" aria-label="主导航">
-          <NanaSidebarRow
+          <LiliaSidebarNavRow
             v-for="item in SIDEBAR_NAV"
             :key="item.label"
-            :label="item.label"
-            :active="route.path === router.resolve(item.to ?? '/').path"
+            :item="item"
             :agent-id="`sidebar.nav.${item.label}`"
-            @select="item.to ? router.push(item.to) : undefined"
           />
         </nav>
       </div>
@@ -1103,7 +1103,7 @@ async function deleteGroup(group: { id: string }) {
         @authorize-organizations="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
       />
     </template>
-  </NanaSidebarFrame>
+  </LiliaSidebarFrame>
 
   <UiDialog
     :open="movePathDialogOpen"
@@ -1171,7 +1171,6 @@ async function deleteGroup(group: { id: string }) {
 
 <style scoped>
 .sidebar-sections {
-  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
 }
